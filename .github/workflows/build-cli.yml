@@ -59,7 +59,7 @@ jobs:
       contents: read
       id-token: write
     steps:
-    - uses: actions/download-artifact@v4
+    - uses: actions/download-artifact@v8
       with:
         name: cli-dist
         path: cli/dist/
