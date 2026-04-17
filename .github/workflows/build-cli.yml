@@ -46,7 +46,7 @@ jobs:
         ls -la dist/
         node -e "const pkg = require('./dist/package.json'); console.log('name:', pkg.name, 'version:', pkg.version, 'bin:', JSON.stringify(pkg.bin))"
 
-    - uses: actions/upload-artifact@v4
+    - uses: actions/upload-artifact@v7
       with:
         name: cli-dist
         path: cli/dist/
