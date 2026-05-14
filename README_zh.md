@@ -176,7 +176,7 @@ decx process close --port 25419
 | `decx/decx-core/` | 共享 Kotlin API、HTTP 传输、模型、服务和工具 |
 | `decx/decx-plugin/` | JADX GUI 插件和内置 MCP 资源 |
 | `decx/decx-server/` | 独立 headless server 入口和 fat JAR 打包 |
-| `cli/` | TypeScript CLI，负责会话、代码分析、Android 辅助、framework 处理和自管理 |
+| `decx-cli/` | TypeScript CLI，负责会话、代码分析、Android 辅助、framework 处理和自管理 |
 | `skills/` | 面向 AI Agent 的 DECX 分析、App/Framework 漏洞挖掘和 PoC 构造技能 |
 
 核心请求链路：
@@ -194,7 +194,7 @@ CLI / MCP / HTTP
 cd decx
 ./gradlew dist
 
-cd ../cli
+cd ../decx-cli
 npm install
 npm run build
 npm test

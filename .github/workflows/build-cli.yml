@@ -4,11 +4,11 @@ on:
   push:
     branches: [ main ]
     paths:
-      - 'cli/**'
+      - 'decx-cli/**'
   pull_request:
     branches: [ main ]
     paths:
-      - 'cli/**'
+      - 'decx-cli/**'
   workflow_dispatch:
 
 jobs:
@@ -24,7 +24,7 @@ jobs:
       with:
         node-version: '22'
         cache: 'npm'
-        cache-dependency-path: cli/package-lock.json
+        cache-dependency-path: decx-cli/package-lock.json
 
     - name: Install dependencies
       run: npm ci
@@ -49,7 +49,7 @@ jobs:
     - uses: actions/upload-artifact@v7
       with:
         name: cli-dist
-        path: cli/dist/
+        path: decx-cli/dist/
 
   publish-npm:
     needs: build
@@ -62,7 +62,7 @@ jobs:
     - uses: actions/download-artifact@v8
       with:
         name: cli-dist
-        path: cli/dist/
+        path: decx-cli/dist/
 
     - uses: actions/setup-node@v6
       with:
@@ -71,6 +71,6 @@ jobs:
 
     - name: Publish to npm
       run: npm publish --access public --provenance
-      working-directory: cli/dist
+      working-directory: decx-cli/dist
       env:
         NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

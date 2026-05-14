@@ -176,7 +176,7 @@ DECX returns the same structured error format from plugin and standalone server 
 | `decx/decx-core/` | Shared Kotlin API, HTTP transport, models, services, and utilities |
 | `decx/decx-plugin/` | JADX GUI plugin and bundled MCP resources |
 | `decx/decx-server/` | Standalone headless server entry point and fat JAR packaging |
-| `cli/` | TypeScript CLI for sessions, code analysis, Android helpers, framework processing, and self-management |
+| `decx-cli/` | TypeScript CLI for sessions, code analysis, Android helpers, framework processing, and self-management |
 | `skills/` | AI agent skills for DECX analysis, app/framework vulnerability hunting, and PoC construction |
 
 Core request path:
@@ -194,7 +194,7 @@ CLI / MCP / HTTP
 cd decx
 ./gradlew dist
 
-cd ../cli
+cd ../decx-cli
 npm install
 npm run build
 npm test
