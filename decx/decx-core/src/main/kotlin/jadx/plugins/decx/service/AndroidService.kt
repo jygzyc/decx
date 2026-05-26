@@ -11,6 +11,7 @@ import jadx.plugins.decx.model.DecxError
 import jadx.plugins.decx.model.DecxServiceInterface
 import jadx.plugins.decx.api.DecxApiResult
 import jadx.plugins.decx.utils.AnalysisResultUtils
+import jadx.plugins.decx.utils.CodeUtils
 import jadx.plugins.decx.utils.ItemKind
 import org.w3c.dom.Document
 import org.w3c.dom.Element
@@ -370,7 +371,7 @@ class AndroidService(override val decompiler: JadxDecompiler) : DecxServiceInter
                     if ("registerReceiver" !in mthCode) continue
                     receivers.add(mapOf(
                         "class" to jcls.fullName,
-                        "method" to jmth.toString(),
+                        "method" to CodeUtils.methodSignature(jmth),
                         "code" to mthCode
                     ))
                 }
@@ -561,7 +562,7 @@ class AndroidService(override val decompiler: JadxDecompiler) : DecxServiceInter
             } ?: return DecxApiResult.fail( AnalysisResultUtils.error(DecxKind.SYSTEM_SERVICE_IMPL, query, DecxError.SERVICE_IMPL_NOT_FOUND, iface))
 
             val methodItems = serviceClazz.methods.map { method ->
-                val signature = method.toString()
+                val signature = CodeUtils.methodSignature(method)
                 AnalysisResultUtils.item(
                     id = signature,
                     kind = ItemKind.SYMBOL,
@@ -570,7 +571,7 @@ class AndroidService(override val decompiler: JadxDecompiler) : DecxServiceInter
                 )
             }
             val fieldItems = serviceClazz.fields.map { field ->
-                val signature = field.toString()
+                val signature = CodeUtils.fieldSignature(field)
                 AnalysisResultUtils.item(
                     id = signature,
                     kind = ItemKind.SYMBOL,

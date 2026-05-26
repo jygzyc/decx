@@ -5,6 +5,7 @@ import jadx.api.JavaClass
 import jadx.api.JavaField
 import jadx.api.JavaMethod
 import jadx.api.JavaNode
+import jadx.core.dex.info.MethodInfo
 import jadx.core.dex.instructions.args.ArgType
 import jadx.core.dex.visitors.prepare.CollectConstValues
 import java.util.ArrayList
@@ -15,7 +16,7 @@ object CodeUtils {
 
     fun findMethod(decompiler: JadxDecompiler, mthSig: String): Pair<JavaClass, JavaMethod>? {
         decompiler.classesWithInners?.forEach { clazz ->
-            clazz.methods.find { it.toString() == mthSig }?.let { method ->
+            clazz.methods.find { methodSignature(it) == mthSig || it.toString() == mthSig }?.let { method ->
                 return clazz to method
             }
         }
@@ -24,13 +25,24 @@ object CodeUtils {
 
     fun findField(decompiler: JadxDecompiler, fldSig: String): Pair<JavaClass, JavaField>? {
         decompiler.classesWithInners?.forEach { clazz ->
-            clazz.fields.find { it.toString() == fldSig }?.let { field ->
+            clazz.fields.find { fieldSignature(it) == fldSig || it.toString() == fldSig }?.let { field ->
                 return clazz to field
             }
         }
         return null
     }
 
+    fun methodSignature(mth: JavaMethod): String {
+        return mth.toString().replace(" ", "")
+    }
+
+    fun methodSignature(mth: MethodInfo): String {
+        return mth.toString().replace(" ", "")
+    }
+
+    fun fieldSignature(fld: JavaField): String {
+        return fld.toString().replace(" ", "")
+    }
 
     // From jadx core - usage analysis
     fun buildUsageQuery(decompiler: JadxDecompiler, node: JavaNode): Map<JavaNode, List<JavaNode>> {

@@ -74,7 +74,7 @@ class ContextService(override val decompiler: JadxDecompiler) : DecxServiceInter
                 if (currentInsn is BaseInvokeNode) {
                     try {
                         val callMth = currentInsn.callMth
-                        val signature = callMth.toString()
+                        val signature = CodeUtils.methodSignature(callMth)
                         val insnStr = currentInsn.toString()
                         val callee = callees.getOrPut(signature) {
                             CalleeSummary(signature, callMth.declClass.fullName)
@@ -130,7 +130,7 @@ class ContextService(override val decompiler: JadxDecompiler) : DecxServiceInter
             val clazz = decompiler.searchJavaClassOrItsParentByOrigFullName(cls)
                 ?: return DecxApiResult.fail( AnalysisResultUtils.error(DecxKind.CLASS_CONTEXT, query, DecxError.CLASS_NOT_FOUND, cls))
             val methodItems = clazz.methods.map { method ->
-                val signature = method.toString()
+                val signature = CodeUtils.methodSignature(method)
                 AnalysisResultUtils.item(
                     id = signature,
                     kind = ItemKind.SYMBOL,
@@ -139,7 +139,7 @@ class ContextService(override val decompiler: JadxDecompiler) : DecxServiceInter
                 )
             }
             val fieldItems = clazz.fields.map { field ->
-                val signature = field.toString()
+                val signature = CodeUtils.fieldSignature(field)
                 AnalysisResultUtils.item(
                     id = signature,
                     kind = ItemKind.SYMBOL,
@@ -209,12 +209,13 @@ class ContextService(override val decompiler: JadxDecompiler) : DecxServiceInter
             val methodNode = jmth.methodNode
             val xrefMap = CodeUtils.buildUsageQuery(decompiler, jmth)
             val callerItems = processUsage(jmth, xrefMap.values.flatten().toMutableList())
-            val calleeItems = collectCalleeItems(jmth.toString(), methodNode)
+            val signature = CodeUtils.methodSignature(jmth)
+            val calleeItems = collectCalleeItems(signature, methodNode)
             val signatureItem = AnalysisResultUtils.item(
-                id = jmth.toString(),
+                id = signature,
                 kind = ItemKind.SYMBOL,
-                title = "Method signature: $jmth",
-                content = jmth.toString(),
+                title = "Method signature: $signature",
+                content = signature,
                 meta = mapOf(
                     "owner" to jcls.fullName,
                     "return_type" to jmth.returnType.toString(),
@@ -240,10 +241,11 @@ class ContextService(override val decompiler: JadxDecompiler) : DecxServiceInter
             val methodNode = jmth.methodNode
             methodNode.load()
             val dot = dumpCfgDot(methodNode)
+            val signature = CodeUtils.methodSignature(jmth)
             val item = AnalysisResultUtils.item(
-                id = "${jmth}#cfg-dot",
+                id = "$signature#cfg-dot",
                 kind = ItemKind.CODE,
-                title = "CFG DOT: $jmth",
+                title = "CFG DOT: $signature",
                 content = dot,
                 meta = mapOf("language" to "dot")
             )
