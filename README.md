@@ -52,7 +52,7 @@ The `skills/` directory contains:
 
 | Skill | Use |
 |---|---|
-| `decxcli` | General code navigation, source lookup, xrefs, manifest, and resource inspection |
+| `decxcli` | DECX CLI usage, general code navigation, source lookup, xrefs, manifest/resource inspection, and workflow routing |
 | `decxcli-app-vulnhunt` | APK attack-surface enumeration, component/WebView/IPC tracing, exploitability triage, and bilingual reports |
 | `decxcli-framework-vulnhunt` | Android framework and Binder/service vulnerability hunting on the processed final framework bundle |
 | `decxcli-poc` | Build a focused Android PoC app and optional helper server from one confirmed finding |
@@ -87,7 +87,7 @@ decx process close --port 25419
 
 Typical skill sequence:
 
-- `decxcli` for exploration and evidence gathering
+- `decxcli` for exploration, evidence gathering, and routing
 - `decxcli-app-vulnhunt` or `decxcli-framework-vulnhunt` for focused vulnerability hunting
 - `decxcli-poc` for turning one confirmed finding into a buildable PoC
 

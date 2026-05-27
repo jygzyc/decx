@@ -14,13 +14,19 @@ Add DECX to the `plugin` array in your `opencode.json` (global or project-level)
 }
 ```
 
-Restart OpenCode. The plugin installs from git, injects a light DECX bootstrap, and registers DECX skills.
+Restart OpenCode. The plugin installs from git, registers DECX skills, and exposes the lightweight DECX workflow tools.
 
 Verify with OpenCode's native `skill` tool:
 
 ```text
 use skill tool to list skills
-use skill tool to load using-decx
+use skill tool to load decxcli
+```
+
+Verify the workflow tools are available:
+
+```text
+use decx_analyze with dryRun=true and target="sample.apk"
 ```
 
 ## Migrating From Old Manual Install
@@ -48,11 +54,20 @@ Use OpenCode's native `skill` tool:
 
 ```text
 use skill tool to list skills
-use skill tool to load using-decx
+use skill tool to load decxcli
 use skill tool to load decxcli-app-vulnhunt
 ```
 
-Start with `using-decx` for DECX-related work. It routes to `decxcli`, `decxcli-app-vulnhunt`, `decxcli-framework-vulnhunt`, `decxcli-poc`, or `decx-subagent-analysis`.
+Start with `decxcli` for DECX-related work. It handles general DECX CLI navigation and routes to `decxcli-app-vulnhunt`, `decxcli-framework-vulnhunt`, `decxcli-poc`, or `decx-subagent-analysis`.
+
+For automated analysis, prefer the Python-backed exploration tools:
+
+- `decx_analyze`: creates `.decx-analysis/<target>/run.json` as a Fact / Intent / Hint board and runs `bootstrap`, `explore`, and `reason` steps
+- `decx_status`: reads a workflow run state
+- `decx_resume`: resumes a previous workflow run state
+- `decx_hint`: appends human guidance to the board without pretending it is a fact
+
+The OpenCode plugin is a thin JavaScript shim. The core engine is Python under `decx-agent/decx_agent/`.
 
 ## Updating
 

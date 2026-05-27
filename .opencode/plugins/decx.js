@@ -1,73 +1,124 @@
+import { execFile } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { promisify } from "node:util";
 
+const execFileAsync = promisify(execFile);
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const BOOTSTRAP_MARKER = "DECX_OPENCODE_BOOTSTRAP";
+const repoRoot = path.resolve(__dirname, "../..");
+const agentRoot = path.join(repoRoot, "decx-agent");
 
-function stripFrontmatter(content) {
-  const match = content.match(/^---\n[\s\S]*?\n---\n([\s\S]*)$/);
-  return match ? match[1].trim() : content.trim();
+function fallbackTool(definition) {
+  return definition;
 }
 
-function readUsingDecx(skillsDir) {
-  const skillPath = path.join(skillsDir, "using-decx", "SKILL.md");
-  if (!fs.existsSync(skillPath)) return null;
-  return stripFrontmatter(fs.readFileSync(skillPath, "utf8"));
-}
+fallbackTool.schema = {
+  string: () => ({ optional() { return this; } }),
+  number: () => ({ optional() { return this; } }),
+  boolean: () => ({ optional() { return this; } }),
+};
 
-function buildBootstrap(skillsDir) {
-  const usingDecx = readUsingDecx(skillsDir);
-  if (!usingDecx) return null;
-
-  return [
-    `<${BOOTSTRAP_MARKER}>`,
-    "You have DECX skills installed.",
-    "",
-    "IMPORTANT: The `using-decx` skill content is included below. Treat it as already loaded; do not load `using-decx` again unless you need to re-read the source.",
-    "",
-    usingDecx,
-    "",
-    "OpenCode tool mapping:",
-    "- Skill tool -> OpenCode's native `skill` tool",
-    "- Subagents -> OpenCode agent mention syntax when available",
-    "- Shell commands -> OpenCode native shell command tools",
-    "- File operations -> OpenCode native file tools",
-    `</${BOOTSTRAP_MARKER}>`,
-  ].join("\n");
-}
-
-function injectBootstrap(output, bootstrap) {
-  if (!bootstrap || !Array.isArray(output?.messages)) return;
-
-  const firstUser = output.messages.find((message) => (message?.info?.role ?? message?.role) === "user");
-  if (!firstUser || !Array.isArray(firstUser.parts)) return;
-
-  if (firstUser.parts.some((part) => part?.type === "text" && typeof part.text === "string" && part.text.includes(BOOTSTRAP_MARKER))) {
-    return;
+async function loadTool() {
+  try {
+    return (await import("@opencode-ai/plugin")).tool;
+  } catch {
+    return fallbackTool;
   }
+}
 
-  const ref = firstUser.parts[0] ?? {};
-  firstUser.parts.unshift({
-    ...ref,
-    type: "text",
-    text: bootstrap,
+function stripJsonComments(input) {
+  return input
+    .replace(/\/\*[\s\S]*?\*\//g, "")
+    .replace(/(^|[^:])\/\/.*$/gm, "$1");
+}
+
+function loadConfig() {
+  const configPath = path.join(repoRoot, ".opencode", "decx.jsonc");
+  if (!fs.existsSync(configPath)) {
+    return { defaultWorker: "noop", maxSteps: 8 };
+  }
+  const parsed = JSON.parse(stripJsonComments(fs.readFileSync(configPath, "utf8")));
+  return {
+    defaultWorker: parsed.decx?.defaultWorker ?? parsed.defaultWorker ?? "noop",
+    maxSteps: parsed.decx?.maxSteps ?? parsed.maxSteps ?? 8,
+  };
+}
+
+async function runDecxAgent(args) {
+  const { stdout } = await execFileAsync("uv", ["run", "decx-agent", "--project-root", repoRoot, "--json", ...args], {
+    cwd: agentRoot,
+    maxBuffer: 1024 * 1024 * 10,
   });
+  return stdout;
 }
 
 export const DecxPlugin = async () => {
-  const skillsDir = path.resolve(__dirname, "../../skills");
+  const tool = await loadTool();
 
   return {
-    config: async (config) => {
-      config.skills ??= {};
-      config.skills.paths ??= [];
-      if (!config.skills.paths.includes(skillsDir)) {
-        config.skills.paths.push(skillsDir);
-      }
-    },
-    "experimental.chat.messages.transform": async (_input, output) => {
-      injectBootstrap(output, buildBootstrap(skillsDir));
+    tool: {
+      decx_run: tool({
+        description: "Run a configured DECX fact/intent agent task.",
+        args: {
+          target: tool.schema.string(),
+          mode: tool.schema.string().optional(),
+          port: tool.schema.number().optional(),
+          worker: tool.schema.string().optional(),
+          dryRun: tool.schema.boolean().optional(),
+          maxSteps: tool.schema.number().optional(),
+        },
+        async execute(args) {
+          const config = loadConfig();
+          const command = ["--worker", args.worker ?? config.defaultWorker, "run", args.target];
+          if (args.mode) command.push("--mode", args.mode);
+          if (args.port) command.push("--port", String(args.port));
+          if (args.dryRun) command.push("--dry-run");
+          command.push("--max-steps", String(args.maxSteps ?? config.maxSteps));
+          return runDecxAgent(command);
+        },
+      }),
+
+      decx_resume: tool({
+        description: "Resume a DECX fact/intent exploration project.",
+        args: {
+          runPath: tool.schema.string(),
+          worker: tool.schema.string().optional(),
+          dryRun: tool.schema.boolean().optional(),
+          maxSteps: tool.schema.number().optional(),
+        },
+        async execute(args) {
+          const config = loadConfig();
+          const command = ["--worker", args.worker ?? config.defaultWorker, "resume", args.runPath];
+          if (args.dryRun) command.push("--dry-run");
+          command.push("--max-steps", String(args.maxSteps ?? config.maxSteps));
+          return runDecxAgent(command);
+        },
+      }),
+
+      decx_status: tool({
+        description: "Read a DECX fact/intent run state.",
+        args: {
+          runPath: tool.schema.string(),
+        },
+        async execute(args) {
+          return runDecxAgent(["status", args.runPath]);
+        },
+      }),
+
+      decx_hint: tool({
+        description: "Append a human hint to a DECX fact/intent board.",
+        args: {
+          runPath: tool.schema.string(),
+          content: tool.schema.string(),
+          creator: tool.schema.string().optional(),
+        },
+        async execute(args) {
+          const command = ["hint", args.runPath, args.content];
+          if (args.creator) command.push("--creator", args.creator);
+          return runDecxAgent(command);
+        },
+      }),
     },
   };
 };

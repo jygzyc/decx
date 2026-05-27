@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "DECX OpenCode Agent Config",
+  "type": "object",
+  "properties": {
+    "decx": {
+      "type": "object",
+      "properties": {
+        "artifactRoot": { "type": "string", "default": ".decx-analysis" },
+        "defaultWorker": { "type": "string", "enum": ["noop", "codex", "claude-code"], "default": "noop" },
+        "maxSteps": { "type": "integer", "minimum": 1, "maximum": 32, "default": 8 }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

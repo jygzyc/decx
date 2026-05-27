@@ -1,0 +1,8 @@
+{
+  "$schema": "./decx.schema.json",
+  "decx": {
+    "artifactRoot": ".decx-analysis",
+    "defaultWorker": "noop",
+    "maxSteps": 8
+  }
+}

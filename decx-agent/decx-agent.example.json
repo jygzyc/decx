@@ -1,0 +1,8 @@
+{
+  "server": {
+    "mode": "external",
+    "port": 25419,
+    "jar": null,
+    "timeout": 120
+  }
+}

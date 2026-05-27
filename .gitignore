@@ -67,7 +67,6 @@ logs/
 
 # AI
 CLAUDE.md
-AGENTS.md
 .claude/
 .agents/
 .sisyphus/

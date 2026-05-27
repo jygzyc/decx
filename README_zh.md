@@ -52,7 +52,7 @@ ln -s ~/.decx/source/skills ~/.agents/skills
 
 | 技能 | 用途 |
 |---|---|
-| `decxcli` | 通用代码导航、源码查看、交叉引用、Manifest 和资源检查 |
+| `decxcli` | DECX CLI 使用、通用代码导航、源码查看、交叉引用、Manifest/资源检查和工作流路由 |
 | `decxcli-app-vulnhunt` | APK 攻击面枚举、组件/WebView/IPC 追踪、可利用性评估和中英文报告 |
 | `decxcli-framework-vulnhunt` | 只面向处理后的最终 framework 包，分析 Android framework、Binder 和系统服务漏洞 |
 | `decxcli-poc` | 将一个已确认漏洞转换为可构建的 Android PoC App 和可选辅助服务 |
@@ -87,7 +87,7 @@ decx process close --port 25419
 
 典型技能顺序：
 
-- `decxcli` 用于探索和收集证据
+- `decxcli` 用于探索、收集证据和工作流路由
 - `decxcli-app-vulnhunt` 或 `decxcli-framework-vulnhunt` 用于聚焦漏洞挖掘
 - `decxcli-poc` 用于把一个确认漏洞转换为可构建 PoC
 

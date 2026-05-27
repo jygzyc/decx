@@ -1,0 +1,19 @@
+[project]
+name = "decx-agent"
+version = "0.1.0"
+description = "Cairn-style DECX fact/intent exploration agent"
+requires-python = ">=3.10"
+dependencies = [
+    "click>=8.1",
+]
+
+[project.scripts]
+decx-agent = "decx_agent.cli:main"
+
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["decx_agent*"]

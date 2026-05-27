@@ -93,7 +93,7 @@ class CommonService(override val decompiler: JadxDecompiler) : DecxServiceInterf
             clazz.decompile()
             val items = mutableListOf<Map<String, Any>>()
             for (method in clazz.methods) {
-                val signature = method.toString()
+                val signature = CodeUtils.methodSignature(method)
                 val lines = method.codeStr.lines()
                 for ((index, line) in lines.withIndex()) {
                     if (!matcher.matches(line)) continue
@@ -156,7 +156,7 @@ class CommonService(override val decompiler: JadxDecompiler) : DecxServiceInterf
                 clazz.methods.filter { method -> method.fullName.lowercase().contains(lowerMethodName) }
             } ?: emptyList()
             val items = mths.map { method ->
-                val sig = method.toString()
+                val sig = CodeUtils.methodSignature(method)
                 AnalysisResultUtils.item(
                     id = sig,
                     kind = ItemKind.SYMBOL,
@@ -180,11 +180,12 @@ class CommonService(override val decompiler: JadxDecompiler) : DecxServiceInterf
             val jmth = mthPair.second
             jcls.decompile()
             val code = if (smali) CodeUtils.extractMethodSmaliCode(jcls, jmth) else jmth.codeStr
+            val signature = CodeUtils.methodSignature(jmth)
             val items = listOf(
                 AnalysisResultUtils.item(
-                    id = jmth.toString(),
+                    id = signature,
                     kind = ItemKind.CODE,
-                    title = jmth.toString(),
+                    title = signature,
                     content = code,
                     meta = mapOf("language" to if (smali) "smali" else "java")
                 )

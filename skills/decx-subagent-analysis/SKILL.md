@@ -1,6 +1,6 @@
 ---
 name: decx-subagent-analysis
-description: Controller skill for DECX analyses that should be split into recon, trace, review, or PoC subagents while keeping one DECX session and one artifact workspace.
+description: DECX context analysis subagent. Use when decx-app-vulnhunt or decx-framework-vulnhunt needs one delegated context trace for a sourceId, sinkId or targetId, nextHop, method chain, guard, data-flow edge, or missing proof in an XML handoff artifact.
 metadata:
   requires:
     bins: ["decx"]
@@ -8,163 +8,67 @@ metadata:
 
 # DECX Subagent Analysis
 
-Use this skill only when the task benefits from splitting work into independent phases or targets.
+Use this skill only inside a parent DECX vuln-hunt workflow. The parent skill owns the workflow, session, and final decision. This subagent only analyzes assigned context and returns evidence.
 
-This skill is the controller layer. It does not replace:
+## Instructions
 
-- `decxcli`
-- `decxcli-app-vulnhunt`
-- `decxcli-framework-vulnhunt`
-- `decxcli-poc`
+Step 1: Read Assignment
+- Confirm the parent skill, DECX port, target kind, `sourceId`, sink identifier, assigned `nextHop` or method signature, stop condition, and allowed files.
+- Use the active `.decx-analysis/<target-name>/h_*.xml` handoff artifact as context.
+- Require that XML to be created from the parent skill's `assets/decx-analysis-template.xml`.
+- Treat `sourceId` as the source-chain id. In app artifacts, treat `sinkId` as the current known or suspected sink id and `flowSig` as the current class-level flow signature.
+- Treat the XML as the context packet; do not accept raw chat summaries or source dumps as a substitute for the assigned XML.
+- If the assignment asks for output generation or broad workflow planning, return a blocker.
 
-It coordinates them.
+Step 2: Analyze Context
+- Follow only the assigned chain, guard, data-flow edge, or missing proof.
+- Use DECX commands to inspect exact classes, methods, callers, callees, xrefs, resources, or manifests needed for that assignment.
+- Stop at a sink, non-bypassable guard, dead end, proven next hop, or named missing proof.
 
-For reusable dispatch patterns and Codex-oriented subagent notes, see `references/subagent-dispatch.md`.
+Step 3: Return Evidence
+- Return concrete method signatures, branch or guard outcome, attacker-controlled values, sink arguments, evidence locations, and unresolved proof gaps.
+- Update only assigned XML fields when write access is allowed.
+- If XML writing is unsafe, return a patch-ready summary instead of editing.
 
-## When To Use
+Step 4: Preserve Boundaries
+- Do not close or restart the DECX session.
+- Do not analyze unrelated chains discovered during the task.
+- Record unrelated but relevant pivots only as `nextHop` or open questions.
 
-Use this skill when at least one of these is true:
+## Examples
 
-- the task has a clear recon phase and a separate deep-trace phase
-- multiple independent targets can be traced in parallel
-- one agent should review evidence produced by another
-- a supported finding needs a separate PoC step
+Example 1: Exported Activity Context
+- Input: one `sourceId`, one sink id, one `nextHop.signature`, one controlled variable set
+- Output: call chain, guard result, sink argument, evidence, and missing proof
 
-Do not use this skill for simple one-shot lookups or a single direct DECX command. Use `decxcli` for that.
+Example 2: App Service Bind Context
+- Input: one exported or bindable app Service target and one Binder/Messenger/AIDL entry
+- Output: dispatch path, caller control, permission or identity guard, sensitive method, and next hop
 
-## Controller Responsibilities
+Example 3: Framework Binder Context
+- Input: one framework Binder method, one caller-controlled parameter set, and one privileged sink family
+- Output: Binder reachability, caller control, permission/identity/user guard result, sink argument, and next hop
 
-- Choose the correct underlying DECX skill first.
-- Open or reuse exactly one DECX session for the active target.
-- Create and maintain one work directory under `.decx-analysis/<target-name>/`.
-- Dispatch narrow subagent tasks with explicit write boundaries.
-- Review subagent outputs before moving to the next phase.
-- Keep final control of session close and final answer.
+Example 4: Missing Proof Check
+- Input: one unresolved guard, helper method, callback, or forwarded Intent edge
+- Output: proven outcome or the exact reason proof is missing
 
-## Skill Routing
+## Constraints
 
-- For APK surfaces, use `decxcli-app-vulnhunt`.
-- For framework, Binder, AIDL, `system_server`, or OEM service work, use `decxcli-framework-vulnhunt`.
-- For PoC implementation, use `decxcli-poc`.
-- For general source navigation outside hunting, use `decxcli`.
-
-## Shared Rules
-
+- Do not restate the full app or framework vuln-hunt workflow here.
+- Do not handle output generation or handoff work.
+- Do not analyze multiple chains in one invocation.
+- Do not write outside the assigned XML fields.
+- Do not use older analysis or handoff templates.
+- Do not close, restart, or replace the DECX session.
+- Do not accept raw source dumps as a result.
 - Every session-backed `decx code` and `decx ard` command must include `-P <port>`.
-- `decx ard system-services` and `decx ard perm-info` are adb-backed and do not use `-P <port>`.
-- If a command is missing, rejected, or unclear, run the nearest `--help` command before retrying.
-- Keep one DECX session per target unless the user explicitly changes target.
-- Keep raw source small; store structured outputs in artifacts instead of pasting large dumps.
-- Do not let subagents close the DECX session unless the assigned task is the final PoC cleanup step.
+- adb-backed `system-services` and `perm-info` do not use `-P <port>`.
 
-## Default Artifact Layout
+## Troubleshooting
 
-Use:
-
-```text
-.decx-analysis/<target-name>/
-```
-
-Common files:
-
-- `recon.json`
-- `coverage.json`
-- `shortlist.json`
-- `findings.json`
-- `report.md`
-- `resume.json`
-- `poc-handoff.json`
-
-Only create the files needed by the active path.
-
-## Dispatch Model
-
-### Recon Agent
-
-Use one recon agent first when the target surface is still being enumerated.
-
-Allowed work:
-
-- enumerate attack surface
-- write `recon.json`
-- write `coverage.json` for app hunts or `shortlist.json` for framework hunts
-
-Do not let the main agent duplicate Phase 2 DECX commands unless the recon agent is unavailable.
-
-### Trace Agent
-
-Use one trace agent per independent target or chain.
-
-Good splits:
-
-- one exported component
-- one WebView host
-- one Binder service family
-- one method chain
-
-Bad splits:
-
-- multiple agents writing the same finding block
-- multiple agents tracing the same chain from different starting points without coordination
-
-### Review Agent
-
-Use one review agent after recon or trace work produced enough evidence to judge completeness or reportability.
-
-Allowed work:
-
-- verify coverage completeness
-- check evidence quality
-- identify unsupported claims
-- suggest downgrade from `statically-supported` to `candidate` or `rejected`
-
-### PoC Agent
-
-Use one PoC agent only after there is one active supported finding and the user wants a PoC.
-
-Allowed work:
-
-- normalize the finding
-- re-verify the DECX path
-- build or update one `poc-<target>` project
-
-## Required Dispatch Contract
-
-Every subagent task must include:
-
-- target type
-- session port
-- active underlying DECX skill
-- allowed files to read
-- allowed files to write
-- exact stop condition
-- expected return shape
-
-Use prompts like:
-
-```text
-Role: decx-recon
-Target: APK app hunt
-Port: <port>
-Skill: decxcli-app-vulnhunt
-Write only: .decx-analysis/<target>/recon.json
-Stop when: full attack-surface inventory is written
-Return: files written, targets found, unresolved questions
-```
-
-## Phase Order
-
-Default order:
-
-1. controller opens or reuses the session
-2. controller creates `.decx-analysis/<target-name>/`
-3. recon agent writes inventory artifacts
-4. trace agents analyze independent retained targets
-5. review agent checks coverage or evidence quality
-6. controller updates `findings.json`, `resume.json`, and `report.md`
-7. optional PoC agent runs from one supported finding
-8. controller closes the DECX session only when no downstream work remains
-
-## Fallback
-
-If the host does not support subagents, keep the same phase order and artifact contract, but execute the phases sequentially in the main agent.
+- Assignment is too broad -> return a blocker and request one sourceId, sink id, nextHop, or proof gap.
+- Evidence is only theoretical -> return `candidate` with missing proof; do not promote.
+- Another chain appears -> record it as `nextHop`; do not expand scope.
+- XML write conflict -> return a patch-ready summary instead of overwriting.
+- Command is missing or rejected -> run the nearest `--help` command before retrying.
