@@ -15,8 +15,9 @@ import java.util.regex.Pattern
 object CodeUtils {
 
     fun findMethod(decompiler: JadxDecompiler, mthSig: String): Pair<JavaClass, JavaMethod>? {
+        val normalizedSig = normalizeSignature(mthSig)
         decompiler.classesWithInners?.forEach { clazz ->
-            clazz.methods.find { methodSignature(it) == mthSig || it.toString() == mthSig }?.let { method ->
+            clazz.methods.find { methodSignature(it) == normalizedSig }?.let { method ->
                 return clazz to method
             }
         }
@@ -24,8 +25,9 @@ object CodeUtils {
     }
 
     fun findField(decompiler: JadxDecompiler, fldSig: String): Pair<JavaClass, JavaField>? {
+        val normalizedSig = normalizeSignature(fldSig)
         decompiler.classesWithInners?.forEach { clazz ->
-            clazz.fields.find { fieldSignature(it) == fldSig || it.toString() == fldSig }?.let { field ->
+            clazz.fields.find { fieldSignature(it) == normalizedSig }?.let { field ->
                 return clazz to field
             }
         }
@@ -42,6 +44,10 @@ object CodeUtils {
 
     fun fieldSignature(fld: JavaField): String {
         return fld.toString().replace(" ", "")
+    }
+
+    private fun normalizeSignature(signature: String): String {
+        return signature.replace(" ", "")
     }
 
     // From jadx core - usage analysis
