@@ -1,0 +1,119 @@
+import type { AgentPhase, Fact, Hint, Intent, TaskConfig, WorkerRun, WorkflowEvent } from "../core/types.js";
+import type { ProjectDetail } from "../server/repository-types.js";
+import { defaultRoleForPhase, getRole, type RoleDefinition } from "./roles.js";
+
+export interface PromptInput {
+  detail: ProjectDetail;
+  phase: AgentPhase;
+  role?: string;
+  intent?: Intent;
+}
+
+/**
+ * Build the full prompt for a worker execution.
+ * Sections: capability boundary → project context → role definition → phase instruction → graph state → artifacts → history → intent → output contract.
+ */
+export function buildWorkerPrompt(input: PromptInput): string {
+  const { detail, phase, intent } = input;
+  const roleId = input.role ?? intent?.role ?? defaultRoleForPhase(phase);
+  const role = getRole(detail.project.taskConfig, roleId);
+
+  return [
+    // Capability boundary — what the worker is allowed to do
+    role.capabilities?.length
+      ? `Allowed capabilities: ${role.capabilities.join(", ")}. Use worker tools, MCP, and DECX commands as needed.`
+      : "Use the worker runtime tools available to you. Return only the required JSON protocol.",
+
+    // Project context
+    [
+      `Project: ${detail.project.name}`,
+      `Session: ${detail.project.session}`,
+      `Target: ${detail.project.target}`,
+      `Goal: ${detail.project.goal}`,
+    ].join("\n"),
+
+    // Role definition
+    [
+      `Role: ${role.id}`,
+      role.extends ? `Extends: ${role.extends}` : "",
+      "",
+      role.prompt,
+    ].filter(Boolean).join("\n"),
+
+    // Phase-specific instructions
+    phaseInstruction(detail.project.taskConfig, phase),
+
+    // Current graph state
+    graphBlock(detail.facts, detail.intents, detail.hints),
+
+    // Artifacts
+    detail.artifacts.length
+      ? `Artifacts:\n${detail.artifacts.map(a => `- ${a.fileName} (${a.scope}/${a.kind})`).join("\n")}`
+      : "Artifacts: none",
+
+    // Recent history
+    workerHistory(detail.workerRuns),
+
+    // Current intent
+    intent ? [
+      `Current intent: ${intent.id}`,
+      `Role: ${intent.role ?? "explorer"}`,
+      `Description: ${intent.description}`,
+      intent.promptText ? `Intent prompt:\n${intent.promptText}` : "",
+    ].filter(Boolean).join("\n") : "",
+
+    // Output contract
+    outputContract(phase),
+  ].filter(Boolean).join("\n\n");
+}
+
+function phaseInstruction(config: TaskConfig, phase: AgentPhase): string {
+  const role = config.workflow.phases.find((item) => item.id === phase)?.role;
+  const text = role ? `Execute the configured ${phase} phase as role ${role}.` : (
+    phase === "bootstrap" ? "Create the initial fact or first exploration intent for this configured task." :
+    phase === "reason" ? "Decide if the goal is satisfied. If not, create one to three concrete next intents." :
+    phase === "review" ? "Review for drift, weak evidence, repeated work, or premature completion." :
+    "Execute the current intent and return one confirmed fact when successful."
+  );
+  return `Phase instruction: ${text}`;
+}
+
+function graphBlock(facts: Fact[], intents: Intent[], hints: Hint[]): string {
+  const fmtIntent = (i: Intent) =>
+    `- ${i.id} [${i.status}] role=${i.role ?? "explorer"} from=${i.from.join(",") || "origin"}: ${i.description}`;
+  return [
+    "Facts:",
+    facts.map(f => `- ${f.id}: ${f.description}`).join("\n") || "- none",
+    "",
+    "Intents:",
+    intents.map(fmtIntent).join("\n") || "- none",
+    "",
+    "Hints:",
+    hints.map(h => `- ${h.id}: ${h.content}`).join("\n") || "- none",
+  ].join("\n");
+}
+
+function workerHistory(runs: WorkerRun[]): string {
+  const recent = runs.slice(-5);
+  return [
+    "Recent worker runs:",
+    recent.map(r => `- ${r.phase}/${r.worker} code=${r.returncode} stdout=${JSON.stringify(r.stdoutPreview.slice(0, 160))}`).join("\n") || "- none",
+  ].join("\n");
+}
+
+function outputContract(phase: AgentPhase): string {
+  if (phase === "reason") {
+    return [
+      'Return {"accepted":true, "data":{"complete":{"from":["f001"],"description":"why done"}}}',
+      'or {"accepted":true, "data":{"intents":[{"from":["f001"],"description":"next","role":"explorer"}]}}',
+    ].join("\n");
+  }
+  if (phase === "review") {
+    return 'Return {"accepted":true, "data":{"review":{"summary":"...","severity":"info"},"events":[]}} or {"accepted":true, "data":{}}.';
+  }
+  return [
+    'Return {"accepted":true, "data":{"fact":{"description":"...","evidence":[]},"events":[]}}',
+    'or {"accepted":true, "data":{"intents":[{"from":["origin"],"description":"next","role":"explorer"}],"events":[]}}',
+    'or {"accepted":false, "reason":"why cannot execute"}.',
+  ].join("\n");
+}
