@@ -4,7 +4,7 @@ import { fileURLToPath } from "url";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
-export const REPO_ROOT = path.resolve(__dirname, "..", "..");
+const REPO_ROOT = path.resolve(__dirname, "..", "..");
 export const DECX_TEST_ROOT = path.join(REPO_ROOT, ".decx_test");
 export const DECX_TEST_HOME = path.join(DECX_TEST_ROOT, "home");
 export const DECX_TEST_DECX_HOME = path.join(DECX_TEST_HOME, ".decx");

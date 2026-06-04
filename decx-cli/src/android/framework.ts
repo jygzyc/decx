@@ -5,7 +5,7 @@ import { collectFrameworkFiles, normalizeOem } from "./framework-collector.js";
 import { defaultFrameworkRoot, ensureDirectory, resolveFrameworkTools } from "./framework-tools.js";
 import { cleanFrameworkOutputs, processFrameworkFiles } from "./framework-processor.js";
 import { packFrameworkJar } from "./framework-packer.js";
-import { openAnalysisTarget } from "../commands/process.js";
+import { openAnalysisTarget } from "../core/launcher.js";
 import { FileError } from "../utils/errors.js";
 import type {
   FrameworkArtifactRecord,
@@ -207,12 +207,13 @@ export async function buildFramework(
 
 export async function openFrameworkJar(
   jarPath: string,
-  options: Pick<FrameworkCommandOptions, "name" | "port">,
+  options: Pick<FrameworkCommandOptions, "name" | "port" | "heap">,
 ): Promise<Record<string, unknown>> {
   const defaultName = options.name ?? summarizeFrameworkJarPath(jarPath)?.session;
   return openAnalysisTarget(jarPath, {
     name: defaultName,
     port: options.port,
+    heap: options.heap,
     force: false,
     passthroughArgs: [],
   });

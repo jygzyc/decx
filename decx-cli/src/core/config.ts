@@ -2,18 +2,16 @@
  * Configuration management for DECX CLI.
  */
 
-import { existsSync, readFileSync, writeFileSync, mkdirSync, renameSync } from "fs";
+import { existsSync, readFileSync } from "fs";
 import * as path from "path";
-import { randomBytes } from "crypto";
 import type { Config } from "./types.js";
 import * as session from "./session.js";
 import { decxHome, decxPath, userHome } from "./paths.js";
+import { atomicWriteJson } from "../utils/fs.js";
 
 const HOME = userHome();
 const CONFIG_DIR = decxHome();
 const CONFIG_FILE = path.join(CONFIG_DIR, "config.json");
-
-export * from "./session.js";
 
 export function expandPath(p: string): string {
   if (p.startsWith("~/") || p === "~") return path.join(HOME, p.slice(1));
@@ -39,10 +37,7 @@ function readConfig(): Config {
 }
 
 function writeConfig(config: Config): void {
-  mkdirSync(CONFIG_DIR, { recursive: true });
-  const tmpFile = `${CONFIG_FILE}.${randomBytes(4).toString("hex")}.tmp`;
-  writeFileSync(tmpFile, JSON.stringify(config, null, 2), "utf-8");
-  renameSync(tmpFile, CONFIG_FILE);
+  atomicWriteJson(CONFIG_FILE, config);
 }
 
 export class Manager {

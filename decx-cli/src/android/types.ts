@@ -1,4 +1,4 @@
-export type FrameworkOem = "vivo" | "oppo" | "xiaomi" | "honor" | "google";
+export type FrameworkOem = "vivo" | "oppo" | "xiaomi" | "honor" | "google" | "sansumg";
 
 export interface AdbCommandResult {
   stdout: string;
@@ -56,6 +56,7 @@ export interface FrameworkCommandOptions {
   cleanSource?: boolean;
   port?: string;
   name?: string;
+  heap?: string;
   noOpen?: boolean;
 }
 

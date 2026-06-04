@@ -6,7 +6,7 @@ import {
   installDecxServer,
   selectDecxServerAsset,
   type ReleaseAsset,
-} from "../src/server/installer.js";
+} from "../src/core/installer.js";
 import { DECX_TEST_SERVER_JAR, resetTestDir } from "./test-paths.js";
 
 describe("installer", () => {

@@ -6,7 +6,13 @@
  */
 
 import { Command } from "commander";
-import { makeProcessCommand, normalizeJadxPassthroughArgs } from "../src/commands/process.js";
+import { makeProcessCommand } from "../src/commands/process.js";
+import {
+  buildDecxServerJavaArgs,
+  defaultJavaHeap,
+  extractPassthroughArgs,
+  normalizeJadxPassthroughArgs,
+} from "../src/core/launcher.js";
 
 function createProgram(): Command {
   const program = new Command();
@@ -69,12 +75,13 @@ describe("process command structure", () => {
       expect(open.registeredArguments.length).toBeGreaterThanOrEqual(1);
     });
 
-    it("has --port, --force, --name options", () => {
+    it("has --port, --force, --name, and --heap options", () => {
       const open = findCommand(processCmd, ["open"])!;
       const flags = getOptionFlags(open);
       expect(flags.some(f => f.includes("--port"))).toBe(true);
       expect(flags.some(f => f.includes("--force"))).toBe(true);
       expect(flags.some(f => f.includes("--name"))).toBe(true);
+      expect(flags.some(f => f.includes("--heap"))).toBe(true);
     });
   });
 
@@ -121,13 +128,64 @@ describe("normalizeJadxPassthroughArgs", () => {
     expect(normalizeJadxPassthroughArgs(["--deobf"])).toEqual([
       "--deobf",
       "--show-bad-code",
+      "-Pdex-input.verify-checksum=no",
     ]);
   });
 
-  it("does not duplicate --show-bad-code when already provided", () => {
-    expect(normalizeJadxPassthroughArgs(["--deobf", "--show-bad-code"])).toEqual([
+  it("adds checksum verification disable option by default", () => {
+    expect(normalizeJadxPassthroughArgs(["--deobf"])).toContain("-Pdex-input.verify-checksum=no");
+  });
+
+  it("does not duplicate default jadx options when already provided", () => {
+    expect(normalizeJadxPassthroughArgs([
       "--deobf",
       "--show-bad-code",
+      "-Pdex-input.verify-checksum=no",
+    ])).toEqual([
+      "--deobf",
+      "--show-bad-code",
+      "-Pdex-input.verify-checksum=no",
     ]);
+  });
+});
+
+describe("extractPassthroughArgs", () => {
+  const originalArgv = process.argv;
+
+  afterEach(() => {
+    process.argv = originalArgv;
+  });
+
+  it("does not pass DECX heap option through to jadx", () => {
+    process.argv = [
+      "node",
+      "decx",
+      "process",
+      "open",
+      "app.apk",
+      "--heap",
+      "8g",
+      "--deobf",
+    ];
+
+    expect(extractPassthroughArgs()).toEqual(["--deobf"]);
+  });
+});
+
+describe("buildDecxServerJavaArgs", () => {
+  it("uses two thirds of machine memory rounded down by default", () => {
+    expect(buildDecxServerJavaArgs("server.jar", "app.apk", 25419, ["--show-bad-code"])).toEqual([
+      `-Xmx${defaultJavaHeap()}`,
+      "-jar",
+      "server.jar",
+      "app.apk",
+      "--port",
+      "25419",
+      "--show-bad-code",
+    ]);
+  });
+
+  it("uses the requested max heap when provided", () => {
+    expect(buildDecxServerJavaArgs("server.jar", "app.apk", 25419, [], "8g")[0]).toBe("-Xmx8g");
   });
 });

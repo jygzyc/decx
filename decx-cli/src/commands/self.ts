@@ -9,7 +9,7 @@ import * as path from "path";
 import { fileURLToPath } from "url";
 import { Formatter } from "../utils/formatter.js";
 import { Manager } from "../core/config.js";
-import { checkForServerUpdate, installDecxServer, type InstallDecxServerResult } from "../server/installer.js";
+import { checkForServerUpdate, installDecxServer, type InstallDecxServerResult } from "../core/installer.js";
 import { DecxError, ServerError, withErrorHandler } from "../utils/errors.js";
 
 interface CliPackageMetadata {
@@ -80,12 +80,13 @@ export async function executeSelfInstall(
 
 export function makeSelfCommand(): Command {
   const cmd = new Command("self");
-  cmd.description("Self-management commands (update, install, etc.)");
+  cmd.description("Install and update the bundled decx-server.jar and npm CLI package");
 
   cmd
     .command("install")
-    .description("Install or update decx-server.jar")
-    .option("-p, --prerelease", "Install prerelease version")
+    .summary("Download or replace the local decx-server.jar")
+    .description("Install the decx-server.jar used by process open and framework open/run. The file is stored under DECX_HOME when set, otherwise ~/.decx.")
+    .option("-p, --prerelease", "Install the latest prerelease server artifact instead of the latest stable release")
     .action(withErrorHandler(async (opts) => {
       const fmt = new Formatter();
       fmt.output(await executeSelfInstall(opts.prerelease));
@@ -93,8 +94,9 @@ export function makeSelfCommand(): Command {
 
   cmd
     .command("update")
-    .description("Update decx-server and/or decx-cli")
-    .option("-p, --prerelease", "Install prerelease server version")
+    .summary("Update both decx-server.jar and the globally installed npm CLI")
+    .description("Check for a newer decx-server.jar, install it when available, then run npm install -g for the current CLI package.")
+    .option("-p, --prerelease", "Allow prerelease server artifacts when checking for server updates")
     .action(withErrorHandler(async (opts) => {
       const fmt = new Formatter();
       const mgr = Manager.get();

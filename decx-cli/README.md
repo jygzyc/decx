@@ -47,6 +47,7 @@ decx self update [-p]           # Update decx-server.jar and the currently insta
 | `-P, --port <port>` | Server port |
 | `--force` | Force start even if session exists |
 | `-n, --name <name>` | Custom session name |
+| `--heap <size>` | Java max heap for `decx-server.jar` (default: 2/3 of machine memory, rounded down; use larger values such as `8g` for large APK/framework initialization) |
 
 All standard [jadx-cli options](https://github.com/skylot/jadx) are passed through directly. `decx process open` enables `--show-bad-code` by default, and common passthrough options also include `--deobf`, `--no-res`, `-j`/`--threads-count`, `--no-imports`, `--no-debug-info`, `--escape-unicode`, `--log-level`.
 
@@ -154,6 +155,7 @@ decx process close --port 25419
 | `--no-open` | Do not open the generated framework jar after packing |
 | `-n, --name <name>` | Custom DECX session name when opening the jar |
 | `-P, --port <port>` | Server port when opening the jar |
+| `--heap <size>` | Java max heap when opening the framework jar (default: 2/3 of machine memory, rounded down) |
 
 **Artifact naming**
 

@@ -1,7 +1,8 @@
-import { chmodSync, existsSync, mkdirSync } from "fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "fs";
 import * as path from "path";
 import { fileURLToPath } from "url";
 import { spawnSync } from "child_process";
+import { gunzipSync } from "zlib";
 import { FileError } from "../utils/errors.js";
 import { decxPath } from "../core/paths.js";
 import type {
@@ -31,7 +32,30 @@ function currentArchDir(): string {
 
 function packagedBinPath(...parts: string[]): string {
   const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-  return path.join(root, "bin", ...parts);
+  const rawPath = path.join(root, "bin", ...parts);
+  if (existsSync(rawPath)) return rawPath;
+  // Fallback: binary may be gzip-compressed in the package; decompress to cache
+  const gzPath = rawPath + ".gz";
+  if (existsSync(gzPath)) return decompressBinToCache(gzPath, parts);
+  return rawPath;
+}
+
+/**
+ * Decompress a gzip binary into ~/.decx/cache/bin/<key>.
+ * Returns the path to the decompressed executable.
+ */
+function decompressBinToCache(gzPath: string, parts: string[]): string {
+  const cacheDir = decxPath("cache", "bin");
+  mkdirSync(cacheDir, { recursive: true });
+  // Cache key: flatten the platform/arch/filename path into one segment
+  const cacheFile = path.join(cacheDir, parts.join("-"));
+  if (!existsSync(cacheFile)) {
+    const compressed = readFileSync(gzPath);
+    const original = gunzipSync(compressed);
+    writeFileSync(cacheFile, original);
+    chmodSync(cacheFile, 0o755);
+  }
+  return cacheFile;
 }
 
 function resolvePackagedErofsExtractor(): string | null {

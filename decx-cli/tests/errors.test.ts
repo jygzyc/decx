@@ -10,7 +10,6 @@ import {
   ConfigError,
   withErrorHandler,
 } from "../src/utils/errors.js";
-import { Formatter } from "../src/utils/formatter.js";
 import { jest } from "@jest/globals";
 
 describe("Error classes", () => {

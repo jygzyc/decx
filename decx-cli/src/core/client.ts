@@ -8,8 +8,6 @@
 import { DecxError } from "../utils/errors.js";
 import { logApiCall } from "../utils/logger.js";
 
-export { DecxError };
-
 export type FetchFn = typeof globalThis.fetch;
 
 export type ClassFilterOptions = {

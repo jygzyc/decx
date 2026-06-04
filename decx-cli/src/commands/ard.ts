@@ -1,10 +1,11 @@
 import { Command } from "commander";
 import { resolveCommandClient } from "../core/client-helper.js";
-import type { ClassFilterOptions, ExportedComponentOptions, ResourceFilterOptions } from "../core/client.js";
+import type { ExportedComponentOptions, ResourceFilterOptions } from "../core/client.js";
 import { AdbClient, filterSystemServices } from "../android/adb.js";
 import { Formatter } from "../utils/formatter.js";
 import { withErrorHandler } from "../utils/errors.js";
 import { logCliEvent } from "../utils/logger.js";
+import { collectOption, addPackageFilterOptions, parseClassFilterOptions } from "./shared-options.js";
 import {
   buildFramework,
   collectFramework,
@@ -17,39 +18,15 @@ import {
 
 function addAdbDeviceOptions(cmd: Command): Command {
   return cmd
-    .option("--adb-path <path>", "ADB executable path")
-    .option("--serial <serial>", "ADB device serial");
+    .option("--adb-path <path>", "Path to the adb executable; defaults to adb on PATH")
+    .option("--serial <serial>", "ADB device serial to use when multiple devices are connected");
 }
 
 function addFrameworkCommonOptions(cmd: Command): Command {
   return addAdbDeviceOptions(cmd)
-    .option("--source-dir <dir>", "Framework source directory")
-    .option("--out-dir <dir>", "Framework output directory")
-    .option("--clean-source", "Remove source/ after the command finishes successfully");
-}
-
-function collectOption(value: string, previous: string[]): string[] {
-  previous.push(value);
-  return previous;
-}
-
-function addPackageFilterOptions(cmd: Command): Command {
-  return cmd
-    .option("--limit <n>", "Limit returned results")
-    .option("--include-package <name>", "Only include items in this package", collectOption, [])
-    .option("--exclude-package <name>", "Exclude items in this package", collectOption, [])
-    .option("--no-regex", "Treat filter values as literal text");
-}
-
-function parseClassFilterOptions(opts: Record<string, unknown>): ClassFilterOptions {
-  return {
-    filter: {
-      ...(opts.limit ? { limit: parseInt(String(opts.limit), 10) } : {}),
-      includes: Array.isArray(opts.includePackage) ? opts.includePackage.map(String) : [],
-      excludes: Array.isArray(opts.excludePackage) ? opts.excludePackage.map(String) : [],
-      ...(opts.regex === false ? { regex: false } : {}),
-    },
-  };
+    .option("--source-dir <dir>", "Directory containing pulled framework files or receiving collected files")
+    .option("--out-dir <dir>", "Directory for processed framework artifacts and packed jar output")
+    .option("--clean-source", "Remove the collected source directory after successful processing");
 }
 
 function parseExportedComponentOptions(opts: Record<string, unknown>): ExportedComponentOptions {
@@ -71,18 +48,19 @@ function parseResourceFilterOptions(opts: Record<string, unknown>): ResourceFilt
 
 export function makeArdCommand(): Command {
   const cmd = new Command("ard");
-  cmd.description("Android Specific Analysis");
+  cmd.description("Android app, framework, resource, permission, and device analysis commands");
 
   cmd
-    .option("-s, --session <name>", "Target session by name")
-    .option("-P, --port <port>", "Server port");
+    .option("-s, --session <name>", "Use a named DECX process session instead of the default port")
+    .option("-P, --port <port>", "Connect to a DECX HTTP server on this port");
 
   // ── App analysis ──────────────────────────────────────────────────────────
 
   cmd
     .command("app-manifest")
-    .description("Get Android App AndroidManifest.xml")
-    .option("--page <n>", "Page number", String)
+    .summary("Return the APK AndroidManifest.xml")
+    .description("Return the decoded AndroidManifest.xml for the current app analysis session.")
+    .option("--page <n>", "Result page number to fetch", String)
     .action(withErrorHandler(async (opts, command) => {
       const { fmt, client } = resolveCommandClient(opts, command);
       const page = opts.page ? parseInt(opts.page) : 1;
@@ -91,8 +69,9 @@ export function makeArdCommand(): Command {
 
   cmd
     .command("main-activity")
-    .description("Get main activity name")
-    .option("--page <n>", "Page number", String)
+    .summary("Return the launcher activity class")
+    .description("Return the app launcher activity declared with MAIN and LAUNCHER intent filters.")
+    .option("--page <n>", "Result page number to fetch", String)
     .action(withErrorHandler(async (opts, command) => {
       const { fmt, client } = resolveCommandClient(opts, command);
       const page = opts.page ? parseInt(opts.page) : 1;
@@ -101,8 +80,9 @@ export function makeArdCommand(): Command {
 
   cmd
     .command("app-application")
-    .description("Get Application class name")
-    .option("--page <n>", "Page number", String)
+    .summary("Return the custom Application class")
+    .description("Return the android:name Application class declared by the app manifest, when present.")
+    .option("--page <n>", "Result page number to fetch", String)
     .action(withErrorHandler(async (opts, command) => {
       const { fmt, client } = resolveCommandClient(opts, command);
       const page = opts.page ? parseInt(opts.page) : 1;
@@ -111,11 +91,12 @@ export function makeArdCommand(): Command {
 
   cmd
     .command("exported-components")
-    .description("List exported components")
-    .option("--type <type>", "Only include component type: activity, service, receiver, or provider", collectOption, [])
-    .option("--exclude-type <type>", "Exclude component type: activity, service, receiver, or provider", collectOption, [])
-    .option("--no-regex", "Treat component type filters as literal text")
-    .option("--page <n>", "Page number", String)
+    .summary("List exported activities, services, receivers, and providers")
+    .description("List manifest components exposed to other apps. Filter component types with --type or --exclude-type.")
+    .option("--type <type>", "Include only component types matching this value: activity, service, receiver, or provider; repeatable", collectOption, [])
+    .option("--exclude-type <type>", "Exclude component types matching this value: activity, service, receiver, or provider; repeatable", collectOption, [])
+    .option("--no-regex", "Treat component type filters as literal text instead of regular expressions")
+    .option("--page <n>", "Result page number to fetch", String)
     .action(withErrorHandler(async (opts, command) => {
       const { fmt, client } = resolveCommandClient(opts, command);
       const page = opts.page ? parseInt(opts.page) : 1;
@@ -124,8 +105,9 @@ export function makeArdCommand(): Command {
 
   cmd
     .command("app-deeplinks")
-    .description("List deep link schemes")
-    .option("--page <n>", "Page number", String)
+    .summary("List manifest-declared deep links")
+    .description("List schemes, hosts, paths, and owning components from app intent filters.")
+    .option("--page <n>", "Result page number to fetch", String)
     .action(withErrorHandler(async (opts, command) => {
       const { fmt, client } = resolveCommandClient(opts, command);
       const page = opts.page ? parseInt(opts.page) : 1;
@@ -135,8 +117,9 @@ export function makeArdCommand(): Command {
   addPackageFilterOptions(
     cmd
       .command("app-receivers")
-      .description("List dynamic broadcast receivers")
-      .option("--page <n>", "Page number", String)
+      .summary("List dynamically registered broadcast receivers")
+      .description("Search code for runtime broadcast receiver registrations, with optional package filters.")
+      .option("--page <n>", "Result page number to fetch", String)
   )
     .action(withErrorHandler(async (opts, command) => {
       const { fmt, client } = resolveCommandClient(opts, command);
@@ -147,8 +130,9 @@ export function makeArdCommand(): Command {
 
   cmd
     .command("system-service-impl <interface>")
-    .description("Find system service implementations")
-    .option("--page <n>", "Page number", String)
+    .summary("Find framework service implementations for one interface")
+    .description("Search the current framework analysis session for classes implementing a system service interface.")
+    .option("--page <n>", "Result page number to fetch", String)
     .action(withErrorHandler(async (iface: string, opts, command) => {
       const { fmt, client } = resolveCommandClient(opts, command);
       const page = opts.page ? parseInt(opts.page) : 1;
@@ -158,8 +142,9 @@ export function makeArdCommand(): Command {
   addAdbDeviceOptions(
     cmd
       .command("system-services")
-      .description("List Android system services via adb shell service list")
-      .option("--grep <keyword>", "Filter services by keyword")
+      .summary("List live Binder service names from a connected device")
+      .description("Run adb shell service list and return structured live system service data from the selected device.")
+      .option("--grep <keyword>", "Include only service rows containing this keyword")
   )
     .action(withErrorHandler(async (opts) => {
       const fmt = new Formatter();
@@ -180,7 +165,8 @@ export function makeArdCommand(): Command {
   addAdbDeviceOptions(
     cmd
       .command("perm-info <permission>")
-      .description("Show adb shell pm list permissions details for one permission")
+      .summary("Show live Android permission metadata from a connected device")
+      .description("Run adb shell pm list permissions and return details for one permission name such as android.permission.CAMERA.")
   )
     .action(withErrorHandler(async (permission: string, opts) => {
       const fmt = new Formatter();
@@ -199,10 +185,11 @@ export function makeArdCommand(): Command {
 
   cmd
     .command("all-resources")
-    .description("List all resource file names")
-    .option("--include <pattern>", "Only include resource file names matching this pattern", collectOption, [])
-    .option("--no-regex", "Treat resource file name filters as literal text")
-    .option("--page <n>", "Page number", String)
+    .summary("List decoded APK resource file names")
+    .description("List resource paths available in the current app analysis session, with optional file-name filters.")
+    .option("--include <pattern>", "Include only resource file names matching this pattern; repeatable", collectOption, [])
+    .option("--no-regex", "Treat resource file name filters as literal text instead of regular expressions")
+    .option("--page <n>", "Result page number to fetch", String)
     .action(withErrorHandler(async (opts, command) => {
       const { fmt, client } = resolveCommandClient(opts, command);
       const page = opts.page ? parseInt(opts.page) : 1;
@@ -211,8 +198,9 @@ export function makeArdCommand(): Command {
 
   cmd
     .command("resource-file <res>")
-    .description("Get resource file content by name")
-    .option("--page <n>", "Page number", String)
+    .summary("Return one decoded APK resource file")
+    .description("Return resource content by path or file name, such as res/xml/network_security_config.xml.")
+    .option("--page <n>", "Result page number to fetch", String)
     .action(withErrorHandler(async (res: string, opts, command) => {
       const { fmt, client } = resolveCommandClient(opts, command);
       const page = opts.page ? parseInt(opts.page) : 1;
@@ -221,8 +209,9 @@ export function makeArdCommand(): Command {
 
   cmd
     .command("strings")
-    .description("Get strings.xml content from app resources")
-    .option("--page <n>", "Page number", String)
+    .summary("Return decoded app string resources")
+    .description("Return strings.xml content from the current app analysis session.")
+    .option("--page <n>", "Result page number to fetch", String)
     .action(withErrorHandler(async (opts, command) => {
       const { fmt, client } = resolveCommandClient(opts, command);
       const page = opts.page ? parseInt(opts.page) : 1;
@@ -232,8 +221,9 @@ export function makeArdCommand(): Command {
   addPackageFilterOptions(
     cmd
       .command("get-aidl")
-      .description("Get AIDL interfaces")
-      .option("--page <n>", "Page number", String)
+      .summary("List AIDL-style Binder interfaces discovered in code")
+      .description("Find AIDL interfaces and Binder stubs/proxies in the current analysis session, with optional package filters.")
+      .option("--page <n>", "Result page number to fetch", String)
   )
     .action(withErrorHandler(async (opts, command) => {
       const { fmt, client } = resolveCommandClient(opts, command);
@@ -241,12 +231,16 @@ export function makeArdCommand(): Command {
       fmt.output(await client.getAidlInterfaces(parseClassFilterOptions(opts), page));
     }));
 
-  const framework = cmd.command("framework").description("Collect and process Android framework files");
+  const framework = cmd
+    .command("framework")
+    .summary("Collect, process, pack, and open Android framework artifacts")
+    .description("Build DECX-readable framework jars from connected devices or local framework file directories.");
 
   addFrameworkCommonOptions(
     framework
       .command("collect")
-      .description("Collect framework files from the connected Android device")
+      .summary("Pull framework files from a connected Android device")
+      .description("Collect framework APK/JAR/APEX inputs from the selected device into a local source directory for later processing.")
   )
     .action(withErrorHandler(async (opts) => {
       const fmt = new Formatter();
@@ -268,7 +262,8 @@ export function makeArdCommand(): Command {
   addFrameworkCommonOptions(
     framework
       .command("process <oem>")
-      .description("Process a local framework source directory for the specified oem and pack framework_<brand>_<vendor>.jar")
+      .summary("Process local framework sources and pack framework_<brand>_<vendor>.jar")
+      .description("Process a local framework source directory for the specified OEM identifier, then pack a DECX-readable framework jar.")
   )
     .action(withErrorHandler(async (oem: string, opts) => {
       const fmt = new Formatter();
@@ -291,10 +286,12 @@ export function makeArdCommand(): Command {
   addFrameworkCommonOptions(
     framework
       .command("run")
-      .description("Collect from the connected device, process, pack, and optionally open framework_<brand>_<vendor>.jar")
-      .option("--no-open", "Do not open the generated framework jar in a DECX session")
-      .option("-n, --name <name>", "Session name when opening the generated framework jar")
-      .option("-P, --port <port>", "Server port when opening the generated framework jar")
+      .summary("Collect, process, pack, and optionally open a framework jar")
+      .description("Run the full device framework pipeline: collect files, process them, pack framework_<brand>_<vendor>.jar, and open it unless --no-open is used.")
+      .option("--no-open", "Only build the framework jar; do not start a DECX session")
+      .option("-n, --name <name>", "Session name to use when opening the generated framework jar")
+      .option("-P, --port <port>", "DECX HTTP server port to bind when opening the generated framework jar")
+      .option("--heap <size>", "Maximum Java heap for the DECX server JVM (default: floor(2/3 machine memory))")
   )
     .action(withErrorHandler(async (opts) => {
       const fmt = new Formatter();
@@ -320,9 +317,11 @@ export function makeArdCommand(): Command {
   addFrameworkCommonOptions(
     framework
       .command("open [jar]")
-      .description("Open the generated framework jar or a provided JAR in a DECX session")
-      .option("-n, --name <name>", "Session name")
-      .option("-P, --port <port>", "Server port")
+      .summary("Open a generated or explicit framework jar in DECX")
+      .description("Open the latest generated framework jar, or the provided jar path, as a normal DECX process session.")
+      .option("-n, --name <name>", "Session name used by -s/--session")
+      .option("-P, --port <port>", "DECX HTTP server port to bind")
+      .option("--heap <size>", "Maximum Java heap for the DECX server JVM (default: floor(2/3 machine memory))")
   )
     .action(withErrorHandler(async (jar: string | undefined, opts) => {
       const fmt = new Formatter();

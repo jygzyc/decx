@@ -65,4 +65,5 @@ describe("self command metadata", () => {
       message: `Installed decx-server v0.0.0 to ${jarPath}`,
     });
   });
+
 });

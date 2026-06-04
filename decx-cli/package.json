@@ -6,6 +6,16 @@
   "bin": {
     "decx": "dist/index.js"
   },
+  "exports": {
+    ".": {
+      "types": "./dist/sdk/index.d.ts",
+      "import": "./dist/sdk/index.js"
+    },
+    "./sdk": {
+      "types": "./dist/sdk/index.d.ts",
+      "import": "./dist/sdk/index.js"
+    }
+  },
   "scripts": {
     "clean": "rm -rf dist",
     "build": "node scripts/build.mjs",
@@ -32,7 +42,7 @@
     "typescript": "^5.7.0"
   },
   "engines": {
-    "node": ">=18.0.0"
+    "node": ">=22.5.0"
   },
   "keywords": [
     "android",

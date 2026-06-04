@@ -10,10 +10,14 @@ import { makeProcessCommand } from "../src/commands/process.js";
 import { makeCodeCommand } from "../src/commands/code.js";
 import { makeArdCommand } from "../src/commands/ard.js";
 import { makeSelfCommand } from "../src/commands/self.js";
+import { ROOT_DESCRIPTION } from "../src/core/constants.js";
 
 function createProgram(): Command {
   const program = new Command();
-  program.name("decx").version("2.0.0");
+  program
+    .name("decx")
+    .version("2.0.0")
+    .description(ROOT_DESCRIPTION);
   program.addCommand(makeProcessCommand());
   program.addCommand(makeCodeCommand());
   program.addCommand(makeArdCommand());
@@ -52,6 +56,15 @@ describe("root", () => {
     const program = createProgram();
     expect(getSubcommandNames(program)).toEqual(["process", "code", "ard", "self"]);
   });
+
+  it("describes the CLI purpose for agents choosing a command family", () => {
+    const help = createProgram().helpInformation().replace(/\s+/g, " ");
+    expect(help).toContain("DECX - Decompiler + X");
+    expect(help).toContain("deeper analysis of decompiled Java code");
+    expect(help).toContain("powered by JADX");
+    expect(help).toContain("Query decompiled classes, methods, source, control flow");
+    expect(help).toContain("Android app, framework, resource, permission, and device analysis");
+  });
 });
 
 // ============================================================================
@@ -80,6 +93,14 @@ describe("process", () => {
   it("open has --force option", () => {
     const open = findCommand(cmd, ["open"])!;
     expect(hasFlag(open, "--force")).toBe(true);
+  });
+
+  it("open help explains session creation and jadx passthrough behavior", () => {
+    const open = findCommand(cmd, ["open"])!;
+    const help = open.helpInformation();
+    expect(help).toContain("record a reusable session");
+    expect(help).toContain("forwarded to jadx-cli");
+    expect(help).toContain("Session name used by -s/--session");
   });
 
   it("close has optional [name] argument", () => {
@@ -147,6 +168,15 @@ describe("code", () => {
   it("subclass has <class> argument", () => {
     const sub = findCommand(cmd, ["subclass"])!;
     expect(sub.registeredArguments.length).toBeGreaterThanOrEqual(1);
+  });
+
+  it("help distinguishes discovery, source, context, cfg, and xref commands", () => {
+    const help = cmd.helpInformation();
+    expect(help).toContain("List decompiled classes with optional package filters");
+    expect(help).toContain("Return decompiled Java or smali source for one method");
+    expect(help).toContain("Show callers, callees, and metadata for one method");
+    expect(help).toContain("Return the control-flow graph for one method");
+    expect(help).toContain("Find callers and references to one method");
   });
 });
 
@@ -229,5 +259,21 @@ describe("ard", () => {
     expect(hasFlag(run, "--no-open")).toBe(true);
     expect(hasFlag(run, "--name")).toBe(true);
     expect(hasFlag(run, "--port")).toBe(true);
+  });
+
+  it("help distinguishes APK, live-device, and framework-analysis commands", () => {
+    const help = cmd.helpInformation();
+    expect(help).toContain("Return the APK AndroidManifest.xml");
+    expect(help).toContain("List live Binder service names from a connected device");
+    expect(help).toContain("Show live Android permission metadata from a connected device");
+    expect(help).toContain("Collect, process, pack, and open Android framework artifacts");
+  });
+
+  it("framework run help explains the full device pipeline and output controls", () => {
+    const run = findCommand(cmd, ["framework", "run"])!;
+    const help = run.helpInformation();
+    expect(help).toContain("Run the full device framework pipeline");
+    expect(help).toContain("Only build the framework jar");
+    expect(help.replace(/\s+/g, " ")).toContain("Directory for processed framework artifacts and packed jar output");
   });
 });

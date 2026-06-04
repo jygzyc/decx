@@ -5,7 +5,7 @@
 import * as path from "path";
 import { existsSync, mkdirSync, renameSync, unlinkSync } from "fs";
 import { downloadWithProgress } from "../utils/progress.js";
-import { decxPath } from "../core/paths.js";
+import { decxPath } from "./paths.js";
 
 const DECX_SERVER_HOME: string | undefined = process.env.DECX_SERVER_HOME;
 const DEFAULT_FETCH = fetch;

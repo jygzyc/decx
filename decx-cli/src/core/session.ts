@@ -6,14 +6,14 @@
  */
 
 import {
-  existsSync, mkdirSync, writeFileSync, readFileSync,
-  readdirSync, unlinkSync, renameSync,
+  existsSync, readFileSync,
+  readdirSync, unlinkSync,
 } from "fs";
 import * as path from "path";
-import { randomBytes } from "crypto";
 import { spawnSync } from "child_process";
 import type { Session } from "./types.js";
 import { decxPath } from "./paths.js";
+import { atomicWriteJson } from "../utils/fs.js";
 
 const SESSIONS_DIR = decxPath("sessions");
 const SESSION_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
@@ -49,16 +49,6 @@ function isDecxProcess(pid: number): boolean {
     // If ps fails, assume it's still valid (conservative)
     return true;
   }
-}
-
-/**
- * Atomic write: write to temp file then rename (POSIX atomic).
- */
-function atomicWriteJson(filePath: string, data: unknown): void {
-  mkdirSync(path.dirname(filePath), { recursive: true });
-  const tmpFile = `${filePath}.${randomBytes(4).toString("hex")}.tmp`;
-  writeFileSync(tmpFile, JSON.stringify(data, null, 2), "utf-8");
-  renameSync(tmpFile, filePath);
 }
 
 export function createSession(name: string, hash: string, apkPath: string, pid: number, port: number): Session {
