@@ -1,6 +1,7 @@
 import type { AgentPhase, Fact, Hint, Intent, TaskConfig, WorkerRun, WorkflowEvent } from "../core/types.js";
 import type { ProjectDetail } from "../server/repository-types.js";
 import { defaultRoleForPhase, getRole, type RoleDefinition } from "./roles.js";
+import { resolveTools, type ToolDefinition } from "../tools/registry.js";
 
 export interface PromptInput {
   detail: ProjectDetail;
@@ -11,17 +12,18 @@ export interface PromptInput {
 
 /**
  * Build the full prompt for a worker execution.
- * Sections: capability boundary → project context → role definition → phase instruction → graph state → artifacts → history → intent → output contract.
+ * Sections: capability boundary → project context → role definition → tools → phase instruction → graph state → history → intent → output contract.
  */
 export function buildWorkerPrompt(input: PromptInput): string {
   const { detail, phase, intent } = input;
-  const roleId = input.role ?? intent?.role ?? defaultRoleForPhase(phase);
+  const roleId = input.role ?? intent?.agent ?? intent?.role ?? defaultRoleForPhase(phase);
   const role = getRole(detail.project.taskConfig, roleId);
+  const tools = resolveTools(detail.project.taskConfig, role.tools);
 
   return [
     // Capability boundary — what the worker is allowed to do
     role.capabilities?.length
-      ? `Allowed capabilities: ${role.capabilities.join(", ")}. Use worker tools, MCP, and DECX commands as needed.`
+      ? `Allowed capabilities: ${role.capabilities.join(", ")}. Use the worker runtime tools available to you.`
       : "Use the worker runtime tools available to you. Return only the required JSON protocol.",
 
     // Project context
@@ -34,22 +36,20 @@ export function buildWorkerPrompt(input: PromptInput): string {
 
     // Role definition
     [
-      `Role: ${role.id}`,
+      `Subagent: ${role.id}`,
       role.extends ? `Extends: ${role.extends}` : "",
       "",
       role.prompt,
     ].filter(Boolean).join("\n"),
+
+    // Tool layer
+    toolBlock(tools),
 
     // Phase-specific instructions
     phaseInstruction(detail.project.taskConfig, phase),
 
     // Current graph state
     graphBlock(detail.facts, detail.intents, detail.hints),
-
-    // Artifacts
-    detail.artifacts.length
-      ? `Artifacts:\n${detail.artifacts.map(a => `- ${a.fileName} (${a.scope}/${a.kind})`).join("\n")}`
-      : "Artifacts: none",
 
     // Recent history
     workerHistory(detail.workerRuns),
@@ -67,9 +67,22 @@ export function buildWorkerPrompt(input: PromptInput): string {
   ].filter(Boolean).join("\n\n");
 }
 
+function toolBlock(tools: ToolDefinition[]): string {
+  if (tools.length === 0) return "Configured tools: none";
+  return [
+    "Configured tools:",
+    tools.map((tool) => [
+      `- ${tool.id} [${tool.kind}]${tool.description ? `: ${tool.description}` : ""}`,
+      tool.instructions ? `  Instructions: ${tool.instructions}` : "",
+      tool.command ? `  Command: ${[tool.command, ...(tool.args ?? [])].join(" ")}` : "",
+    ].filter(Boolean).join("\n")).join("\n"),
+  ].join("\n");
+}
+
 function phaseInstruction(config: TaskConfig, phase: AgentPhase): string {
-  const role = config.workflow.phases.find((item) => item.id === phase)?.role;
-  const text = role ? `Execute the configured ${phase} phase as role ${role}.` : (
+  const agent = config.workflow.phases.find((item) => item.id === phase)?.agent
+    ?? config.workflow.phases.find((item) => item.id === phase)?.role;
+  const text = agent ? `Execute the configured ${phase} phase as subagent ${agent}.` : (
     phase === "bootstrap" ? "Create the initial fact or first exploration intent for this configured task." :
     phase === "reason" ? "Decide if the goal is satisfied. If not, create one to three concrete next intents." :
     phase === "review" ? "Review for drift, weak evidence, repeated work, or premature completion." :
@@ -80,7 +93,7 @@ function phaseInstruction(config: TaskConfig, phase: AgentPhase): string {
 
 function graphBlock(facts: Fact[], intents: Intent[], hints: Hint[]): string {
   const fmtIntent = (i: Intent) =>
-    `- ${i.id} [${i.status}] role=${i.role ?? "explorer"} from=${i.from.join(",") || "origin"}: ${i.description}`;
+    `- ${i.id} [${i.status}] agent=${i.agent ?? i.role ?? "explorer"} from=${i.from.join(",") || "origin"}: ${i.description}`;
   return [
     "Facts:",
     facts.map(f => `- ${f.id}: ${f.description}`).join("\n") || "- none",

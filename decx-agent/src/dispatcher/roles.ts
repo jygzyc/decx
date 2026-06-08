@@ -6,6 +6,7 @@ export interface RoleDefinition {
   phase?: AgentPhase;
   prompt: string;
   capabilities?: string[];
+  tools?: string[];
   autonomy: Required<RoleAutonomy>;
 }
 
@@ -15,7 +16,7 @@ export interface RoleProvider {
 
 const ROLE_PROVIDERS: RoleProvider[] = [];
 
-// Five built-in roles. task.json config overrides them at runtime.
+// Five built-in agents. task.json config overrides them at runtime.
 const BUILTIN_ROLES: Record<string, RoleDefinition> = {
   planner: {
     id: "planner", phase: "bootstrap",
@@ -37,8 +38,8 @@ const BUILTIN_ROLES: Record<string, RoleDefinition> = {
   },
   explorer: {
     id: "explorer", phase: "explore",
-    prompt: "Deep-dive around one intent. Produce objective facts, workflow events, and artifacts.",
-    capabilities: ["trace_chains", "collect_evidence", "produce_artifacts"],
+    prompt: "Deep-dive around one intent. Produce objective facts and workflow events.",
+    capabilities: ["execute_intent", "collect_evidence", "record_findings"],
     autonomy: { canCreateIntents: true, canCompleteRun: false, canFailRun: false, canReview: false, maxIntentsPerStep: 2 },
   },
   reviewer: {
@@ -51,10 +52,10 @@ const BUILTIN_ROLES: Record<string, RoleDefinition> = {
 
 // Priority: task.json config → programmatic provider → builtin fallback
 export function getRole(config: TaskConfig | undefined, roleId: string): RoleDefinition {
-  const configured = config?.roles?.[roleId];
+  const configured = config?.agents?.[roleId] ?? config?.roles?.[roleId];
   if (configured) {
     const parentId = configured.extends ?? (BUILTIN_ROLES[roleId] ? roleId : "explorer");
-    const parent = getRole(config, parentId);
+    const parent = parentId === roleId && BUILTIN_ROLES[roleId] ? BUILTIN_ROLES[roleId] : getRole(config, parentId);
     return {
       id: roleId,
       extends: configured.extends ?? parent.id,
@@ -63,6 +64,7 @@ export function getRole(config: TaskConfig | undefined, roleId: string): RoleDef
       capabilities: configured.capabilities
         ? [...new Set([...(parent.capabilities ?? []), ...configured.capabilities])]
         : parent.capabilities,
+      tools: configured.tools ? [...new Set([...(parent.tools ?? []), ...configured.tools])] : parent.tools,
       autonomy: { ...parent.autonomy, ...configured.autonomy },
     };
   }

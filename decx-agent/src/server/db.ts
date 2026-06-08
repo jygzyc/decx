@@ -20,6 +20,11 @@ export function openAgentDb(dbPath = defaultDbPath()): DatabaseSync {
 
 function migrate(db: DatabaseSync): void {
   db.exec(`
+    CREATE TABLE IF NOT EXISTS meta (
+      key TEXT PRIMARY KEY,
+      value TEXT NOT NULL
+    );
+
     CREATE TABLE IF NOT EXISTS projects (
       id TEXT PRIMARY KEY,
       session TEXT NOT NULL UNIQUE,
@@ -29,11 +34,19 @@ function migrate(db: DatabaseSync): void {
       status TEXT NOT NULL,
       worker TEXT NOT NULL,
       session_dir TEXT NOT NULL,
-      artifact_dir TEXT NOT NULL,
       config_path TEXT NOT NULL,
       config_json TEXT NOT NULL,
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS agents (
+      id TEXT NOT NULL,
+      project_id TEXT NOT NULL,
+      config_json TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      PRIMARY KEY (project_id, id),
+      FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
     );
 
     CREATE TABLE IF NOT EXISTS facts (
@@ -54,13 +67,17 @@ function migrate(db: DatabaseSync): void {
       to_fact_id TEXT,
       description TEXT NOT NULL,
       creator TEXT NOT NULL,
+      agent TEXT NOT NULL,
       role TEXT NOT NULL,
       worker TEXT,
       status TEXT NOT NULL,
+      claimed_by TEXT,
+      claimed_at TEXT,
       prompt_text TEXT,
       from_events_json TEXT NOT NULL DEFAULT '[]',
       created_at TEXT NOT NULL,
       concluded_at TEXT,
+      failure_reason TEXT,
       PRIMARY KEY (project_id, id),
       FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
     );
@@ -83,7 +100,6 @@ function migrate(db: DatabaseSync): void {
       source TEXT,
       sink TEXT,
       category TEXT,
-      artifact TEXT,
       data_json TEXT,
       worker TEXT NOT NULL,
       phase TEXT NOT NULL,
@@ -110,28 +126,16 @@ function migrate(db: DatabaseSync): void {
       project_id TEXT NOT NULL,
       worker TEXT NOT NULL,
       role TEXT NOT NULL,
+      agent TEXT,
       phase TEXT NOT NULL,
       intent_id TEXT,
       returncode INTEGER NOT NULL,
       stdout_preview TEXT NOT NULL,
       stderr_preview TEXT NOT NULL,
+      error_kind TEXT,
+      worker_session TEXT,
       started_at TEXT NOT NULL,
       completed_at TEXT NOT NULL,
-      FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
-    );
-
-    CREATE TABLE IF NOT EXISTS artifacts (
-      path TEXT NOT NULL,
-      project_id TEXT NOT NULL,
-      file_name TEXT NOT NULL,
-      kind TEXT NOT NULL,
-      scope TEXT NOT NULL,
-      source_id TEXT NOT NULL,
-      sink_id TEXT NOT NULL,
-      flow_sig TEXT NOT NULL,
-      decx_session TEXT NOT NULL,
-      updated_at TEXT NOT NULL,
-      PRIMARY KEY (project_id, path),
       FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
     );
 
@@ -170,4 +174,5 @@ function migrate(db: DatabaseSync): void {
       FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
     );
   `);
+  db.prepare("INSERT OR IGNORE INTO meta (key, value) VALUES ('schema_version', '1')").run();
 }

@@ -31,16 +31,14 @@ export class DispatcherLoop {
     return detail;
   }
 
-  // Execute exactly one step: refresh artifacts → pick next intent → dispatch → evaluate rules.
+  // Execute exactly one step: pick next intent → dispatch → evaluate rules.
   async step(projectId: string, options: DispatcherOptions = {}): Promise<void> {
     const detail = this.repo.getProject(projectId);
     if (detail.project.status !== "active") return;
 
-    await this.repo.refreshArtifacts(detail.project.id, detail.project.artifactDir);
-    const refreshed = this.repo.getProject(projectId);
-    const intent = nextIntent(refreshed);
-    const phase = selectPhase(refreshed, intent);
-    await this.executePhase(refreshed, phase, intent);
+    const intent = nextIntent(detail);
+    const phase = selectPhase(detail, intent);
+    await this.executePhase(detail, phase, intent);
 
     if (phase !== "review") {
       const review = this.maybeReview(projectId, options.awaitReviews ?? true);
@@ -57,7 +55,7 @@ export class DispatcherLoop {
 
   private async executePhase(detail: ProjectDetail, phase: AgentPhase, intent?: Intent): Promise<void> {
     const phaseConfig = detail.project.taskConfig.workflow.phases.find((item) => item.id === phase);
-    const role = intent?.role ?? phaseConfig?.role ?? defaultRoleForPhase(phase);
+    const role = intent?.agent ?? intent?.role ?? phaseConfig?.agent ?? phaseConfig?.role ?? defaultRoleForPhase(phase);
     const worker = workerFor(detail.project.taskConfig, role, intent?.worker ?? detail.project.worker);
     if (intent) this.repo.setIntentWorking(detail.project.id, intent.id, worker);
 
@@ -67,8 +65,6 @@ export class DispatcherLoop {
       projectId: detail.project.id,
       intentId: intent?.id,
       sessionDir: detail.project.sessionDir,
-      artifactDir: detail.project.artifactDir,
-      references: detail.project.taskConfig.skills ?? [],
       prompt: buildWorkerPrompt({ detail, phase, role, intent }),
       cwd: detail.project.sessionDir,
       config: detail.project.taskConfig.workers[worker],
@@ -76,15 +72,24 @@ export class DispatcherLoop {
     const completedAt = utcnow();
 
     this.repo.addWorkerRun(detail.project.id, {
-      worker: result.worker, role, phase, intentId: intent?.id,
+      worker: result.worker, role, agent: role, phase, intentId: intent?.id,
       returncode: result.returncode,
       stdoutPreview: result.stdout.slice(0, 1000),
       stderrPreview: result.stderr.slice(0, 1000),
+      errorKind: result.returncode === 0 ? undefined : "worker_failed",
+      workerSession: result.session,
       startedAt, completedAt,
     });
 
     if (result.returncode !== 0) {
-      if (intent) this.repo.failIntent(detail.project.id, intent.id);
+      if (intent) this.repo.failIntent(detail.project.id, intent.id, result.stderr || "worker failed");
+      this.recordEvents(detail.project.id, [{
+        type: "worker.failed",
+        severity: "high",
+        category: "worker",
+        source: result.worker,
+        data: { returncode: result.returncode, stderr: result.stderr.slice(0, 500) },
+      }], result.worker, phase, intent);
       return;
     }
 
@@ -92,7 +97,7 @@ export class DispatcherLoop {
       const payload = parseWorkerPayload(phase, result.stdout);
       const checked = applyAutonomy(getRole(detail.project.taskConfig, role), payload);
       if (!checked.allowed) {
-        if (intent) this.repo.failIntent(detail.project.id, intent.id);
+        if (intent) this.repo.failIntent(detail.project.id, intent.id, checked.reason);
         this.recordEvents(detail.project.id, [{
           type: "autonomy.violation",
           severity: "medium",
@@ -104,11 +109,17 @@ export class DispatcherLoop {
       }
       const events = this.applyPayload(detail, phase, role, checked.payload, result.worker, intent);
       this.evaluateWorkflow(detail.project.id, detail.project.taskConfig, events);
-    } catch {
-      if (intent) this.repo.failIntent(detail.project.id, intent.id);
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : String(error);
+      if (intent) this.repo.failIntent(detail.project.id, intent.id, reason);
+      this.recordEvents(detail.project.id, [{
+        type: "worker.parse_failed",
+        severity: "medium",
+        category: "worker",
+        source: role,
+        data: { reason },
+      }], result.worker, phase, intent);
     }
-
-    await this.repo.refreshArtifacts(detail.project.id, detail.project.artifactDir);
     this.repo.touchProject(detail.project.id);
   }
 
@@ -132,7 +143,7 @@ export class DispatcherLoop {
         this.repo.addIntent(pid, {
           from: next.from.length > 0 ? next.from : ["origin"],
           description: next.description, creator: role,
-          role: next.role ?? "explorer", worker,
+          agent: next.role ?? "explorer", worker,
         });
       }
       return [];
@@ -182,7 +193,8 @@ export class DispatcherLoop {
     for (const event of events) {
       for (const rule of rules) {
         if (this.repo.hasWorkflowFire(projectId, rule.id, event.id)) continue;
-        if (!matchesWorkflowRule(rule, event)) continue;
+        const detail = this.repo.getProject(projectId);
+        if (!matchesWorkflowRule(rule, event, { facts: detail.facts, intents: detail.intents })) continue;
         this.applyWorkflowRule(projectId, rule, event);
         this.repo.markWorkflowFire(projectId, rule.id, event.id);
       }
@@ -198,9 +210,9 @@ export class DispatcherLoop {
           fromEvents: action.createIntent.fromEvent === false ? [] : [event.id],
           description: action.createIntent.description,
           creator: "workflow",
-          role: action.createIntent.role ?? "explorer",
+          agent: action.createIntent.agent ?? action.createIntent.role ?? "explorer",
           worker: action.createIntent.worker,
-          promptText: readWorkflowPrompt(detail.project.sessionDir, action.createIntent.prompt),
+          promptText: action.createIntent.promptText ?? readWorkflowPrompt(detail.project.sessionDir, action.createIntent.prompt),
         });
       } else if ("completeRun" in action) {
         this.repo.updateProjectStatus(projectId, "completed");
@@ -226,7 +238,9 @@ function nextIntent(detail: ProjectDetail): Intent | undefined {
 // Resolve worker for a role: role-level override → parent role's worker → reviewer config → fallback.
 function workerFor(config: TaskConfig, role: string, fallback: WorkerName): WorkerName {
   const resolved = getRole(config, role);
-  return config.roles?.[role]?.worker
+  return config.agents?.[role]?.worker
+    ?? config.roles?.[role]?.worker
+    ?? config.agents?.[resolved.extends ?? ""]?.worker
     ?? config.roles?.[resolved.extends ?? ""]?.worker
     ?? config.workflow.phases.find((item) => item.id === resolved.phase)?.worker
     ?? (role === (config.workflow.review?.role ?? "reviewer") ? config.workflow.review?.worker ?? fallback : fallback);

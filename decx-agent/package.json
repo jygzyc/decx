@@ -1,7 +1,7 @@
 {
   "name": "@jygzyc/decx-agent",
   "version": "0.1.0",
-  "description": "Standalone DECX configured agent runtime",
+  "description": "Standalone configured agent runtime",
   "type": "module",
   "files": [
     "dist",
@@ -21,7 +21,9 @@
     "pack:compressed": "node scripts/pack-compressed.mjs"
   },
   "dependencies": {
-    "commander": "^13.0.0"
+    "@anthropic-ai/sdk": "^0.102.0",
+    "commander": "^13.0.0",
+    "openai": "^6.42.0"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",

@@ -2,7 +2,7 @@
 import { Command } from "commander";
 import { loadTaskConfigInput } from "./core/task-config.js";
 import { VERSION } from "./core/version.js";
-import { knownWorkers, WORKERS } from "./workers/registry.js";
+import { knownWorkers, workerCapabilities } from "./workers/registry.js";
 
 type Options = Record<string, unknown> & {
   db?: string;
@@ -33,7 +33,7 @@ function program(): Command {
   command
     .name("decx-agent")
     .version(VERSION)
-    .description("Generic DECX agent framework")
+    .description("Generic configured agent framework")
     .showHelpAfterError();
 
   command
@@ -45,7 +45,7 @@ function program(): Command {
     .option("--worker <name>", "default worker backend: noop, codex, claude-code, opencode, api")
     .option("--max-steps <n>", "maximum dispatcher steps")
     .action(async (configPath: string, options: Options) => {
-      printJson(await (await server(options)).start({
+      printJson(await (await runtime(options)).start({
         configPath,
         session: options.session,
         worker: options.worker,
@@ -59,7 +59,7 @@ function program(): Command {
     .option("--db <path>", "SQLite state database", defaultDbPath())
     .option("--max-steps <n>", "maximum dispatcher steps")
     .action(async (id: string, options: Options) => {
-      printJson(await (await server(options)).resume(id, { maxSteps: parseMaxSteps(options.maxSteps) }));
+      printJson(await (await runtime(options)).resume(id, { maxSteps: parseMaxSteps(options.maxSteps) }));
     });
 
   command
@@ -68,7 +68,7 @@ function program(): Command {
     .argument("<session-or-project>", "project id or session name")
     .option("--db <path>", "SQLite state database", defaultDbPath())
     .action(async (id: string, options: Options) => {
-      printJson((await server(options)).status(id));
+      printJson((await runtime(options)).status(id));
     });
 
   command
@@ -77,12 +77,12 @@ function program(): Command {
     .argument("[config]", "optional task.json path or session directory containing task.json")
     .action((configPath: string | undefined) => {
       const configured = configPath ? loadTaskConfigInput(configPath).config.workers : undefined;
-      printJson({ workers: configPath ? knownWorkers(configured) : WORKERS });
+      printJson({ ...workerCapabilities(), workers: knownWorkers(configured) });
     });
 
   command
     .command("serve")
-    .description("Start the DECX agent API and audit UI.")
+    .description("Start the agent API and audit UI.")
     .option("--db <path>", "SQLite state database", defaultDbPath())
     .option("--host <host>", "bind host", "127.0.0.1")
     .option("--port <port>", "bind port", "25429")
@@ -101,6 +101,11 @@ function program(): Command {
 async function server(options: Options) {
   const { DecxAgentServer } = await import("./server/agent-server.js");
   return new DecxAgentServer(options.db);
+}
+
+async function runtime(options: Options) {
+  const { AgentRuntime } = await import("./agent-runtime.js");
+  return new AgentRuntime(options.db);
 }
 
 function defaultDbPath(): string {

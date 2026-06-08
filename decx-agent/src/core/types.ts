@@ -1,18 +1,10 @@
 export type AgentPhase = "bootstrap" | "reason" | "explore" | "review";
 export type WorkerName = string;
-export type WorkerKind = "noop" | "command" | "api";
+export type WorkerKind = "noop" | "command" | "model";
+export type WorkerSessionStrategy = "none" | "stable" | "uuid" | "regex";
+export type WorkerResponseMode = "stdout" | "jsonl-assistant-text";
+export type ToolKind = "tool" | "skill";
 export type WorkflowSeverity = "info" | "low" | "medium" | "high" | "critical";
-
-export interface ArtifactInfo {
-  path: string;
-  fileName: string;
-  kind: "handoff" | "result";
-  scope: "session" | "chain";
-  sourceId: string;
-  sinkId: string;
-  flowSig: string;
-  decxSession: string;
-}
 
 export interface Fact {
   id: string;
@@ -28,11 +20,15 @@ export interface Intent {
   to?: string;
   description: string;
   creator: string;
+  agent?: string;
   role?: string;
   worker?: WorkerName;
   fromEvents?: string[];
   promptText?: string;
   status: "open" | "working" | "done" | "failed";
+  claimedBy?: string;
+  claimedAt?: string;
+  failureReason?: string;
   createdAt: string;
   concludedAt?: string;
 }
@@ -47,8 +43,9 @@ export interface Hint {
 export interface TaskConfig {
   task: TaskDefinition;
   worker?: WorkerName;
-  skills?: string[];
+  agents?: Record<string, AgentConfig>;
   roles?: Record<string, RoleConfig>;
+  tools?: Record<string, ToolConfig>;
   workers: Record<string, WorkerConfig>;
   workflow: WorkflowConfig;
 }
@@ -61,7 +58,7 @@ export interface TaskDefinition {
   mode?: string;
 }
 
-export interface RoleConfig {
+export interface AgentConfig {
   extends?: string;
   prompt?: string;
   promptText?: string;
@@ -69,7 +66,20 @@ export interface RoleConfig {
   phase?: AgentPhase;
   worker?: WorkerName;
   capabilities?: string[];
+  tools?: string[];
   autonomy?: RoleAutonomy;
+}
+
+export type RoleConfig = AgentConfig;
+
+export interface ToolConfig {
+  kind?: ToolKind;
+  description?: string;
+  instructions?: string;
+  prompt?: string;
+  promptText?: string;
+  command?: string;
+  args?: string[];
 }
 
 export interface RoleAutonomy {
@@ -94,11 +104,15 @@ export interface WorkerConfig {
   kind: WorkerKind;
   command?: string;
   args?: string[];
+  sessionStrategy?: WorkerSessionStrategy;
+  sessionPattern?: string;
+  responseMode?: WorkerResponseMode;
   provider?: string;
   baseUrl?: string;
   model?: string;
   apiKeyEnv?: string;
   maxTokens?: number;
+  temperature?: number;
 }
 
 export interface WorkflowEvent {
@@ -108,7 +122,6 @@ export interface WorkflowEvent {
   source?: string;
   sink?: string;
   category?: string;
-  artifact?: string;
   data?: Record<string, unknown>;
   createdAt: string;
   worker: WorkerName;
@@ -124,6 +137,7 @@ export interface WorkflowConfig {
 
 export interface WorkflowPhase {
   id: AgentPhase;
+  agent?: string;
   role?: string;
   worker?: WorkerName;
 }
@@ -140,7 +154,6 @@ export interface WorkflowCondition {
   includes?: Record<string, string>;
   matches?: Record<string, string>;
   minSeverity?: WorkflowSeverity;
-  hasArtifact?: string;
   hasFact?: string;
   intentStatus?: string;
 }
@@ -152,20 +165,25 @@ export type WorkflowAction =
 
 export interface WorkflowCreateIntentAction {
   description: string;
+  agent?: string;
   role?: string;
   worker?: WorkerName;
   prompt?: string;
+  promptText?: string;
   fromEvent?: boolean;
 }
 
 export interface WorkerRun {
   worker: WorkerName;
+  agent?: string;
   role: string;
   phase: AgentPhase;
   intentId?: string;
   returncode: number;
   stdoutPreview: string;
   stderrPreview: string;
+  errorKind?: string;
+  workerSession?: string;
   startedAt: string;
   completedAt: string;
 }

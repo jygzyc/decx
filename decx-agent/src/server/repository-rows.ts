@@ -1,6 +1,5 @@
 import type {
   AgentPhase,
-  ArtifactInfo,
   Fact,
   Hint,
   Intent,
@@ -23,7 +22,6 @@ export function projectFromRow(row: Record<string, unknown>): ProjectRecord {
     status: String(row.status) as ProjectRecord["status"],
     worker: String(row.worker) as WorkerName,
     sessionDir: String(row.session_dir),
-    artifactDir: String(row.artifact_dir),
     configPath: String(row.config_path),
     taskConfig: parseJson(row.config_json, {}) as TaskConfig,
     createdAt: String(row.created_at),
@@ -48,11 +46,15 @@ export function intentFromRow(row: Record<string, unknown>): Intent {
     to: row.to_fact_id ? String(row.to_fact_id) : undefined,
     description: String(row.description),
     creator: String(row.creator),
+    agent: row.agent ? String(row.agent) : String(row.role),
     role: String(row.role),
     worker: row.worker ? String(row.worker) as WorkerName : undefined,
     promptText: row.prompt_text ? String(row.prompt_text) : undefined,
     fromEvents: parseJsonArray(row.from_events_json),
     status: String(row.status) as Intent["status"],
+    claimedBy: row.claimed_by ? String(row.claimed_by) : undefined,
+    claimedAt: row.claimed_at ? String(row.claimed_at) : undefined,
+    failureReason: row.failure_reason ? String(row.failure_reason) : undefined,
     createdAt: String(row.created_at),
     concludedAt: row.concluded_at ? String(row.concluded_at) : undefined,
   };
@@ -75,7 +77,6 @@ export function eventFromRow(row: Record<string, unknown>): WorkflowEvent {
     source: row.source ? String(row.source) : undefined,
     sink: row.sink ? String(row.sink) : undefined,
     category: row.category ? String(row.category) : undefined,
-    artifact: row.artifact ? String(row.artifact) : undefined,
     data: row.data_json ? parseJson(row.data_json, {}) as Record<string, unknown> : undefined,
     worker: String(row.worker) as WorkerName,
     phase: String(row.phase) as AgentPhase,
@@ -96,28 +97,18 @@ export function reviewFromRow(row: Record<string, unknown>): Review {
   };
 }
 
-export function artifactFromRow(row: Record<string, unknown>): ArtifactInfo {
-  return {
-    path: String(row.path),
-    fileName: String(row.file_name),
-    kind: String(row.kind) as ArtifactInfo["kind"],
-    scope: String(row.scope) as ArtifactInfo["scope"],
-    sourceId: String(row.source_id),
-    sinkId: String(row.sink_id),
-    flowSig: String(row.flow_sig),
-    decxSession: String(row.decx_session),
-  };
-}
-
 export function workerRunFromRow(row: Record<string, unknown>): WorkerRun {
   return {
     worker: String(row.worker) as WorkerName,
+    agent: row.agent ? String(row.agent) : undefined,
     role: String(row.role),
     phase: String(row.phase) as AgentPhase,
     intentId: row.intent_id ? String(row.intent_id) : undefined,
     returncode: Number(row.returncode),
     stdoutPreview: String(row.stdout_preview),
     stderrPreview: String(row.stderr_preview),
+    errorKind: row.error_kind ? String(row.error_kind) : undefined,
+    workerSession: row.worker_session ? String(row.worker_session) : undefined,
     startedAt: String(row.started_at),
     completedAt: String(row.completed_at),
   };

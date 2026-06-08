@@ -1,5 +1,5 @@
 import type {
-  ArtifactInfo,
+  AgentConfig,
   Fact,
   Hint,
   Intent,
@@ -21,7 +21,6 @@ export interface ProjectRecord {
   status: "active" | "stopped" | "completed" | "failed";
   worker: WorkerName;
   sessionDir: string;
-  artifactDir: string;
   configPath: string;
   taskConfig: TaskConfig;
   createdAt: string;
@@ -30,12 +29,12 @@ export interface ProjectRecord {
 
 export interface ProjectDetail {
   project: ProjectRecord;
+  agents: Record<string, AgentConfig>;
   facts: Fact[];
   intents: Intent[];
   hints: Hint[];
   events: WorkflowEvent[];
   reviews: Review[];
-  artifacts: ArtifactInfo[];
   workerRuns: WorkerRun[];
   workflowNodes: WorkflowNode[];
   workflowEdges: WorkflowEdge[];

@@ -15,7 +15,7 @@ decx-agent workers
 decx-agent serve --host 127.0.0.1 --port 25429
 ```
 
-Business workflows such as vulnerability hunting, cloud-control analysis, attribution, or parameter reversal are defined by `task.json`, prompts, roles, and workflow rules instead of fixed CLI subcommands.
+Business workflows are defined by `task.json`, prompts, roles, and workflow rules instead of fixed CLI subcommands.
 
 ## Build And Package
 
@@ -33,7 +33,6 @@ npm run pack:agent
 .decx/agent_tasks/<session>/
   task.json
   prompts/
-  artifacts/
 ```
 
 The default SQLite database is:
@@ -47,11 +46,18 @@ The default SQLite database is:
 ```json
 {
   "task": {
-    "name": "sieve-cloud-control",
-    "target": "target.apk",
-    "goal": "Analyze cloud-control decision paths."
+    "name": "example",
+    "target": "input",
+    "goal": "Complete one configured task."
   },
   "worker": "noop",
+  "tools": {
+    "notes": {
+      "kind": "tool",
+      "description": "Record concise task notes",
+      "instructions": "Use only when the current task needs durable notes."
+    }
+  },
   "roles": {},
   "workflow": {
     "phases": [
@@ -75,6 +81,7 @@ Roles can be defined with prompt files:
       "prompt": "prompts/cloud-control-trace.md",
       "instructions": "Focus on cloud-control parameter propagation.",
       "worker": "codex",
+      "tools": ["notes"],
       "autonomy": {
         "canCreateIntents": true,
         "maxIntentsPerStep": 2
@@ -83,6 +90,36 @@ Roles can be defined with prompt files:
   }
 }
 ```
+
+## Tools And Skills
+
+`tools` is a separate task layer from workers. Workers execute prompts; tools and skills describe capabilities the worker may use.
+
+```json
+{
+  "tools": {
+    "repoSearch": {
+      "kind": "tool",
+      "description": "Search files in the current repository",
+      "command": "rg",
+      "args": ["{{query}}"],
+      "instructions": "Prefer focused queries and cite matching files."
+    },
+    "reviewGuide": {
+      "kind": "skill",
+      "description": "Code review checklist",
+      "prompt": "prompts/review-guide.md"
+    }
+  },
+  "roles": {
+    "reviewer": {
+      "tools": ["repoSearch", "reviewGuide"]
+    }
+  }
+}
+```
+
+If a role omits `tools`, the prompt exposes all configured tools.
 
 Reviewer can run asynchronously from workflow config:
 
@@ -115,10 +152,14 @@ API worker configuration is optional:
     "localCodex": {
       "kind": "command",
       "command": "codex",
-      "args": ["exec", "{{prompt}}"]
+      "args": ["exec", "{{prompt}}"],
+      "sessionStrategy": "regex",
+      "sessionPattern": "session id:\\s*([0-9a-fA-F-]+)"
     }
   }
 }
 ```
 
-Runtime state includes a workflow graph in SQLite. `status` and `export` return graph nodes and edges alongside facts, intents, events, reviews, artifacts, and worker runs.
+Command workers support `{{prompt}}`, `{{session}}`, `{{projectId}}`, `{{phase}}`, `{{role}}`, `{{sessionDir}}`, and `{{intentId}}` argument placeholders. `sessionStrategy` may be `none`, `stable`, `uuid`, or `regex`; `responseMode: "jsonl-assistant-text"` extracts the last assistant text from JSONL agent events.
+
+Runtime state includes a workflow graph in SQLite. `status` and `export` return graph nodes and edges alongside facts, intents, events, reviews, and worker runs.

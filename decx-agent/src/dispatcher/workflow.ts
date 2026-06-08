@@ -1,6 +1,6 @@
 import { readFileSync } from "fs";
 import * as path from "path";
-import type { WorkflowEvent, WorkflowRule, WorkflowSeverity } from "../core/types.js";
+import type { Fact, Intent, WorkflowEvent, WorkflowRule, WorkflowSeverity } from "../core/types.js";
 
 const SEVERITY_ORDER: Record<WorkflowSeverity, number> = {
   info: 0,
@@ -16,10 +16,20 @@ export function readWorkflowPrompt(sessionDir: string, promptPath: string | unde
   return readFileSync(resolved, "utf-8");
 }
 
-export function matchesWorkflowRule(rule: WorkflowRule, event: WorkflowEvent): boolean {
+export interface WorkflowMatchContext {
+  facts: Fact[];
+  intents: Intent[];
+}
+
+export function matchesWorkflowRule(rule: WorkflowRule, event: WorkflowEvent, context: WorkflowMatchContext = { facts: [], intents: [] }): boolean {
   const condition = rule.when;
   if (condition.eventType && event.type !== condition.eventType) return false;
   if (condition.minSeverity && SEVERITY_ORDER[event.severity ?? "info"] < SEVERITY_ORDER[condition.minSeverity]) return false;
+  if (condition.hasFact && !context.facts.some((fact) => fact.id === condition.hasFact || fact.description.includes(condition.hasFact ?? ""))) return false;
+  if (condition.intentStatus) {
+    const intent = event.intentId ? context.intents.find((item) => item.id === event.intentId) : undefined;
+    if (!intent || intent.status !== condition.intentStatus) return false;
+  }
   for (const [key, value] of Object.entries(condition.equals ?? {})) {
     if (eventValue(event, key) !== value) return false;
   }

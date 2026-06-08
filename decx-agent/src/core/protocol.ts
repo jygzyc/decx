@@ -18,7 +18,6 @@ export interface WorkerEventPayload {
   source?: string;
   sink?: string;
   category?: string;
-  artifact?: string;
   data?: Record<string, unknown>;
 }
 
@@ -128,7 +127,6 @@ function eventArray(value: unknown): WorkerEventPayload[] {
       source: stringValue(item.source) ?? undefined,
       sink: stringValue(item.sink) ?? undefined,
       category: stringValue(item.category) ?? undefined,
-      artifact: stringValue(item.artifact) ?? undefined,
       data: isRecord(item.data) ? item.data : undefined,
     };
   });
