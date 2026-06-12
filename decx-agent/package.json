@@ -16,7 +16,7 @@
     "clean": "rm -rf dist dist-packages",
     "build": "npm run clean && tsc",
     "typecheck": "tsc --noEmit",
-    "test": "node --test tests/*.test.ts",
+    "test": "npm run build && node --test tests/*.test.ts",
     "smoke": "node scripts/smoke.mjs",
     "pack:agent": "node scripts/pack-compressed.mjs",
     "pack:compressed": "node scripts/pack-compressed.mjs"
