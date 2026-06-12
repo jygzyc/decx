@@ -170,10 +170,6 @@ export class AgentRepository {
     return intent;
   }
 
-  setIntentWorking(projectId: string, intentId: string, worker: WorkerName): void {
-    this.claimIntent(projectId, intentId, worker);
-  }
-
   claimIntent(projectId: string, intentId: string, worker: WorkerName): Intent {
     const current = this.intent(projectId, intentId);
     if (!current) throw new Error(`intent not found: ${intentId}`);

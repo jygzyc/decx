@@ -1,10 +1,11 @@
 import { parseWorkerPayload, type WorkerPayload } from "../core/protocol.js";
 import type { AgentPhase, Intent, TaskConfig, WorkerName, WorkflowEvent, WorkflowRule } from "../core/types.js";
-import { executeWorker } from "../workers/registry.js";
+import { executeWorker, type WorkerResult } from "../workers/registry.js";
 import { buildWorkerPrompt } from "./prompt.js";
 import type { AgentRepository } from "../server/repository.js";
 import type { ProjectDetail } from "../server/repository-types.js";
-import { utcnow } from "../server/repository.js";
+import { utcnow } from "../core/utils.js";
+import { applyAutonomy } from "./autonomy.js";
 import { matchesWorkflowRule, readWorkflowPrompt } from "./workflow.js";
 import { defaultRoleForPhase, getRole } from "./roles.js";
 
@@ -57,7 +58,7 @@ export class DispatcherLoop {
     const phaseConfig = detail.project.taskConfig.workflow.phases.find((item) => item.id === phase);
     const role = intent?.agent ?? intent?.role ?? phaseConfig?.agent ?? phaseConfig?.role ?? defaultRoleForPhase(phase);
     const worker = workerFor(detail.project.taskConfig, role, intent?.worker ?? detail.project.worker);
-    if (intent) this.repo.setIntentWorking(detail.project.id, intent.id, worker);
+    if (intent) this.repo.claimIntent(detail.project.id, intent.id, worker);
 
     const startedAt = utcnow();
     const result = await executeWorker({
@@ -244,19 +245,6 @@ function workerFor(config: TaskConfig, role: string, fallback: WorkerName): Work
     ?? config.roles?.[resolved.extends ?? ""]?.worker
     ?? config.workflow.phases.find((item) => item.id === resolved.phase)?.worker
     ?? (role === (config.workflow.review?.role ?? "reviewer") ? config.workflow.review?.worker ?? fallback : fallback);
-}
-
-function applyAutonomy(role: ReturnType<typeof getRole>, payload: WorkerPayload): { allowed: true; payload: WorkerPayload } | { allowed: false; reason: string } {
-  if (payload.kind === "intents") {
-    if (!role.autonomy.canCreateIntents) return { allowed: false, reason: `${role.id} cannot create intents` };
-    if (payload.intents.length > role.autonomy.maxIntentsPerStep) {
-      return { allowed: true, payload: { ...payload, intents: payload.intents.slice(0, role.autonomy.maxIntentsPerStep) } };
-    }
-  }
-  if (payload.kind === "complete" && !role.autonomy.canCompleteRun) return { allowed: false, reason: `${role.id} cannot complete runs` };
-  if (payload.kind === "rejected" && !role.autonomy.canFailRun) return { allowed: false, reason: `${role.id} cannot fail work` };
-  if (payload.kind === "review" && !role.autonomy.canReview) return { allowed: false, reason: `${role.id} cannot review` };
-  return { allowed: true, payload };
 }
 
 function nextFactId(detail: ProjectDetail): string {

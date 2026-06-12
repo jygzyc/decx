@@ -32,3 +32,8 @@ export function positiveInt(value: unknown): number | undefined {
 export function safeSessionName(value: string): string {
   return value.replace(/[^a-zA-Z0-9._-]+/g, "-").replace(/^-+|-+$/g, "") || "session";
 }
+
+/** ISO-8601 UTC timestamp for current time. */
+export function utcnow(): string {
+  return new Date().toISOString();
+}
