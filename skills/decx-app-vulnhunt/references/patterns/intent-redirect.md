@@ -1,58 +1,49 @@
 # Pattern: Intent Redirect
 
-## When To Use
+## Match
 
-Use this reference when an exported component, WebView `intent://` flow, scan result, or framework/app bridge accepts caller-controlled `Intent`, `Uri`, `ClipData`, selector, component, package, flags, or extras and forwards them to another component or action.
+Exported component, WebView/native scheme router, deep-link handler, AIDL/Binder callback, PendingIntent `send`, notification path, or app bridge forwards caller-controlled `Intent`, `Uri`, `ClipData`, selector, component, package, action, flags, or extras to a downstream sink.
 
-## Core Concept
+Common upstream shapes:
+- `getParcelableExtra("...")` / `getBundleExtra("...").getParcelable("...")` returns a nested `Intent` and the code calls `startActivity` / `startActivityForResult` / `startService` / `bindService` / `sendBroadcast` on it.
+- WebView `shouldOverrideUrlLoading` or `Intent.parseUri(url, URI_INTENT_SCHEME)` dispatches an `intent://...end` payload without stripping `component` / `package` / `selector` / `FLAG_GRANT_*` / `ClipData` (IntentScheme URL).
+- `setResult(RESULT_OK, intent)` returns the same caller-supplied `Intent` (or a copy that still carries `FLAG_GRANT_READ_URI_PERMISSION` / `FLAG_GRANT_WRITE_URI_PERMISSION` and a `content://` URI) back to the caller.
+- Exported Activity/Receiver with `intent-filter` accepts external action+extras and uses them to call `startActivity` / `startActivityForResult` / `sendBroadcast` / `bindService`.
+- PendingIntent created with `FLAG_MUTABLE` or with a fill-in mask, then handed to another component which calls `pendingIntent.send(this, 0, intent)`.
 
-Untrusted component input crosses a trust boundary and reaches a component launch or grant-bearing dispatch under the victim app identity without a non-bypassable target guard.
+## Analyze
 
-**Sources**
-- `getIntent().getParcelableExtra(...)` returning `Intent`
-- `Intent.parseUri(...)`
-- `getData()`, `getExtras()`, `getClipData()`, selector, package, component, flags
-- browser, QR, activity-result, notification, or broadcast payloads that construct an `Intent`
+- entry: exported Activity/Service/Receiver, `startActivityForResult` result callback, `Intent.parseUri`, nested `Intent` extra from `Bundle.getParcelable`/`getBundle*`, deep-link path, `shouldOverrideUrlLoading`, `PendingIntent.send` callback, AIDL `Stub.onTransact`
+- control: target `component` / `package` / `selector`, `action`, `data` URI, `ClipData`, `FLAG_GRANT_READ_URI_PERMISSION` / `FLAG_GRANT_WRITE_URI_PERMISSION` / `FLAG_GRANT_PERSISTABLE_URI_PERMISSION` / `FLAG_GRANT_PREFIX_URI_PERMISSION`, `categories`, extras, request/result path, account / file / target id
+- sink: `startActivity`, `startActivityForResult`, `startService`, `bindService`, `sendBroadcast`, `setResult`, `grantUriPermission`, helper launch/return/grant wrapper, WebView `loadUrl(attackerUrl)` reached via a nested Intent
+- guard: exact target/component allowlist; `Intent.getPackage()` equals self (component field has higher precedence — see Codes); caller identity via `getCallingActivity()` / `getCallingPackage()` (caller can be `null`); strip `FLAG_GRANT_*` and rebuild `Intent` before forwarding; never pass raw `Intent.parseUri` output to `startActivity`
+- impact: launch private/non-exported component, grant attacker access to victim's `content://` provider (incl. FileProvider with broad `root-path`), bypass logic depending on trusted internal result, chain into WebView/provider/broadcast/redirect for further primitives
 
-**Sinks**
-- `startActivity`, `startActivityForResult`, `startService`, `bindService`, `sendBroadcast`
-- `setResult` with grant-bearing `Intent`
-- `grantUriPermission`
-- helper wrappers that eventually launch, return, or grant with the controlled object
+## Reject
 
-## Guards & Rejection
+Reject when the forwarded `Intent` is rebuilt from trusted constants (only `Uri`/extras copied, no `component`/`package`/`flags`/`selector` change), the resolved target is exact-allowlisted, dangerous fields and grant flags are stripped before the sink, the nested `Intent` only carries data consumed by the same trusted class, the sink is unreachable, or the downstream target has no protected behavior/data.
 
-Safe when: validation occurs before forwarding and pins the exact trusted target, strips dangerous flags/grants/selector/ClipData, or verifies caller/package/signature with immutable allowlists. Action-only, scheme-only, package-prefix, or post-launch checks are not enough by themselves.
+## Codes
 
-Reject when: the nested object is overwritten with trusted constants, the target is exact-allowlisted and caller validation is non-bypassable, the sink is not reachable, or the downstream target has no security-relevant behavior beyond UI noise or crash.
-
-## Rating
-
-- HIGH: attacker reaches privileged/private component, obtains sensitive grant/data, or triggers protected action.
-- MEDIUM: bounded unauthorized action requiring a local malicious app or user-assisted flow.
-- LOW: UI deception only with no protected action.
-- IGNORED: forwarding exists but source, sink, guard bypass, or impact is not proven.
-
-## Trace Commands
-
-```bash
-decx code method-context "<entryOrHelperSignature>" -P <port>
-decx code method-source "<entryOrHelperSignature>" -P <port>
-decx code xref-method "<sinkSignature>" -P <port>
+```java
+// nested Intent extra read from the bridge, dispatched as-is
+Intent deeplinkIntent = (Intent) getIntent().getParcelableExtra("extra_deep_link_intent");
+startActivity(deeplinkIntent);
 ```
 
-## Example Shapes
-
-Suspicious:
-
-```text
-external Activity -> nested Intent extra -> unchanged object -> startActivity()
+```java
+// WebView dispatches intent:// via parseUri without host allowlist
+if ("intent".equals(uri.getScheme())) {
+    startActivity(Intent.parseUri(uri.toString(), Intent.URI_INTENT_SCHEME));
+}
 ```
 
-Safe:
-
-```text
-external Activity -> extract action -> map to trusted explicit component -> strip grants -> startActivity()
+```java
+// package equality is not enough — component field has higher precedence than package
+if (!packageName.equals(activityInfo.packageName)) throw new SecurityException(...);
 ```
 
-Report guidance -- Use: "An exported Activity forwards attacker-controlled nested Intent data to a privileged component launch without exact target validation." Avoid: "Intent redirect exists" without source, sink, guard, and impact evidence.
+```java
+// for-result with implicit Intent — attacker returns a forged grant-bearing result
+startActivityForResult(new Intent("com.example.PICK_CONTACT"), 3);
+```

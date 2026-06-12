@@ -1,53 +1,32 @@
-# Pattern: Exported Component Access Control Failure
+# Pattern: Exported Access
 
-## When To Use
+## Match
 
-Use this reference when an exported Activity, Service, Receiver, or Provider directly exposes a protected screen, data path, or action.
+Two implicit-export behaviors raise the priority sharply:
+1. On API < 17 (or any API for Activity/Service/Receiver with `<intent-filter>`), absence of `android:exported` defaults to `true`. On API 31+ a component with `<intent-filter>` MUST declare `android:exported` explicitly; otherwise the install is rejected.
+2. Provider export default flips at API 17: `< 17` defaults `exported="true"`, `>= 17` defaults `false`. Audit older Provider rules carefully.
 
-## Core Concept
+A separate export primitive: a non-exported but `<intent-filter>`-bearing Activity that is reachable through an Intent-redirect or Bundle-mismatch path. That belongs to `intent-redirect` / `object-parsing-abuse` and feeds into this pattern as a downstream sink.
 
-An external app reaches an internal capability because component export or permission configuration does not enforce the app's intended trust boundary.
+## Analyze
 
-**Sources**
-- manifest-exported components, deep links, custom permissions, implicit intent filters
-- `decx ard exported-components`
-- component entry methods such as `onCreate`, `onStartCommand`, `onReceive`, provider CRUD/call/open methods
+- entry: manifest export, implicit export (intent-filter without `android:exported`), deep link `<data android:scheme=...>`, dynamic receiver, bindable service, grant/proxy path
+- control: action/extras/URI/path/command/identity selected by external caller, deep-link query parameters, grant flags, request code
+- sink: protected UI/action/data, provider/file access, service command, account/session state, internal non-exported component reached via the export
+- guard: `signature` permission, package/UID binding (`Binder.getCallingUid()`), on API 31+ explicit `android:exported="true"` only when intentional
+- impact: protected workflow, data exposure, private component reachability, or chain entry into redirect/provider/WebView/service
 
-**Sinks**
-- protected UI/action, account/session data, provider rows/files, privileged app permission use, admin/settings/payment/debug flows
+## Reject
 
-## Guards & Rejection
+Reject when behavior is public/harmless, permission gates exact sink, caller cannot control any security-relevant value, downstream impact absent, or the reachable path is a confirmation dialog with its own coverage.
 
-Safe when: manifest permission is signature-bound, in-code caller/session checks gate the sink, or the exported surface exposes only public harmless behavior.
+## Codes
 
-Reject when: the component has no sensitive behavior, all sensitive branches require trusted caller/session state, or custom permission is proven non-attacker-obtainable. Reject exported-alone claims without downstream sink, guard bypass, and impact evidence.
-
-## Rating
-
-- HIGH: sensitive data or dangerous action exposed with low friction.
-- MEDIUM: bounded protected workflow or local-app-triggered action.
-- LOW: weak UI exposure only.
-- IGNORED: reachable but harmless component.
-
-## Trace Commands
-
-```bash
-decx ard exported-components -P <port>
-decx code class-source "<ComponentClass>" -P <port>
+```java
+// onBind without caller check — bindable service implicit export
+return downloadServiceHandler.onBind(intent);
 ```
 
-## Example Shapes
-
-Suspicious:
-
-```text
-external caller -> exported Activity with no permission -> reaches protected data screen or privileged action
+```java
+// non-exported handler reachable via redirect — redirect lives in intent-redirect / object-parsing-abuse
 ```
-
-Safe:
-
-```text
-external caller -> exported Activity with signature permission or caller validation -> sensitive branches blocked
-```
-
-Report guidance -- Use: "An exported component exposes a protected app capability without a non-bypassable caller or permission guard." Avoid: "component is exported" without downstream sink, guard bypass, and impact evidence.

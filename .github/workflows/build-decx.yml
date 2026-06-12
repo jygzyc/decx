@@ -9,6 +9,8 @@ on:
     branches: [ main ]
     paths:
       - 'decx/**'
+      - 'version'
+      - 'VERSION'
   workflow_dispatch:
 
 jobs:
@@ -21,6 +23,13 @@ jobs:
     - uses: actions/checkout@v6
       with:
         fetch-depth: 0
+
+    - name: Prepare version file
+      run: |
+        if [ ! -f version ] && [ -f VERSION ]; then
+          cp VERSION version
+        fi
+        test -s version
 
     - name: Extract version from git tag
       id: version
@@ -75,6 +84,13 @@ jobs:
       with:
         fetch-depth: 0
 
+    - name: Prepare version file
+      run: |
+        if [ ! -f version ] && [ -f VERSION ]; then
+          cp VERSION version
+        fi
+        test -s version
+
     - name: Check for decx changes
       id: changes
       run: |
@@ -93,7 +109,7 @@ jobs:
           FILES=$(git diff --name-only "$BASE_SHA" "$HEAD_SHA")
         fi
 
-        if echo "$FILES" | grep -q '^decx/'; then
+        if echo "$FILES" | grep -Eq '^(decx/|version$|VERSION$)'; then
           echo "has_changes=true" >> $GITHUB_OUTPUT
         else
           echo "has_changes=false" >> $GITHUB_OUTPUT

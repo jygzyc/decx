@@ -1,6 +1,6 @@
 # Casebook: Fragment and UI Trust
 
-Use this casebook after [[patterns/fragment-injection]], [[patterns/ui-trust-abuse]]. These cases are abstract exploit shapes, not CVE-specific instructions.
+Use this casebook after [[patterns/fragment-injection]], [[patterns/ui-trust-abuse]]. These cases are abstract exploit shapes, not reproduction instructions.
 
 ## Case: Deep Link Fragment Parameter Opens Admin Settings Fragment
 

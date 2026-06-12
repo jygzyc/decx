@@ -1,51 +1,48 @@
-# Pattern: WebView URL Validation Bypass
+# Pattern: WebView URL Bypass
 
-## When To Use
+## Match
 
-Use this reference when attacker-controlled URL, HTML, redirect target, scan result, browser result, or deep-link parameter reaches WebView navigation despite scheme, host, path, or origin validation.
+`WebView` or its client lets an attacker-controlled URL reach `loadUrl` / deep link / redirect chain through `shouldOverrideUrlLoading` or `shouldInterceptRequest` without a host/path/scheme allowlist. The WebView then loads `intent://`, `javascript:`, `file://`, `content://`, or cross-origin `http(s)://`. Variants:
+- `shouldOverrideUrlLoading` not implemented or returns `false` (default) → WebView loads the URL.
+- `shouldOverrideUrlLoading` returns `true` for a non-allowlisted host but does NOT call `view.loadUrl(url)`; some impls check host but not path/query where attacker-controlled `intent://`/`javascript:`/`file://` payloads live.
+- Non-HTTP(S) URL arrives via `loadDataWithBaseURL` or `onPageFinished` → `view.loadUrl("intent:" + ...)`.
+- WebView reuses attacker-controlled `Referer`/`User-Agent`/cookie for an internal API call.
 
-## Core Concept
+## Analyze
 
-Weak URL validation lets untrusted content execute or navigate in a trusted WebView context, then pivot to bridge, cookie, file/content, native-scheme, credential, or session impact.
+- entry: `WebViewClient.shouldOverrideUrlLoading`, `WebViewClient.shouldInterceptRequest`, `WebChromeClient.onJsPrompt` / `onJsAlert` / `onConsoleMessage`, `loadUrl` from JS bridge, `loadDataWithBaseURL`, deep link with attacker-controlled query
+- control: URL host/scheme/path/query, `intent://` payload, `javascript:` payload, MIME from `shouldInterceptRequest`, `Referer` and `User-Agent`, `onReceivedSslError` behavior
+- sink: `loadUrl`, `loadDataWithBaseURL`, native bridge, WebView reachability to non-allowlisted host, `Settings.Secure.ADB_ENABLED` flipped, exfiltration to attacker domain, XSS via `WebResourceResponse` MIME
+- guard: host allowlist in `shouldOverrideUrlLoading`, `onReceivedSslError` calls `handler.cancel()`, reject `intent://` payload, reject `javascript:` payload from any URL source, do not build a URL from server-controlled path
+- impact: cross-domain request with app cookies/identity, chain into `intent-redirect` or `provider-data-leak`, XSS via `WebResourceResponse` MIME, exfiltrate cookies/local storage
 
-**Sources**
-- deep link, scan result, browser result, push, remote config, QR/parser output; `Intent` extras/data, activity result callbacks, WebView navigation callbacks; redirects, encoded host/path, mixed-case scheme, suffix/prefix host tricks, userinfo, punycode, path normalization.
+## Reject
 
-**Sinks**
-- `loadUrl`, `loadData`, `loadDataWithBaseURL`, `evaluateJavascript`; `shouldOverrideUrlLoading`, `shouldInterceptRequest`; bridge/message channel, cookie manager, file/content access, `intent://` or custom scheme dispatch.
+Reject when `shouldOverrideUrlLoading` blocks non-allowlisted host, `WebSettings` does not enable JS/file/universal access, and the URL is not constructed from server-controlled path.
 
-## Guards & Rejection
+## Codes
 
-Safe when: exact HTTPS scheme, host, port, path, and redirect destination are validated on the final consumed URL; untrusted pages have no bridge/cookie/file/native privileges; validation happens on the same normalized value passed to WebView APIs.
-
-Reject when: no bridge, cookie, file/content, custom-scheme, credential, or trusted-session path is reachable from the bypass; final navigation is exactly allowlisted and loaded content has no security value.
-
-## Rating
-
-- HIGH: token/session theft, sensitive bridge call, private file read, or protected native action.
-- MEDIUM: bounded trusted-session action requiring user interaction or local app.
-- LOW: weak phishing/UI-only flow.
-- IGNORED: URL validation is weak but no security-relevant WebView context is reached.
-
-## Trace Commands
-
-```bash
-decx code method-context "<webviewLoadOrCallback>" -P <port>
-decx code method-source "<urlValidator>" -P <port>
+```java
+// default policy loads the URL regardless of host
+public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) { return false; }
 ```
 
-## Example Shapes
-
-Suspicious:
-
-```text
-deep link URL -> host suffix check -> redirect -> trusted WebView with bridge/cookies
+```java
+// missing SSL error handler — proceeds on cert mismatch
+public void onReceivedSslError(WebView view, SslErrorHandler handler, SslError error) { handler.proceed(); }
 ```
 
-Safe:
-
-```text
-deep link URL -> normalized exact allowlist -> final redirect validation -> no bridge for external pages
+```java
+// shouldInterceptRequest returns attacker-controlled content for trusted origin — XSS via MIME
+return new WebResourceResponse("text/html", "utf-8", new ByteArrayInputStream(attackerHtml.getBytes()));
 ```
 
-Report guidance -- Use: "Attacker-controlled navigation bypasses WebView URL validation and reaches a trusted WebView context with sensitive impact." Avoid: "URL validation is weak" without proving attacker content reaches bridge, cookies, files, or protected actions.
+```java
+// intent:// payload loaded through WebView (no host allowlist before parseUri)
+if ("intent".equals(uri.getScheme())) startActivity(Intent.parseUri(uri.toString(), Intent.URI_INTENT_SCHEME));
+```
+
+```java
+// loadDataWithBaseURL — baseURL on file:// + html with attacker content
+webView.loadDataWithBaseURL("file:///sdcard/", html, "text/html", "utf-8", null);
+```

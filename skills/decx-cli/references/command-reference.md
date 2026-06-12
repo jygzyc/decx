@@ -13,13 +13,15 @@
 
 ## Command Rules
 
-- Session-backed `decx code` and `decx ard` commands require `-P <port>`.
+- Running `decx` with no arguments prints the same top-level help as `decx --help`.
+- Session-backed `decx code` and `decx ard` commands accept `-P <port>` or `-s <name>`.
 - adb-backed `decx ard` commands such as `system-services` and `perm-info` do not use `-P <port>`.
 - When only one session is alive and `-P` is not specified, the CLI auto-selects it.
 - `-s, --session <name>` selects a session by name as an alternative to `-P <port>`.
 - `process list` does not take `-P <port>`.
 - `process close` can close by name, by `--port <port>`, or all sessions with `--all`.
-- `ard framework collect/process/run` can use adb options; `ard framework open` opens a local or generated jar and does not use `--serial`.
+- `ard framework collect/process/run/open` expose common framework options. For `open`, adb options are only used when resolving the generated jar path without an explicit `[jar]`.
+- Supported framework OEM values are `vivo`, `oppo`, `xiaomi`, `honor`, `google`, and `samsung`.
 - If command name, flags, arguments, or port behavior are uncertain, run the nearest `--help` command first. Do not guess DECX syntax.
 - Quote identifiers and pass them in the exact format below; malformed identifiers waste analysis time and may query the wrong target.
 
@@ -42,6 +44,8 @@ Open options:
 -n, --name <name>     explicit session name
 --force               reopen despite a conflicting session
 ```
+
+`process open` always starts `decx-server.jar` with JVM `-Xmx` set to two thirds of machine memory, rounded down. There is no CLI heap override.
 
 Conflict behavior:
 
@@ -66,8 +70,8 @@ All `code` commands support `-s, --session <name>` as an alternative to `-P <por
 | `decx code xref-field "<field>" -P <port>` | Show field reads and writes |
 | `decx code implement "<interface>" -P <port>` | List interface implementations |
 | `decx code subclass "<class>" -P <port>` | List subclasses |
-| `decx code search-global "<keyword>" --limit <n> -P <port>` | Search all class bodies (`--case-sensitive`, `--no-regex`) |
-| `decx code search-class "<class>" "<keyword>" --limit <n> -P <port>` | Grep one class (`--case-sensitive`, `--no-regex`) |
+| `decx code search-global "<keyword>" -P <port>` | Search all class bodies (`--limit`, `--case-sensitive`, `--no-regex`) |
+| `decx code search-class "<class>" "<keyword>" -P <port>` | Grep one class (`--limit` required, `--case-sensitive`, `--no-regex`) |
 | `decx code search-method "<name>" -P <port>` | Search method names |
 
 ## Android Commands
@@ -81,8 +85,8 @@ All session-backed `ard` commands support `-s, --session <name>` as an alternati
 | `decx ard app-application -P <port>` | Show application class |
 | `decx ard exported-components -P <port>` | List exported components (`--type`, `--exclude-type`, `--no-regex`) |
 | `decx ard app-deeplinks -P <port>` | List deep links |
-| `decx ard app-receivers -P <port>` | List dynamic receivers (`--include-package`, `--exclude-package`, `--no-regex`) |
-| `decx ard get-aidl -P <port>` | List AIDL interfaces (`--include-package`, `--exclude-package`, `--no-regex`) |
+| `decx ard app-receivers -P <port>` | List dynamic receivers (`--limit`, `--include-package`, `--exclude-package`, `--no-regex`) |
+| `decx ard get-aidl -P <port>` | List AIDL interfaces (`--limit`, `--include-package`, `--exclude-package`, `--no-regex`) |
 | `decx ard system-service-impl "<interface>" -P <port>` | Resolve framework service implementation |
 | `decx ard system-services --serial <serial> [--grep <keyword>]` | List live Binder/system services as JSON |
 | `decx ard perm-info "<permission>" --serial <serial>` | Resolve one permission as JSON |
@@ -112,6 +116,8 @@ Framework common options (`collect`, `process`, `run`):
 --clean-source        remove source after successful command
 ```
 
+`framework open` also exposes these common options. Use `--adb-path`, `--serial`, `--source-dir`, and `--out-dir` only when no explicit `[jar]` is provided and the CLI must resolve the generated jar for a connected device or output directory.
+
 `framework run` additional options:
 
 ```text
@@ -120,9 +126,9 @@ Framework common options (`collect`, `process`, `run`):
 -P, --port <port>     server port when opening
 ```
 
-`framework process` takes only `<oem>` as a positional argument. Do not pass a source directory as a positional argument.
+`framework process` takes only `<oem>` as a positional argument. Supported values are `vivo`, `oppo`, `xiaomi`, `honor`, `google`, and `samsung`. Do not pass a source directory as a positional argument.
 
-`framework open` takes optional `[jar]`, `-P <port>`, and `-n <name>`. Do not pass adb options to `framework open`.
+`framework open` takes optional `[jar]`, `-P <port>`, and `-n <name>`.
 
 ## Self Commands
 
@@ -190,7 +196,7 @@ Do not mix session and adb argument styles:
 - `decx ard system-services`, `perm-info` -> adb-backed, no `-P <port>`
 - `decx ard framework collect`, `process` -> adb-backed (no `-P`)
 - `decx ard framework run` -> hybrid: adb for collect, `-P` for open
-- `decx ard framework open` -> session-backed, no adb options
+- `decx ard framework open` -> session-backed after jar resolution; adb options only affect generated-jar resolution when `[jar]` is omitted
 
 ## Common Patterns
 

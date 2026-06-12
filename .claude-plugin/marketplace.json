@@ -1,20 +1,36 @@
 {
   "name": "decx-dev",
-  "description": "Development marketplace for DECX Android analysis skills and agents",
+  "description": "DECX Android analysis skills and hooks for Claude Code",
   "owner": {
     "name": "Yves",
     "email": "jyg.zyc@outlook.com"
   },
+  "metadata": {
+    "pluginRoot": "../"
+  },
   "plugins": [
     {
       "name": "decx",
-      "description": "DECX Android analysis workflows for APK/DEX/JAR navigation, vulnerability hunting, and PoC construction",
-      "version": "3.2.0",
+      "displayName": "DECX",
       "source": "./",
+      "description": "DECX (`Decompiler + X`) is an AI-oriented analysis layer built on top of JADX.",
+      "version": "3.3.0",
       "author": {
         "name": "Yves",
         "email": "jyg.zyc@outlook.com"
-      }
+      },
+      "homepage": "https://github.com/jygzyc/decx",
+      "repository": "https://github.com/jygzyc/decx",
+      "license": "GPL-3.0",
+      "keywords": [
+        "android",
+        "security",
+        "decompiler",
+        "jadx",
+        "vulnerability",
+        "poc",
+        "analysis"
+      ]
     }
   ]
 }

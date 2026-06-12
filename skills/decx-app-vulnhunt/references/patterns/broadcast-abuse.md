@@ -1,56 +1,63 @@
 # Pattern: Broadcast Abuse
 
-## When To Use
+## Match
 
-Use this reference when static or dynamic receivers, ordered broadcasts, custom permissions, or local/global broadcast choices expose protected data or actions.
+Receiver reachable by untrusted sender via `<intent-filter>` (implied `exported="true"`) or dynamic `registerReceiver` without `RECEIVER_NOT_EXPORTED` (Android 13+). Ordered broadcast result mutation is the highest-impact variant — a priority hijacker rewrites the result and downstream receivers see a forged security decision.
 
-## Core Concept
+## Analyze
 
-Untrusted broadcast input or observation crosses a trust boundary and reaches protected work, sensitive data, or security-relevant broadcast ordering.
+- trace both sides of the broadcast: the sender's target restrictions and the receiver's trust decision. For ordered broadcasts, follow `getResultData` / `getResultExtras` reads in downstream receivers because the attacker may control the result rather than the original `Intent`.
+- entry: `<receiver>` (exported), `registerReceiver` without `RECEIVER_NOT_EXPORTED` (Android 13+), ordered broadcast result callback
+- control: action/extras, `abortBroadcast`, `setResultData`/`setResultExtras` mutating downstream, `setPackage(packageName)` vs unrestricted
+- sink: ordered result mutation alters security decision (e.g. "deny"→"allow"), protected action dispatch, result payload leak
+- guard: `RECEIVER_NOT_EXPORTED` (Android 13+) for internal-only dynamic receivers, `Binder.getCallingUid()` before trusted sinks, `setPackage(selfPackage)`
+- impact: security decision inverted via ordered broadcast, protected state reachable, data exfiltration
 
-**Sources**
-- manifest receivers, `registerReceiver`, dynamic actions, ordered broadcasts
-- `Intent` action, extras, data, sender package, custom permission
-- `abortBroadcast`, result extras/data, global broadcasts carrying sensitive values
+> **Ordered broadcast mutation** is a distinct primitive from Intent hijack — the attacker writes into the broadcast result rather than the Intent, so the guard test is different. See also: implicit-intent-hijack.
 
-**Sinks**
-- protected app action in `onReceive`
-- sensitive data in broadcast extras or result extras
-- ordered broadcast modification/abort affecting security outcome
-- component launch or service command dispatch from receiver
+## Reject
 
-## Guards & Rejection
+Reject when broadcast is internal-only (`setPackage(self)`), extras are harmless, or ordered result manipulation has no security outcome (e.g. result only used for a UI hint).
 
-Safe when: broadcasts are explicit/local where needed, signature permissions protect sender/receiver, action/extras are allowlisted, and ordered result data is not security-critical.
+## Codes
 
-Reject when: broadcast is internal-only, extras are harmless, receiver action is public/no-op, custom permission is signature-bound, or ordered manipulation has no security outcome.
-
-## Rating
-
-- HIGH: sensitive data leak or dangerous protected action.
-- MEDIUM: bounded unauthorized state/action via local malicious app.
-- LOW: weak info leak or UI/noise.
-- IGNORED: no attacker reachability or impact.
-
-## Trace Commands
-
-```bash
-decx ard exported-components -P <port>
-decx code method-source "<receiverOnReceive>" -P <port>
+```java
+// ordered broadcast mutates result for downstream receivers — security decision is in the result
+if (intent.getStringExtra("pin") != null) {
+    abortBroadcast();
+    setResultData("verdict=allow");
+}
 ```
 
-## Example Shapes
-
-Suspicious:
-
-```text
-dynamic receiver registers for external action -> no sender permission check -> onReceive dispatches extras to protected app action
+```java
+// global broadcast carrying sensitive value (use setPackage(self) or LocalBroadcastManager)
+i.putExtra("account_id", currentAccountId);
+sendBroadcast(i);
 ```
 
-Safe:
-
-```text
-dynamic receiver registers with signature sender permission -> onReceive validates action/extras against allowlist -> only harmless branches reachable
+```java
+// higher-priority dynamic receiver hijacks an implicit broadcast
+filter.setPriority(999);
+registerReceiver(attackerReceiver, filter);
 ```
 
-Report guidance -- Use: "An attacker-controlled broadcast path reaches protected receiver behavior or exposes sensitive broadcast data without a strong permission guard." Avoid: "broadcast receiver is registered dynamically" without source, sink, guard bypass, and impact evidence.
+```java
+// safe: internal dynamic receiver rejects external senders on Android 13+
+registerReceiver(receiver, filter, Context.RECEIVER_NOT_EXPORTED);
+```
+
+```java
+// boundary mistake: package-restricted send but exported receiver still trusts external extras
+intent.setPackage(getPackageName());
+sendBroadcast(intent);
+
+// elsewhere
+if ("wipe".equals(intent.getStringExtra("cmd"))) wipeLocalState();
+```
+
+```java
+// extreme edge: dynamic registerReceiver without RECEIVER_NOT_EXPORTED — any sender can reach it
+registerReceiver(new BroadcastReceiver() {
+    @Override public void onReceive(Context c, Intent intent) { runPrivilegedAction(intent); }
+}, filter);
+```

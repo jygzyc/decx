@@ -14,6 +14,7 @@ Framework services run in `system_server` or other privileged processes. The sam
 | PendingIntent identity reuse | HIGH | [[patterns/framework-service-pendingintent]] |
 | ContentProvider proxy | HIGH | [[patterns/framework-service-content-provider-proxy]] |
 | Sensitive data leak | HIGH | [[patterns/framework-service-data-leak]] |
+| Window transition controller takeover | HIGH | [[patterns/framework-service-transition-control]] |
 | Race condition | MEDIUM to HIGH | [[patterns/framework-service-race-condition]] |
 
 ## Analysis Flow
@@ -29,10 +30,12 @@ Framework services run in `system_server` or other privileged processes. The sam
    -> clearCallingIdentity / restoreCallingIdentity
    -> nested Intent or PendingIntent handling
    -> ContentResolver / URI grant / provider proxy handling
+   -> WindowOrganizer / TransitionPlayer / RemoteTransition registration and finish paths
 4. Confirm the visible consequence:
    -> privileged action
    -> privileged data read
    -> persistent state change
+   -> transition interception, WCT mutation, SurfaceControl exposure, or UI freeze
 ```
 
 ## Key Trace Patterns
@@ -43,6 +46,8 @@ Framework services run in `system_server` or other privileged processes. The sam
 - Binder-exposed methods returning privileged data directly
 - Intent forwarding from untrusted IPC into privileged launches
 - Framework service proxying provider access for caller-controlled URI
+- Untrusted registration as global transition/remote animation controller
+- Attacker-controlled `WindowContainerTransaction` accepted in a finish path
 
 ## Key Trace Patterns
 
@@ -52,3 +57,5 @@ Framework services run in `system_server` or other privileged processes. The sam
 - Binder-exposed methods returning privileged data directly
 - Intent forwarding from untrusted IPC into privileged launches
 - Framework service proxying provider access for caller-controlled URI
+- Untrusted registration as global transition/remote animation controller
+- Attacker-controlled `WindowContainerTransaction` accepted in a finish path

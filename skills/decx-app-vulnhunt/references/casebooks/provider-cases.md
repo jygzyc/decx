@@ -2,11 +2,7 @@
 
 Use this casebook after [[patterns/provider-data-leak]], [[patterns/provider-path-traversal]], or [[patterns/provider-sql-injection]]. Cases describe reusable exploit-chain shapes.
 
-## Public Case: Provider Path Traversal Reaches Private Files
-
-### Source Type
-
-Public Android vulnerability database/advisory pattern for provider path traversal and app-private file exposure.
+## Case: Provider Path Traversal Reaches Private Files
 
 ### Abstract Shape
 

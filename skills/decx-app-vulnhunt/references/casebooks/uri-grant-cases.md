@@ -1,6 +1,6 @@
 # Casebook: URI Grant Leaks
 
-Use this casebook after [[patterns/uri-grant-leak]] and [[patterns/setresult-leak]]. These cases are abstract exploit shapes, not CVE-specific instructions.
+Use this casebook after [[patterns/uri-grant-leak]] and [[patterns/setresult-leak]]. These cases are abstract exploit shapes, not reproduction instructions.
 
 ## Case: Exported Activity Returns Grant-Bearing URI Via setResult
 

@@ -1,51 +1,56 @@
 # Pattern: UI Trust Abuse
 
-## When To Use
+## Match
 
-Use this reference when task hijack, clickjacking, overlay, task-affinity, launch-mode, or spoofed trusted UI can cause credential entry or protected in-app approval.
+Task/launch mode, task affinity, overlay/obscured touch, spoofed trusted UI, dialog, or WebView/native UI context influences credential entry or protected approval.
 
-## Core Concept
+1. **User confirmation bypass** — exported `Activity` performs sensitive action (dial, payment, settings) without confirmation dialog, or with a suppressible dialog.
+2. **User confirmation spoofing** — floating window (`SYSTEM_ALERT_WINDOW`) overlays fake dialog on legitimate confirmation. The "allow"/"deny" prompt can be flipped by the overlay. Public case shapes: Bluetooth pair dialog, CertInstaller, UninstallerActivity, Calendar debug.
 
-The app lets attacker-controlled UI context influence a user trust decision, causing unintended credential disclosure or protected action approval.
+Variant: **StrandHogg** — `allowTaskReparenting` + `taskAffinity` impersonate victim's task in overview. StrandHogg 2.0: `AUTOMERGE` flow. Fixed in AOSP.
 
-**Sources**
-- task affinity, launch mode, exported Activity, overlay/obscured touch, spoofed WebView or internal fragment UI
-- user-driven approval, login, payment, permission, admin, or security-setting flows
+Variant: **Bluedu** — Bluetooth device name CRLF injection flips the pairing dialog text. Fixed in AOSP.
 
-**Sinks**
-- credential entry, payment/security approval, permission/admin activation, protected settings change, sensitive native action
+## Analyze
 
-## Guards & Rejection
+- entry: exported Activity, task affinity, overlay-sensitive screen, Bluetooth/VoIP setup, PackageInstaller UninstallerActivity, CertificateInstaller
+- control: task placement (`taskAffinity`, `allowTaskReparenting`, `launchMode`), floating window overlay (`FLAG_NOT_TOUCH_MODAL | FLAG_NOT_FOCUSABLE | FLAG_WATCH_OUTSIDE_TOUCH`), CRLF in display names
+- sink: credential entry, payment/security/admin approval, phone dial without confirmation, stale grant state
+- guard: `filterTouchesWhenObscured="true"` (default Android 12+), `onFilterTouchEventForSecurity`, `HIDE_NON_SYSTEM_OVERLAY_WINDOWS` (system apps), CRLF filtering on display names
+- impact: credential theft, protected action approval bypass, dial without user consent
 
-Safe when: sensitive controls reject obscured touches, task/launch settings prevent hijack, UI clearly verifies trusted origin, and protected actions require independent non-bypassable confirmation.
+## Reject
 
-Reject when: pure UI confusion, public-screen opening, or multi-step social engineering with no protected action or data exposure.
+Reject when no protected input/action occurs, confirmation is independent and non-bypassable, or task/overlay protections block attacker control.
 
-## Rating
+## Codes
 
-- MEDIUM: real credential theft or protected action with plausible local attacker/user interaction.
-- LOW: limited UI deception with weak but real security value.
-- IGNORED: visual spoofing only.
-
-## Trace Commands
-
-```bash
-decx ard exported-components -P <port>
-decx code class-source "<ActivityOrUiClass>" -P <port>
+```java
+// dial without confirmation — insert into a privileged provider from a public Activity
+cv.put("data1", getIntent().getLongExtra("target_user_id", 0));
+getContentResolver().insert(Uri.parse("content://com.vkontakte.android.calls/queue"), cv);
 ```
 
-## Example Shapes
-
-Suspicious:
-
-```text
-attacker controls task affinity -> overlays or hijacks login Activity -> user enters credentials into attacker-controlled UI
+```java
+// Bluetooth device name with embedded newlines flips the pairing dialog text
+Runtime.getRuntime().exec(new String[] { "sh", "-c",
+    "hciconfig hci0 name \"heen-ras 想要访问你的通信录和电话簿， 要拒绝它吗？\n\n...\n\"" });
 ```
 
-Safe:
-
-```text
-login Activity uses singleTask launch mode, rejects obscured touches, and verifies trusted origin
+```java
+// floating window with FLAG_WATCH_OUTSIDE_TOUCH covers UninstallerActivity — touch passes through
+lp.type = WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY;
+lp.flags = WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL
+         | WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
+         | WindowManager.LayoutParams.FLAG_WATCH_OUTSIDE_TOUCH;
+windowManager.addView(fakeDialog, lp);
 ```
 
-Report guidance -- Use: "The app permits attacker-controlled UI context to influence a protected user approval or credential-entry flow." Avoid: "task affinity can be manipulated" without proving the manipulation causes credential entry or protected action approval.
+```java
+// StrandHogg / StrandHogg 2.0 — task affinity + allowTaskReparenting + singleTask (impersonates victim in task stack)
+```
+
+```java
+// onFilterTouchEventForSecurity returns false to allow taps under overlay
+if (hasObscuringOverlay()) return false;
+```

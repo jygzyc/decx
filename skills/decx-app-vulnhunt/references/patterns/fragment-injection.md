@@ -1,56 +1,36 @@
 # Pattern: Fragment Injection
 
-## When To Use
+## Match
 
-Use this reference when fragment class names, navigation destinations, preference fragments, routes, or arguments can be supplied through external Activity input.
+Caller-controlled class name selects Fragment from exported Activity, deep link, saved state, or Bundle. The classic primitive: `PreferenceActivity.EXTRA_SHOW_FRAGMENT` → `Fragment.instantiate(fragmentName, args)` — typed reflection. Even with `isValidFragment`, subclasses returning `true` for everything reintroduce the primitive.
 
-## Core Concept
+## Analyze
 
-Untrusted component input selects or configures an internal fragment that exposes privileged UI, data, or actions without caller authorization.
+- entry: exported Activity (especially subclassing `PreferenceActivity`), deep link handler, `Fragment.instantiate` from `EXTRA_SHOW_FRAGMENT`
+- control: fragment class name, arguments Bundle, route
+- sink: privileged fragment (PIN/credential reset, account/settings/payment/admin), WebView/provider/service bridge reached from injected fragment
+- guard: destination allowlist, `isValidFragment` returning `false` for caller-controlled names
+- impact: protected UI/action, credential/approval flow, or chain into WebView/service/provider
 
-**Sources**
-- `Intent` extras, URI parameters, deep-link route, saved state, `Bundle`
-- `EXTRA_SHOW_FRAGMENT`, fragment class/name, navigation destination ID, preference screen key
-- reflection-based fragment creation or router helpers
+## Reject
 
-**Sinks**
-- `Fragment.instantiate`, `FragmentTransaction.replace/add`
-- settings/preference fragment dispatch
-- navigation component destination resolution
-- fragment methods that read private data, issue privileged actions, or bypass expected UI flow
+Reject when only public fragments are reachable, the class is mapped from trusted constants, privileged actions re-authenticate inside the fragment, or caller-controlled args cannot affect protected behavior.
 
-## Guards & Rejection
+## Codes
 
-Safe when: fragment selection is from immutable allowlisted destinations, arguments are sanitized, sensitive fragments recheck authorization, and exported entrypoints cannot reach private admin/debug screens.
-
-Reject when: attacker can only open harmless UI, fragment class is trusted constant, allowlist is exact and enforced, or no sensitive fragment behavior is reachable.
-
-## Rating
-
-- HIGH: privileged admin/security fragment or sensitive account/data access.
-- MEDIUM: bounded unauthorized settings/action or protected workflow bypass.
-- LOW: UI-only confusion without protected action.
-- IGNORED: no sensitive fragment or no attacker selection.
-
-## Trace Commands
-
-```bash
-decx code search-class-key "<ActivityClass>" "Fragment" -P <port>
-decx code method-context "<fragmentDispatchMethod>" -P <port>
+```java
+// PreferenceActivity reads caller-controlled fragment name and reflects it
+String initialFragment = getIntent().getStringExtra(PreferenceActivity.EXTRA_SHOW_FRAGMENT);
+if (initialFragment != null) switchToHeader(initialFragment, getIntent().getBundleExtra(PreferenceActivity.EXTRA_SHOW_FRAGMENT_ARGUMENTS));
 ```
 
-## Example Shapes
-
-Suspicious:
-
-```text
-deep link param fragment=PrivateSettings -> Fragment.instantiate -> protected settings action
+```java
+// Fragment.instantiate reflects the caller-controlled string
+Class<?> clazz = context.getClassLoader().loadClass(fname);
+Fragment f = (Fragment) clazz.newInstance();
 ```
 
-Safe:
-
-```text
-route ID -> public destination allowlist -> fragment-level permission check
+```java
+// subclass that re-introduces the bug — always allow (the only edge case is the override pattern)
+@Override protected boolean isValidFragment(String fragmentName) { return true; }
 ```
-
-Report guidance -- Use: "An exported Activity lets attacker-controlled input select a sensitive internal fragment without authorization." Avoid: "fragment class comes from extras" without proven controlled class reaching a security-relevant sink.

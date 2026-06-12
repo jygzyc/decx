@@ -1,6 +1,6 @@
 ---
 name: decx-cli
-description: Runs DECX CLI commands to open APK, DEX, JAR, or framework targets; inspect classes, methods, source, xrefs, inheritance, search results; inspect manifests, components, resources, AIDL, Binder metadata, and permissions for Android targets; and manage DECX sessions.
+description: Use when running DECX CLI commands to open APK, DEX, JAR, or framework targets; inspect classes, methods, source, xrefs, inheritance, or search results; inspect manifests, components, resources, AIDL, Binder metadata, or permissions for Android targets; or manage DECX sessions.
 metadata:
   requires:
     bins: ["decx"]
@@ -9,6 +9,10 @@ metadata:
 # DECX CLI
 
 Runs `decx` CLI commands for Android/Java target analysis. Targets include APK, DEX, JAR, and processed framework files.
+
+## Routing Gate
+
+Use only for DECX CLI command execution: session lifecycle, code/manifest inspection, or adb-backed device queries. Do not use for vulnerability analysis, chain tracing, report writing, PoC construction, or generic Android security advice. Route those to `decx-app-vulnhunt`, `decx-framework-vulnhunt`, `decx-report`, `decx-poc`, or external security guidance respectively.
 
 ## Command Selection
 
@@ -19,6 +23,8 @@ Runs `decx` CLI commands for Android/Java target analysis. Targets include APK, 
 | manifest, components, deep links, resources, AIDL, framework services (Android only) | `decx ard` with `-P <port>` |
 | live Binder services or permissions from a device (Android only) | `decx ard system-services` / `decx ard perm-info` — no `-P` |
 | install or update DECX runtime | `decx self` |
+
+Running `decx` with no arguments prints the same top-level help as `decx --help`.
 
 ## Session Management
 
@@ -33,7 +39,7 @@ decx process close --all
 
 ## Argument Rules
 
-- Session-backed `decx code` and `decx ard` require `-P <port>` or `-s <name>`. When only one session is alive, omit both for auto-select.
+- Session-backed `decx code` and `decx ard` accept `-P <port>` or `-s <name>`. When exactly one session is alive, omit both for auto-select; with multiple sessions, pass one explicitly.
 - adb-backed `decx ard system-services` and `decx ard perm-info` never take `-P`; use `--serial` for device selection.
 - Quote all identifiers: class names, method signatures, field identifiers, resource paths, package names, interface names.
 - Method signatures: full form only — `"package.Class.method(paramType1,paramType2):returnType"`. Never use shortened signatures, partial class names, placeholders, or `...`.
@@ -69,7 +75,20 @@ Keep notes under `.decx-analysis/<target-name>/` for work that may continue late
 |---|---|
 | command missing, rejected, or uncertain | run nearest `--help` before retrying |
 | target/name conflict on `process open` | use a new `--name` or `--force` |
+| unsupported framework OEM | supported values are `vivo`, `oppo`, `xiaomi`, `honor`, `google`, `samsung` |
 | need exact command syntax | read `references/command-reference.md` |
+
+## Gotchas
+
+Concrete failure modes from real sessions. These are not generic CLI tips; they are conditions where the wrong call silently corrupts analysis or returns plausible-but-wrong output.
+
+- **Multiple sessions + omitted `-P`/`-s`**: `decx code` and `decx ard` auto-select only when one session is alive. Once more than one session exists, always pass `-P <port>` or `-s <name>`.
+- **Shortened method signature**: `"Class.method"` or `"Class.method():void"` returns wrong method, an empty body, or a stale cached match. Use the full form `"package.Class.method(paramType1,paramType2):returnType"`. Never substitute `...` or drop parameter types.
+- **`-P` on adb-backed commands**: `decx ard system-services` and `decx ard perm-info` talk to adb, not the DECX HTTP server. Adding `-P <port>` causes the command to fail with an unrelated error and may mask the real adb connectivity issue.
+- **`decx code search-global` without `--limit`**: returns up to the server default (often hundreds of matches), burns context, and frequently hides the actual hit. Always set `--limit` to a small working set (start at 20–50) and refine.
+- **`process open` reuses file but fails on name conflict**: a previous session with the same `--name` is still bound. Either pick a fresh `--name`, pass `--force` to rebind, or close the old session first with `decx process close`.
+- **Forgetting to quote identifiers with shell metacharacters**: class/method/URI strings containing `$`, `(`, `)`, `:`, or `*` are parsed by the shell and either error or target the wrong symbol. Always wrap in double quotes; never rely on escaping.
+- **`decx ard app-deeplinks` / `app-receivers` return empty on a non-app target**: these commands require an APK session, not a framework bundle. Use `decx ard get-aidl` and `decx ard system-service-impl` for framework targets.
 
 ## References
 

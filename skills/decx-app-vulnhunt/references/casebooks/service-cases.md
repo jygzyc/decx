@@ -1,6 +1,6 @@
 # Casebook: Service Command Injection
 
-Use this casebook after [[patterns/service-command-injection]]. These cases are abstract exploit shapes, not CVE-specific instructions.
+Use this casebook after [[patterns/service-command-injection]]. These cases are abstract exploit shapes, not reproduction instructions.
 
 ## Case: AIDL Method Trusts Caller Args Without Binder Validation
 

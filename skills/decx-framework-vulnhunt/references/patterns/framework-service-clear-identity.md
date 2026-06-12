@@ -1,80 +1,39 @@
 # Pattern: Framework Service clearCallingIdentity Misuse
 
-## When To Use
+## Match
 
-Use this reference when framework service code calls `Binder.clearCallingIdentity()`, `withCleanCallingIdentity()`, or equivalent identity-clearing helpers around attacker-influenced work.
+`Binder.clearCallingIdentity()`, `withCleanCallingIdentity()`, or equivalent wraps attacker-influenced work before authorization, target validation, user binding, or provider/launch/file sink is complete. Also match callback/observer paths where framework-owned code reads attacker-influenced state and forwards it into a privileged protocol or parser without normalization.
 
-## Core Concept
+## Analyze
 
-Attacker-triggered work runs with privileged service identity because authorization or target validation is incomplete before caller identity is cleared.
-
-**Sources**
-- Binder method parameters
-- caller-controlled `Intent`, `Uri`, package, user ID, operation name, file path, or callback
-- async work scheduled while identity is cleared or with captured attacker-controlled state
-
-**Sinks**
-- privileged file/provider/package/settings/user/device operations
-- component launch or broadcast under system identity
-- callbacks or scheduled work that outlive the intended identity boundary
+- entry: `Binder.clearCallingIdentity()` / `withCleanCallingIdentity()` block, observer/callback that runs as the service, privileged protocol writer, parser, launcher, provider/file helper
+- control: `Intent`, `Uri`, `Bundle`, `Parcelable`, package/user/UID/attribution tag, operation name, path, callback, token, async work captured before/inside cleared block, unescaped control characters, argument counts, target identity fields
+- sink: provider/file/package/settings/user/device operation, privileged launch/broadcast, callback/scheduled work outliving caller identity, line/argument protocol parser, process/action spawn under service identity
+- guard: all authorization and target validation before clear; cleared block uses trusted constants only; `finally` fence with `restoreCallingIdentity(token)` covering every return path; `UserHandle`/UID rebinding before sink; reject or escape protocol delimiters before privileged protocol writes
+- impact: attacker-controlled work runs under system/service identity, privileged protocol arguments are injected, or privileged action is attributed to the wrong package/user
 
 ## Required Trace Evidence
 
-- Reachability: attacker can invoke the method containing or reaching the identity-cleared block.
-- Controllability: attacker shapes work performed inside the cleared identity scope.
-- Sink: privileged operation executes after identity is cleared.
-- Missing or bypassable guard: authorization, ownership, target, and user checks are absent, incomplete, or performed after clearing.
-- Visible impact: protected state/data/action changes under system identity.
+Reachability, Controllability, Sink, Missing guard, Visible impact
 
-## Guards & Rejection
+## Reject
 
-Safe when: all authorization and target validation finish before clearing, the cleared block is minimal and uses trusted constants, `restoreCallingIdentity` is reliably fenced, and async callbacks do not inherit uncontrolled privileged work. Authorization and target validation must complete before clearCallingIdentity; restoreCallingIdentity must fence the cleared scope reliably.
+Reject when cleared block does only harmless bookkeeping, every attacker-controlled branch is validated before clearing, the privileged callee rechecks caller authorization, identity is restored before sink, privileged protocol payloads are escaped/rejected at the source, or the only work in the cleared block is a constant forwarder with no attacker-controlled value.
 
-Reject when: the cleared block performs only harmless bookkeeping, all attacker-controlled branches are validated before clearing, or the privileged callee performs its own non-bypassable checks.
+## Codes
 
-## Rating
-
-- CRITICAL: identity clearing enables broad system compromise or persistent device-level impact.
-- HIGH: protected data/action under system identity.
-- MEDIUM: bounded privileged action with strong prerequisites.
-- IGNORED: no attacker-controlled privileged work in cleared scope.
-
-## Trace Commands
-
-```bash
-decx code xref-method "android.os.Binder.clearCallingIdentity():long" -P <port>
-decx code method-cfg "<methodWithClearedIdentity>" -P <port>
+```java
+// service-owned callback forwards attacker-influenced text into a privileged line protocol
+protocolWriter.write(argumentCount);
+protocolWriter.newLine();
+protocolWriter.write(attackerText);
 ```
 
-## Example Shapes
-
-Suspicious:
-```text
-public void installPackage(Uri packageUri) {
-    long token = Binder.clearCallingIdentity();
-    try {
-        PackageManager.getPackageInfo(callerSuppliedPkg, 0); // validation after clear
-        mInstaller.install(packageUri); // privileged sink under system identity
-    } finally {
-        Binder.restoreCallingIdentity(token);
-    }
-}
+```java
+// delimiter mismatch: list split removes one separator class, but protocol delimiter remains
+for (String arg : attackerText.split(",")) protocolWriter.writeLine(arg);
 ```
 
-Safe:
-```text
-public void installPackage(Uri packageUri) {
-    enforceCallingPermission(android.Manifest.permission.INSTALL_PACKAGES);
-    String callerPkg = getAppOpFirstPackage();
-    // validate before clearing
-    verifyCallerOwnsPackage(callerPkg);
-    long token = Binder.clearCallingIdentity();
-    try {
-        mInstaller.install(packageUri);
-    } finally {
-        Binder.restoreCallingIdentity(token);
-    }
-}
+```java
+// clearCallingIdentity without finally; restore skipped on exception path
 ```
-
-Report guidance -- Use: "The service clears Binder caller identity before completing authorization, allowing attacker-controlled work to run with privileged service identity." Avoid: "clearCallingIdentity is called" (must show attacker-controlled work reaches a privileged sink inside the cleared scope).

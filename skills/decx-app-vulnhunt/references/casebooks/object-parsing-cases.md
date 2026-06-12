@@ -1,12 +1,8 @@
 # Casebook: Object Parsing Abuse
 
-Use this casebook after [[patterns/object-parsing-abuse]], [[patterns/exported-access]]. These cases are abstract exploit shapes, not CVE-specific instructions.
+Use this casebook after [[patterns/object-parsing-abuse]], [[patterns/exported-access]]. These cases are abstract exploit shapes, not reproduction instructions.
 
-## Public Case: Parsed Object Controls Authorization Target
-
-### Source Type
-
-Public Android app-sec pattern from Parcelable/Serializable/Bundle trust-boundary issues.
+## Case: Parsed Object Controls Authorization Target
 
 ### Abstract Shape
 
@@ -84,6 +80,32 @@ The exported component validates one Bundle key but uses a different key for the
 When an exported component reads from a caller-controlled Bundle, verify that the validated key is the same key used at every downstream consumption point, not a separate parallel key.
 
 Related: [[patterns/object-parsing-abuse]], [[patterns/exported-access]]
+
+## Case: Bundle Mismatch Drives Intent Redirect
+
+### Abstract Shape
+
+```text
+external app -> exported component -> validated Bundle key -> unvalidated nested Intent/key -> startActivity/setResult -> private component or grant
+```
+
+### Key Mistake
+
+The component validates one Bundle field or nested object but launches, returns, or grants using a different caller-controlled field.
+
+### Why It Was Exploitable
+
+- exported component receives the Bundle from another app, deep link, service call, or broadcast
+- attacker controls both the validated decoy field and the execution field
+- execution field reaches `startActivity`, `startService`, `sendBroadcast`, `setResult`, or URI grant sink
+- target, flags, selector, `ClipData`, or grant data is not normalized after validation
+- downstream component/action is private, privileged, or data-bearing
+
+### Generalized Detection Rule
+
+When Bundle validation and execution use different keys or nested objects, trace the execution key to any component launch, result, grant, or protected command sink.
+
+Related: [[patterns/object-parsing-abuse]], [[patterns/intent-redirect]], [[patterns/uri-grant-leak]]
 
 ## Case: Custom ClassLoader Loads Attacker Class Into Privileged Context
 

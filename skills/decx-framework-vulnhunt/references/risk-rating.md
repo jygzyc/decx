@@ -12,13 +12,14 @@ Reference guidance for rating Android security findings.
 
 ## 1. Mandatory Exploitability Gate
 
-Report a finding only if all three conditions are satisfied:
+Report a finding only if all four conditions are satisfied:
 
 1. **Reachable**: the attacker can trigger the path
 2. **Controllable**: the attacker can influence the security-relevant input
-3. **Impactful**: the path causes a visible security consequence
+3. **Deeply traced**: the controlled value is followed through Binder boundaries, identity transitions (`clearCallingIdentity`), async handlers, callbacks, cross-service calls, and provider/file/launch paths to the sink or blocker
+4. **Impactful**: the path causes a visible security consequence
 
-If any condition is missing, do not report it.
+If any condition is missing, do not report it. Keep it only as an intermediate analysis record, chain pivot, or unresolved candidate until the missing gate is proven.
 
 ### Reachable
 

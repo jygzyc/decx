@@ -1,56 +1,58 @@
 # Pattern: PendingIntent Abuse
 
-## When To Use
+## Match
 
-Use this reference when attacker-influenced `PendingIntent` creation, mutation, forwarding, `fillInIntent`, notification actions, widgets, alarms, or broadcast/service callbacks may reuse the victim app identity.
+Attacker influences `PendingIntent` creation, accepts/supplies one, controls mutable/fill-in fields, or triggers dispatch via notification/widget/alarm/shortcut/callback.
 
-## Core Concept
+The Android 12+ default for `PendingIntent` is now `FLAG_MUTABLE` (changed from `FLAG_IMMUTABLE`); still treat any caller-supplied `PendingIntent` or any `PendingIntent` created with `FLAG_MUTABLE` / without explicit `FLAG_IMMUTABLE` as untrusted. `FLAG_UPDATE_CURRENT` + a stable request code lets the creator overwrite a previously granted `PendingIntent` with attacker-controlled extras.
 
-Untrusted input shapes a capability object that later executes as the victim app, allowing the attacker to trigger protected actions or redirect privileged state.
+Common primitives:
+- `PendingIntent.getActivity` / `getService` / `getBroadcast` / `getActivities` / `getForegroundService` with `FLAG_MUTABLE` and attacker-controlled `Intent` — recipient can call `pendingIntent.send(this, 0, mutatedIntent)` to launch under creator identity.
+- Notification action `PendingIntent` that the user can trigger (the user is the carrier) — but extras in the wrapped Intent may be attacker-controlled if the notification is built from a server response.
+- AppWidget host `PendingIntent` that the desktop process fires on user click — desktop identity, victim-app's permission.
+- queued callback or remote-view style payload carries a parcelable across process boundaries and is parsed again at dispatch (see `object-parsing-abuse`).
+- Caller-supplied `PendingIntent` received via Intent extra; the receiver then calls `send()` without checking whether the PendingIntent is the one the receiver originally created (request-code collision via `FLAG_UPDATE_CURRENT`).
 
-**Sources**
-- extras, URI, action, request code, component, package, flags used to build a `PendingIntent`
-- attacker-supplied `PendingIntent` passed into app code
-- mutable pending intents consumed by notifications, widgets, alarms, shortcuts, or callbacks
-- `fillInIntent` data supplied by another app
+## Analyze
 
-**Sinks**
-- `PendingIntent.getActivity`, `getService`, `getBroadcast`
-- `send(...)`, `AlarmManager`, `Notification` actions, app widgets, shortcuts
-- component launches or broadcasts triggered from the pending intent target
+- entry: `PendingIntent.getActivity` / `getService` / `getBroadcast` / `getActivities` / `getForegroundService`, received `PendingIntent` extra, notification action, app widget, alarm, shortcut, callback token, queued callback item
+- control: target `component` / `package`, action, data URI, extras, request code, flags (`FLAG_IMMUTABLE` / `FLAG_MUTABLE` / `FLAG_UPDATE_CURRENT` / `FLAG_ONE_SHOT` / `FLAG_CANCEL_CURRENT`), mutability, fill-in mask, grant fields
+- sink: `PendingIntent.send`, delayed dispatch, target component/service/receiver, URI grant (`FLAG_GRANT_*` on the wrapped Intent), protected action executed by creator identity
+- guard: `FLAG_IMMUTABLE` for any externally delivered PI, explicit trusted target, fill-in restriction, target-side authorization (`getCallingPackage()` / `getCallingUid()`) at the `send()` receiver, never use `FLAG_UPDATE_CURRENT` on attacker-controlled request code
+- impact: victim identity launch/grant, private component reachability, replay/collision, leverage into `object-parsing-abuse` chain when PI carries a Parcelable or remote callback payload
 
-## Guards & Rejection
+## Reject
 
-Safe when: pending intents are immutable, target explicit trusted components, use stable non-attacker request codes where needed, ignore untrusted fill-in fields, and repeat authorization at execution time.
+Reject when PI is `FLAG_IMMUTABLE` with trusted constants, attacker cannot obtain/trigger it, target rechecks authorization before sensitive work, or execution reaches only harmless UI.
 
-Reject when: the pending intent is immutable and contains only trusted constants, the attacker cannot obtain or trigger it, execution reaches only harmless UI, or authorization is rechecked before sensitive work.
+## Codes
 
-## Rating
-
-- HIGH: victim identity triggers privileged action, private component, or sensitive data/grant path.
-- MEDIUM: bounded local action with user-assisted trigger or constrained target.
-- LOW: weak UI deception or notification spam only.
-- IGNORED: no attacker control over the executed operation.
-
-## Trace Commands
-
-```bash
-decx code method-context "<pendingIntentCreator>" -P <port>
-decx code method-source "<pendingIntentTarget>" -P <port>
+```java
+// mutable PI handed as extra — recipient can mutate and send under creator identity
+PendingIntent pi = PendingIntent.getActivity(ctx, 0, intent1, PendingIntent.FLAG_MUTABLE);
+intent1.putExtra("PENDING", pi);
+startActivity(intent1);
 ```
 
-## Example Shapes
-
-Suspicious:
-
-```text
-external input -> mutable PendingIntent extras/component -> attacker sends -> victim target performs protected action
+```java
+// recipient mutates Intent and sends under creator identity — fill-in mask
+Intent inner = new Intent();
+inner.putExtra("code", 42);
+pi.send(this, 0, inner);
 ```
 
-Safe:
-
-```text
-trusted constant target -> FLAG_IMMUTABLE -> target rechecks authorization -> bounded action
+```java
+// queued callback carries a remote-view shaped Parcelable into a later parse
+queue.add(inner.getParcelableExtra("p"));
 ```
 
-Report guidance -- Use: "The app creates or accepts a pending intent whose attacker-controlled fields execute a protected action under the app identity." Avoid: "PendingIntent is created with caller-controlled content" without proving the PendingIntent executes under victim identity with security impact.
+```java
+// receiver blindly re-dispatches a caller-supplied PI
+PendingIntent pi = intent.getParcelableExtra("pending_intent");
+pi.send(this, 0, intent);
+```
+
+```java
+// FLAG_UPDATE_CURRENT + attacker-controlled request code overwrites previously-granted PI
+PendingIntent.getActivity(ctx, 0, newIntent, PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_MUTABLE);
+```

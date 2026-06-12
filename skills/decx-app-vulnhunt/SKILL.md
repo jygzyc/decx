@@ -1,61 +1,86 @@
 ---
 name: decx-app-vulnhunt
-description: Android APK vulnerability hunting with DECX. Use for APK exported/deep-link/WebView/Provider/Receiver/Service/app-IPC attack-surface analysis, exploitability tracing, XML result artifacts, report handoff, or PoC readiness.
+description: APK app-layer vulnerability hunting with DECX. Use when analyzing exported components, deep links, WebView/Provider/Service/Receiver IPC paths, app attack surfaces, or composed APK exploit chains.
 metadata:
   requires:
     bins: ["decx"]
 ---
 
-# DECX - Android App Vulnerability Hunting
+# DECX App Vulnerability Hunting
 
-Use for APK app-layer vulnerability analysis only. Route `system_server`, framework jars, Binder service implementations, and OEM framework logic to `decx-framework-vulnhunt`. Route command help only to `decx-cli`, report writing to `decx-report`, and PoC implementation to `decx-poc`.
+Use this skill only for DECX-backed APK app-layer hunts where the blackboard workflow matters: APK session binding, attack-surface routing, Fact/Intent/Event tracking, delegated trace work, evidence gates, or multi-primitive exploit composition.
 
-## Routing Gate
+Route elsewhere:
 
-Use only when DECX app-layer artifact rules matter: APK session binding, app attack-surface routing, XML handoff/result artifacts, subagent chain tracing, evidence gates, or multi-primitive app exploit composition. Do not use for generic Android security advice, raw source review without DECX state, framework/Binder hunts, standalone reports, or PoC coding.
+- `decx-framework-vulnhunt`: `system_server`, framework jars, Binder services, OEM framework logic.
+- `decx-cli`: command help only.
+- `decx-report`: finalized report writing.
+- `decx-poc`: PoC or verification artifact implementation.
 
-## Critical Contract
+Do not use this skill for generic Android security advice, raw source review without DECX state, standalone reports, framework/Binder hunts, or PoC coding.
 
-- Use only current XML artifacts from `assets/decx-analysis-template.xml`.
-- Session handoff: `.decx-analysis/<target>/h_<sessionName>.xml`.
-- Chain handoff: `.decx-analysis/<target>/h_<sourceId>_<sinkId>_<flowSig>.xml`.
-- Final result: `.decx-analysis/<target>/r_<sourceId>_<sinkId>_<flowSig>.xml`.
-- `sourceId` and `sinkId` are stable base64url ids produced by `assets/decx-artifact.mjs`; `flowSig` is the current analyzed component signature for the analysis chain.
-- Use `h_<sessionName>.xml` only for collection/candidate pool context. Use chain-level `h_*.xml` only after source, sink, and flow are known.
-- Do not reintroduce `decx-analysis.xml` or recon/coverage/findings/resume JSON.
+## Instructions
 
-```bash
-node skills/decx-app-vulnhunt/assets/decx-artifact.mjs <target-dir> "" "" "" <session> handoff-session
-node skills/decx-app-vulnhunt/assets/decx-artifact.mjs <target-dir> <source-sig> <sink-sig> <flow-sig> <session> <handoff|result>
-```
+1. **Prepare one APK target**: open or confirm one DECX APK session, choose a target directory, then initialize `.decx-analysis/<target>/decx-analysis.db`.
+2. **Create bounded intents**: each intent must ask one concrete question, such as collecting a bounded surface, classifying one candidate group, tracing one source-to-sink path, validating one composition edge, or reviewing one evidence chain.
+3. **Delegate target queries**: the main agent orchestrates only. Manifest, exported component, AIDL, dynamic receiver, resource, source, xref, method context, and search queries belong inside dispatched subagent intents. Session health checks and blackboard maintenance are allowed in the main context.
+4. **Dispatch before claim**: every intent must be dispatched to exactly one subagent, then claimed by that subagent.
+5. **Keep one intent per subagent invocation**: a subagent may write facts, events, links, chains, hints, and follow-up intents, but must not execute a second intent in the same invocation.
+6. **Absorb evidence atomically**: prefer `result` to write subagent facts/events and close the intent. Use `link` or `chain` when multiple facts jointly prove the path.
+7. **Promote only after review**: record candidate, promoted, or rejected events only after facts and links satisfy the promotion gate.
+8. **Close composition before final output**: before ending analysis, review all promoted primitives and candidate chains for `enable`, `carry`, `amplify`, `bypass`, or `observe` edges. Dispatch one bounded composition-validation intent for each plausible pair or chain.
+9. **Hand off deliverables**: after all intents are resolved and composition is closed, route reports to `decx-report` and PoC/verification artifact construction to `decx-poc`, unless the user explicitly requested analysis-only output.
 
-## Workflow
+## Blackboard
 
-1. **Prepare**: open one APK session and create `h_<sessionName>.xml`.
-2. **Collect**: enumerate manifest, components, deep links, receivers, AIDL, resources, WebView hosts, provider authorities, URI grants, and PendingIntent paths.
-3. **Model attack surface**: group candidates by attacker capability, entrypoint, trust boundary, controlled object, guard, suspected sink, and defensive control.
-4. **Route knowledge**: use `references/index.md`; load one overview, one or two pattern cards, and casebooks only for matching exploit shapes.
-5. **Classify**: set each candidate to `candidate`, `statically-supported`, or `rejected`; every rejection needs blocker evidence.
-6. **Deep trace**: delegate exactly one chain per `decx-subagent` invocation. Main agent must not deep-trace.
-7. **Compose**: combine primitives only when evidence proves an object, identity, data, grant, token, or control-flow transfer between stages.
-8. **Finalize**: promote only findings with reachability, controllability, guard/bypass, sink, impact, rating rationale, and report-ready evidence.
-9. **Handoff**: write promoted findings to `r_*.xml`; fill one selected result `poc` block and `pocReady` only when PoC trigger and success signal are explicit.
-
-## Required DECX Commands
+One SQLite database per target:
 
 ```bash
-decx process list
-decx process open "<apk-path>" --name "<target-name>" -P <port>
-decx process status "<target-name>" -P <port>
-decx ard app-manifest -P <port>
-decx ard exported-components -P <port>
-decx ard app-deeplinks -P <port>
-decx ard app-receivers -P <port>
-decx ard get-aidl -P <port>
-decx ard all-resources -P <port>
+node scripts/decx-analysis-db.mjs init <dir> --session <name> --kind android_app
 ```
 
-## Candidate Map Fields
+Core records:
+
+- **Facts** are immutable observations. Prefix fact descriptions with the observation type: `entrypoint:`, `surface:`, `reachability:`, `control:`, `guard:`, `sink:`, `impact:`, `composition:`, or `dead-end:`.
+- **Intents** are concrete subagent questions, not workflow phases. Statuses are `open`, `working`, `done`, and `failed`.
+- **Events** record dispatch, claim, review, promotion, rejection, and notable workflow decisions.
+- **Links/chains** connect facts that jointly prove a path. Prefer them over a single concluded fact for multi-hop evidence.
+
+Key commands:
+
+```bash
+node scripts/decx-analysis-db.mjs fact <dir> --description <text> [--evidence <json>] [--source <src>]
+node scripts/decx-analysis-db.mjs facts <dir> [--session <name>]
+node scripts/decx-analysis-db.mjs intent <dir> --description <text> --from <factId,...> --agent <role> [--priority <n>]
+node scripts/decx-analysis-db.mjs dispatch <dir> <intentId> --to <subagent>
+node scripts/decx-analysis-db.mjs claim <dir> <intentId> [--by <worker>]
+node scripts/decx-analysis-db.mjs result <dir> <intentId> --facts <json> [--events <json>] [--conclude <factId|last>] [--fail <reason>] [--by <worker>]
+node scripts/decx-analysis-db.mjs conclude <dir> <intentId> --fact <factId>
+node scripts/decx-analysis-db.mjs fail <dir> <intentId> --reason <text>
+node scripts/decx-analysis-db.mjs intents <dir> [--status <st>]
+node scripts/decx-analysis-db.mjs hint <dir> --content <text> [--creator <who>]
+node scripts/decx-analysis-db.mjs absorb <dir> <hintId>
+node scripts/decx-analysis-db.mjs hints <dir>
+node scripts/decx-analysis-db.mjs event <dir> --type <type> [--data <json>]
+node scripts/decx-analysis-db.mjs link <dir> --from <factId> --to <factId> [--kind <k>]
+node scripts/decx-analysis-db.mjs chain <dir> --facts <factId,...> [--kind <k>]
+node scripts/decx-analysis-db.mjs graph <dir>
+node scripts/decx-analysis-db.mjs path <dir> --from <factId> --to <factId>
+node scripts/decx-analysis-db.mjs export <dir>
+node scripts/decx-analysis-db.mjs stats <dir>
+```
+
+## Hunting Method
+
+Use `references/index.md` as the authority for app-layer coverage and pattern routing.
+
+- Start with `Composite Exploit Chains`; combined exploitability is the primary output goal.
+- After surface enumeration, prioritize primitive pairs connected by `enable`, `carry`, `amplify`, `bypass`, or `observe`.
+- Use `Single Pattern Routing` only when the observed code shape does not compose with another boundary and a `dead-end:` fact records why.
+- Load references only when they add a routing signal, trace cue, promotion gate, or false-positive constraint for the current candidate.
+- Stop loading more references when they only repeat generic Android security knowledge.
+
+For each candidate, map:
 
 - entrypoint signature and trigger syntax
 - attacker precondition: local app, browser/deep link, malicious website, network attacker, malicious file/provider, notification/action trigger, or user interaction
@@ -63,21 +88,13 @@ decx ard all-resources -P <port>
 - guard before trust boundary
 - suspected sink family and impact hypothesis
 - defensive control expected to block the path
-- next DECX query or subagent task
+- next DECX query or intent to create
 
-## Deep Trace Rules
+Subagents must open helper bodies and prove exact branch outcomes. Method names are not evidence.
 
-- Before dispatch, create/update chain-level `h_<sourceId>_<sinkId>_<flowSig>.xml`.
-- Pass only the XML path plus one assigned chain to `decx-subagent`.
-- Stop if the subagent cannot be invoked; record blocker.
-- Trace helpers, callbacks, IPC, WebView navigation, providers, URI grants, `setResult`, PendingIntent execution, nested components, async handlers, and Binder boundaries.
-- Open helper bodies and prove branch outcomes. Do not infer from method names.
-- If a target returns data or grants, trace the caller-visible result path as impact evidence.
-- Stop only at sink, non-bypassable guard, dead end, or named missing proof.
+## Composition
 
-## Composition Rules
-
-Allowed edges:
+Allowed edge types:
 
 - `enable`: one primitive creates access needed by the next.
 - `carry`: one primitive transports controlled data, grant, token, URI, PendingIntent, or WebView content.
@@ -85,11 +102,18 @@ Allowed edges:
 - `bypass`: one primitive defeats the defense relied on by another path.
 - `observe`: one primitive makes impact attacker-visible.
 
-For each composed chain, record ordered stage ids, attacker preconditions, transferred object/control flow, trust boundary, bypassed defense, final impact, and why the chain is realistic. Reject composition when stages are merely adjacent, require incompatible attacker positions, depend on unproven timing, or require a victim action not represented in code.
+For each composed chain, record ordered stage ids, attacker preconditions, transferred object or control flow, trust boundary, bypassed defense, final impact, and why the chain is realistic.
+
+Reject composition when stages are merely adjacent, require incompatible attacker positions, depend on unproven timing, require a victim action not represented in code, have no transferred object/control flow, hit a non-bypassable guard, or lack combined impact.
+
+Record:
+
+- `composition:` only after a dedicated subagent re-opens each stage, proves all edges, proves transferred object/control flow, and confirms exact branch outcomes under composed preconditions.
+- `dead-end:` only for checked plausible compositions, naming tested stage ids, rejected edge type, and the concrete blocker.
 
 ## Promotion Gate
 
-Promote only when all are proven:
+Promote only when all are proven as facts:
 
 - external reachability
 - attacker control
@@ -99,27 +123,77 @@ Promote only when all are proven:
 - rating rationale from `references/risk-rating.md`
 - evidence suitable for `decx-report`
 
-For composed chains, distinguish primitive evidence, composition-edge evidence, combined impact, controls that break the chain, and residual uncertainty.
+For composed candidates, rate the final attacker-reachable impact after ordered stages compose, not the most severe isolated primitive. If composition is unproven, rate/report only the independently proven primitive impact or keep the record as candidate/residual.
+
+Single-primitive findings are final only when composition is proven impossible or no plausible composition candidate exists.
+
+## Command Reference
+
+Use `decx-cli` as the authority for DECX command names, flags, identifier formats, and port/session behavior. If command syntax is uncertain, route command help to `decx-cli` or run the nearest `--help`; do not guess DECX syntax in this skill.
+
+App-hunt-specific command rules:
+
+- Main agent may open/check the APK session and maintain the blackboard; target inspection commands belong inside dispatched subagent intents.
+- Session-backed `decx code` and `decx ard` queries must identify the intended session with `-P <port>` or `-s <name>` when more than one session exists.
+- `all-resources` is an on-demand subagent query, not a required first-pass dump. Prefer focused resource queries when a candidate needs resource evidence.
+- adb-backed commands such as `system-services`, `perm-info`, and `framework collect/process` are not app-hunt commands; when needed, follow `decx-cli` port rules.
+
+## Examples
+
+Example intent shapes:
+
+- Collect exported Activity, Service, Receiver, Provider, deep-link, dynamic receiver, and AIDL surfaces for one APK.
+- Classify one candidate group against `references/index.md` and create follow-up trace intents.
+- Trace one exported entrypoint to one suspected sink, proving reachability, control, guard outcome, sink argument, and impact.
+- Validate one plausible `carry` edge from a Provider URI grant to a private file disclosure path.
+- Review one candidate chain against the promotion gate and `references/risk-rating.md`.
+
+Example fact prefixes:
+
+- `reachability: exported Activity "com.example.FooActivity" accepts action "..."`
+- `control: extra "next_intent" reaches "startActivity(...)" argument`
+- `guard: helper "checkCaller(...)" returns true for external caller when ...`
+- `sink: controlled Uri reaches "openFile(...)" path argument`
+- `impact: attacker can receive grant-bearing Uri via "setResult(...)"`
+- `dead-end: stages 12,18 cannot compose because attacker preconditions are incompatible`
 
 ## Constraints
 
-- Every session-backed `decx code` and `decx ard` command must include `-P <port>`.
-- adb-backed commands such as `system-services`, `perm-info`, and `framework collect/process` do not use `-P`.
+- Every intent must be dispatched to exactly one subagent before it is claimed.
+- Main agent must not substitute direct target queries for recon or trace intents.
+- Do not deep-trace multiple chains in one worker invocation.
+- Do not scan every reference for one target.
 - Method signatures must use full form: `"package.Class.method(paramType):returnType"`; never use `...`.
 - Quote package names, classes, methods, and file paths.
-- Do not scan every reference for one target.
-- Do not deep-trace multiple chains in one subagent.
 - Do not report exported/reachable behavior without downstream impact.
 - A nearby primitive is not a finding until reachability, attacker control, sink impact, and guard bypass are each proven.
+- Do not close analysis until composition validation has been attempted for every plausible promoted primitive pair, or the main agent can demonstrate there is only one promoted primitive.
 - Do not claim `poc-validated`, `runtime-validated`, `verified exploitable`, or equivalent.
-- Hand off at 60% context usage with active XML artifacts, not raw source dumps.
+- Hand off at 60% context usage with the target directory and active session name, not raw source dumps.
+- Do not generate report templates, PoC code, or vulnerability descriptions inside this skill.
 
 ## Troubleshooting
 
-- Missing/rejected command -> run nearest `--help`.
-- Impact does not map to `risk-rating.md` -> keep `candidate` or `rejected`.
-- Source reaches unknown helper -> open helper and prove exact branch.
-- Reference adds no trace cue, promotion gate, or chain pivot -> stop using it.
+| Symptom | Action |
+|---|---|
+| Missing or rejected command | Run the nearest `--help`. |
+| Impact does not map to `risk-rating.md` | Keep evidence unverified; do not compose or promote. |
+| Source reaches unknown helper | Open the helper body and prove the exact branch. |
+| Reference adds no trace cue, promotion gate, or chain pivot | Stop using it. |
+| Intent appears stuck | Check `intents --status open`; claim or fail stale intents. |
+| Fact count grows without concluded intents | Run `stats`, find sources with no sink/impact facts, and create targeted intents. |
+
+## Gotchas
+
+- **Method-name inference**: helper names such as `validate*` or `check*` are not evidence. Open the body, prove the branch, and write a `guard:` fact.
+- **Missing guard evidence**: a candidate without a proven guard outcome stays `candidate`.
+- **Main-agent recon or tracing**: manifest, component, AIDL, resource, source, xref, method context, and search queries are subagent work.
+- **Vague fact descriptions**: fact descriptions must identify the observation type and concrete evidence. Do not label attacker control as reachability or write sink facts without impact evidence.
+- **Orphan intents**: intents without `--from <factId,...>` cannot be prioritized from the blackboard.
+- **Incomplete path proof**: every hop needs facts for reachability, control, guard, sink, and impact as applicable.
+- **Multiple claimed intents**: one subagent invocation handles one intent.
+- **Reachability-only reporting**: exported components, reachable methods, or nearby sinks without downstream impact are reconnaissance, not findings.
+- **Optional composition**: isolated promoted primitives are incomplete until plausible composition has been validated or rejected with `dead-end:` facts.
 
 ## References
 

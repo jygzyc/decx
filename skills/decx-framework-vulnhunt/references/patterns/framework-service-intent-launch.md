@@ -1,70 +1,40 @@
 # Pattern: Framework Service Intent Launch
 
-## When To Use
+## Match
 
-Use this reference when Binder input reaches framework-service `Intent` construction, forwarding, broadcast, activity/service launch, or URI grant paths. Use `framework-service-pendingintent.md` when the primary sink is `PendingIntent` creation, mutation, storage, or dispatch.
+Binder input reaches framework `Intent` construction, forwarding, broadcast, service/activity launch, result/callback intent, or URI grant path under privileged identity. High-signal launch patterns: forwarding a lower-privileged callback's `Intent`, rebuilding from caller-supplied `ComponentName`, returning the caller's grant-bearing `Intent` through a result/callback, or dispatching a pending/indirect launch with forgeable caller identity metadata.
 
-## Core Concept
+## Analyze
 
-Untrusted IPC input controls a privileged framework launch or grant path, causing system identity to perform an attacker-selected action.
-
-**Sources**
-- Binder parameters carrying `Intent`, action, data URI, package, component, extras, flags, user ID
-- framework service helper that constructs an `Intent` from caller fields
-
-**Sinks**
-- `startActivityAsUser`, `startService`, `sendBroadcast`, `sendBroadcastAsUser`
-- `grantUriPermission`, result or callback paths carrying `Intent`/URI
+- entry: Binder method/callback carrying `Intent`, `Bundle`, action, data URI, package, component, flags, selector, `ClipData`, user; indirect launch callback; `startActivityAsUser`; `startServiceAsUser`; `sendBroadcastAsUser`; result/callback path
+- control: target component/package, flags/grants, selector, `ClipData`, extras, user, recipient, `Intent.parseUri` parsed field, `ComponentName.unflattenFromString`, external callback response
+- sink: `startActivityAsUser`, `startService`, `sendBroadcast*`, `grantUriPermission`, result/callback intent, private target reached through the launch
+- guard: exact target/recipient/user allowlist; `Intent.getPackage()` equals self; caller identity check via `getCallingActivity()` / `getCallingPackage()`; binder caller UID rebinding at the dispatch site; strip dangerous flags (`FLAG_GRANT_*`); forbid the calling UID from supplying a `ComponentName` directly; validate indirect launch metadata at the final dispatch site
+- impact: protected launch/broadcast/grant, cross-user action, private component reachability, security workflow bypass, grant flag and `content://` URI flowing to attacker through a result/callback, or foreground launch under the wrong caller identity
 
 ## Required Trace Evidence
 
-- Reachability: attacker can invoke the Binder method or callback.
-- Controllability: attacker controls launch target, data, extras, flags, grant recipient, or user.
-- Sink: framework service performs launch/grant/broadcast under privileged context.
-- Missing or bypassable guard: no exact target/recipient/user/signature validation or permission check blocks the path.
-- Visible impact: protected component launch, cross-user action, URI grant, privileged broadcast, or security workflow bypass.
+Reachability, Controllability, Sink, Missing guard, Visible impact
 
-## Guards & Rejection
+## Reject
 
-Safe when: targets are exact-allowlisted, dangerous flags/grants are stripped, user boundaries are enforced, recipients are trusted, and downstream components perform their own permission checks. Intent target, component, flags, grants, and user must be validated or pinned before any privileged launch or grant.
+Reject when launched target is a trusted constant, input only affects benign extras, a non-bypassable guard exists before launch (`enforceCallingOrSelfPermission` + caller-uid-rebuilt `ComponentName`), dangerous fields and grant flags are stripped before forwarding, indirect launch identity is re-derived at dispatch, or downstream behavior has no security impact.
 
-Reject when: launched target is trusted constant, input only affects benign extras, a non-bypassable permission guard exists before launch, or downstream behavior has no security impact.
+## Codes
 
-## Rating
-
-- CRITICAL: system identity launches or grants into a path causing device-level compromise.
-- HIGH: protected component/action/grant under system identity.
-- MEDIUM: bounded unauthorized launch requiring extra prerequisites.
-- IGNORED: no attacker-controlled target or no impact.
-
-## Trace Commands
-
-```bash
-decx code method-context "<binderMethod>" -P <port>
-decx code xref-method "<frameworkLaunchSink>" -P <port>
+```java
+// service forwards callback-supplied Intent into a privileged launch path
+startActivityAsUser(callbackResult.getParcelable("intent"), user);
 ```
 
-## Example Shapes
-
-Suspicious:
-```text
-public void launchForCaller(Intent intent, UserHandle user) {
-    // no target or flag validation before launch
-    mContext.startActivityAsUser(intent, user); // system_server launches attacker-controlled intent
-}
+```java
+// service rebuilds an Intent from a caller-supplied ComponentName and starts it;
+// no allowlist, no caller-uid rebinding
+startActivityAsUser(new Intent().setComponent(componentFromBinder), user);
 ```
 
-Safe:
-```text
-public void launchForCaller(Intent intent, UserHandle user) {
-    ComponentName target = intent.getComponent();
-    if (!ALLOWED_COMPONENTS.contains(target)) {
-        throw new SecurityException("Untrusted target");
-    }
-    intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-    intent.setClipData(null); // strip attacker extras
-    mContext.startActivityAsUser(intent, user);
-}
+```java
+// service returns the caller's exact Intent (with FLAG_GRANT_* and a content:// URI)
+// via setResult; the caller receives a temporary grant on the privileged provider
+result.send(RESULT_OK, callerIntent);
 ```
-
-Report guidance -- Use: "A framework Binder method lets attacker-controlled launch data reach a privileged Intent sink without exact target validation." Avoid: "The service starts an activity" (must show attacker controls the target/flags/grant and the launch occurs under privileged identity without pinning).

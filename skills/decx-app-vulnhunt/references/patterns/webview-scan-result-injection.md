@@ -1,51 +1,51 @@
 # Pattern: WebView Scan Result Injection
 
-## When To Use
+## Match
 
-Use this reference when QR/barcode/browser/activity result data reaches WebView navigation, HTML, JavaScript, or native scheme dispatch.
+WebView, `WebChromeClient`, `WebViewClient`, or JS bridge processes a scan result, QR code, NFC tag, share sheet, or `onActivityResult` callback and feeds it to `loadUrl`/`evaluateJavascript`/JS bridge/Intent dispatch. **Non-obvious**: users see scan as a trusted action and follow the result blindly — the data on the other side is attacker-controlled. Variants:
+- QR → `intent://` URL with component/extras/flags → `Intent.parseUri`.
+- QR → `javascript:` URL → `evaluateJavascript`.
+- QR → `file://`/`content://` URI → `loadUrl` or `grantUriPermission`.
+- NFC tag data as `loadUrl` argument (no scheme allowlist).
+- Share sheet `onActivityResult` → `content://` URI → `_display_name` used as filename → chain into `provider-path-traversal`.
 
-## Core Concept
+## Analyze
 
-Externally supplied scan or browser result data becomes trusted WebView content or navigation input without strict parsing and final-sink validation.
+- entry: scan result, QR code, NFC tag, share sheet, `onActivityResult`, `WebChromeClient.onActivityResult` (custom file chooser), `WebViewClient.onReceivedLoginRequest`, `WebChromeClient.onShowFileChooser`
+- control: scheme/host/path/extras, file/URI/clipData, NFC tag, QR string, share source package
+- sink: `WebView.loadUrl(scanResult)`, `evaluateJavascript(...)`, `Intent.parseUri` / `startActivity`, `grantUriPermission`, share-target helper, file write
+- guard: scheme allowlist (`http`/`https` only; `intent://`/`javascript:`/`file://` rejected), parse scan result into typed structure with host/path/id allowlists, never feed raw scan result to `loadUrl`/`Intent.parseUri`/`evaluateJavascript`
+- impact: WebView reachability to attacker domain, `intent-redirect` chain, JS bridge exposure, `file://`/`content://` grant, XSS from `javascript:` execution
 
-**Sources**
-- scanner SDK callbacks; `onActivityResult`, Activity Result API callbacks, browser handoff extras; QR/barcode parser output, returned URL/HTML/script fragments.
+## Reject
 
-**Sinks**
-- `loadUrl`, `loadData`, `loadDataWithBaseURL`, `evaluateJavascript`; WebView bridge, cookies, file/content access, custom scheme/native dispatch.
+Reject when scan result is only displayed, result is parsed into typed structure with each field allowlisted, or scan result never reaches `loadUrl`/`Intent.parseUri`/`evaluateJavascript`.
 
-## Guards & Rejection
+## Codes
 
-Safe when: parser strips dangerous schemes, validates normalized final URL, rejects HTML/JS where URL is expected, and untrusted scan results cannot enter privileged WebView contexts.
-
-Reject when: the scan result only opens harmless external public content, exact allowlisting protects the consumed value, or no downstream WebView/native impact is reachable.
-
-## Rating
-
-- HIGH: scan payload reaches bridge, cookies, file access, or protected native action.
-- MEDIUM: bounded trusted-session action requiring user scanning.
-- LOW: weak phishing/navigation only.
-- IGNORED: source primitive with no concrete impact.
-
-## Trace Commands
-
-```bash
-decx code method-context "<scanResultCallback>" -P <port>
-decx code method-source "<parserOrWebviewSink>" -P <port>
+```java
+// scan result fed straight to loadUrl
+webView.loadUrl(qrCodeContent);
 ```
 
-## Example Shapes
-
-Suspicious:
-
-```text
-QR/scan result passes unvalidated URL to WebView -> loads attacker content in trusted context -> pivots to bridge, cookie, file, or scheme impact
+```java
+// scan result fed to Intent.parseUri — chains into IntentScheme
+Intent parsed = Intent.parseUri(qrCodeContent, Intent.URI_INTENT_SCHEME);
+startActivity(parsed);
 ```
 
-Safe:
-
-```text
-scan result URL validated against exact allowlist before WebView load -> untrusted content isolated from bridge/cookies/files
+```java
+// scan result evaluated as JS
+webView.evaluateJavascript(qrCodeContent, null);
 ```
 
-Report guidance -- Use: "Attacker-controlled scan result data is consumed as trusted WebView input and reaches a sensitive downstream sink." Avoid: "scan result reaches WebView" without proving the URL loads attacker content in a trusted context with impact.
+```java
+// share sheet _display_name as destination filename (path traversal)
+String fileName = query(uri, new String[] { OpenableColumns.DISPLAY_NAME }, null, null, null).getString(0);
+File out = new File(getExternalFilesDir(null), fileName);
+```
+
+```xml
+<!-- NFC tag data dispatched as intent (NDEF scheme from attacker tag) -->
+<intent-filter><action android:name="android.nfc.action.NDEF_DISCOVERED" /><data android:scheme="https" /></intent-filter>
+```

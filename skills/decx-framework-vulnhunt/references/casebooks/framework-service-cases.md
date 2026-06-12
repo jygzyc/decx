@@ -2,11 +2,7 @@
 
 Use this casebook after the framework service pattern references. These are generalized exploit-chain shapes, not runtime validation claims.
 
-## Public Case: Binder Service Missing Guard Before System-Identity Sink
-
-### Source Type
-
-Public Android framework security bulletin/guidance pattern for Binder-exposed privileged operations.
+## Case: Binder Service Missing Guard Before System-Identity Sink
 
 ### Abstract Shape
 
@@ -211,6 +207,33 @@ Every Binder-exposed method that returns privileged state must bind the requeste
 
 [[patterns/framework-service-data-leak]], [[patterns/framework-service-permission-missing]]
 
+## Case: Caller Package Or UID Binding Confusion
+
+### Abstract Shape
+
+```text
+unprivileged app -> Binder package/user/attribution params -> weak ownership check -> privileged action or data for another identity
+```
+
+### Key Mistake
+
+The service trusts caller-supplied package, UID, attribution tag, account, or user fields without binding them to `Binder.getCallingUid()` and the target user/profile.
+
+### Why It Was Exploitable
+
+- Binder method accepts identity-bearing parameters from the caller
+- the requested identity selects protected state, operation scope, app-op, or user/profile target
+- ownership validation is absent, stale, checked against the wrong UID, or performed after a privileged handoff
+- the sink returns data, changes policy, launches work, or grants access for an identity the caller does not own
+
+### Generalized Detection Rule
+
+Every caller-supplied package, UID, attribution tag, account, and user/profile must be rebound to Binder caller identity before it selects privileged data or action scope.
+
+### Related
+
+[[patterns/framework-service-identity-confusion]], [[patterns/framework-service-cross-user]], [[patterns/framework-service-permission-missing]]
+
 ## Case: TOCTOU in Async Authorization
 
 ### Abstract Shape
@@ -237,3 +260,57 @@ Every privileged operation after an async boundary must rebind identity/user/pac
 ### Related
 
 [[patterns/framework-service-race-condition]], [[patterns/framework-service-permission-missing]], [[patterns/framework-service-clear-identity]]
+
+## Case: Callback Or Token Registration Controls Later Privileged Work
+
+### Abstract Shape
+
+```text
+unprivileged app -> Binder registers callback/token/listener -> async framework callback -> attacker-controlled token/state -> privileged finish/use
+```
+
+### Key Mistake
+
+The service validates registration weakly or only once, then later trusts the registered Binder object, token, listener, observer, or remote delegate when executing privileged work.
+
+### Why It Was Exploitable
+
+- lower-privileged caller can register or replace callback/token state
+- later handler/callback path runs under system service context or after caller identity is gone
+- the registered object controls target, completion, grant, package/user binding, or state mutation
+- final sink does not recheck token ownership, caller identity, user boundary, or allowed operation scope
+
+### Generalized Detection Rule
+
+For registered callbacks, tokens, listeners, observers, and remote delegates, prove both registration and final use are authorized for the same caller-owned target.
+
+### Related
+
+[[patterns/framework-service-race-condition]], [[patterns/framework-service-identity-confusion]], [[patterns/framework-service-permission-missing]]
+
+## Case: Transition Player Takeover
+
+### Abstract Shape
+
+```text
+lower-privileged shell/app -> WindowOrganizer/Transition Binder -> register global player -> system_server callbacks -> finishTransition(token, attacker WCT)
+```
+
+### Key Mistake
+
+The framework treats a transition controller/player registration path as trusted because normal callers are SystemUI or Shell, but the Binder method does not enforce that caller identity before installing the callback or accepting transition finish data.
+
+### Why It Was Exploitable
+
+- lower-privileged caller can obtain the WindowOrganizer or transition-control Binder surface
+- caller registers a player/controller, remote transition delegate, or equivalent callback without `MANAGE_ACTIVITY_TASKS`, `SYSTEM_UID`, or trusted app-thread binding
+- system_server later calls attacker-controlled Binder with transition tokens and window/surface metadata
+- attacker can withhold completion or call the finish path with attacker-controlled `WindowContainerTransaction`
+
+### Generalized Detection Rule
+
+Every global transition-player, remote-animation, or WindowOrganizer control path must bind caller identity before registration, constrain delegates to real trusted app threads or system components, and revalidate token ownership plus WCT scope before accepting finish/mutation calls.
+
+### Related
+
+[[patterns/framework-service-transition-control]], [[patterns/framework-service-permission-missing]]

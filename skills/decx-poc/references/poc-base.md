@@ -41,9 +41,11 @@ private static void runExample() {
 
 ## Success Signals
 
-Good: returned rows, files, tokens, or Binder results; actual component launch; actual grant or `PendingIntent` reuse; actual privileged state change.
+Good: returned rows, files, tokens, or Binder results; actual component launch; actual grant or `PendingIntent` reuse; actual privileged state change; actual framework service response with privileged data.
 
 Bad: `Exploit executed`, `Target may be vulnerable`, `Should lead to escalation`.
+
+Framework-specific success signals: privileged Binder method returns a result without required permission, identity confusion causes cross-user action, `clearCallingIdentity` discard leads to privileged execution under system identity.
 
 ## Support Components
 

@@ -10,15 +10,15 @@ labels: bug
 
 | Field | Value |
 |-------|-------|
-| Decx version | |
-| Harness (Claude Code, Cursor, etc.) | |
+| DECX version | |
+| Harness (Claude Code, Codex, OpenCode, etc.) | |
 | Harness version | |
 | Model | |
 | OS + shell | |
 
-## Is this a Decx issue or a platform issue?
+## Is this a DECX issue or a platform issue?
 
-- [ ] I confirmed this issue does not occur without Decx installed
+- [ ] I confirmed this issue does not occur without DECX installed
 
 ## What happened?
 <!-- Be specific. "It doesn't work" is not a bug report. -->

@@ -7,7 +7,7 @@ Use references as a vulnerability knowledge base, not as a workflow manual. `SKI
 | Layer | Files | Purpose |
 |---|---|---|
 | Component overviews | [[overviews/activity]], [[overviews/service]], [[overviews/broadcast]], [[overviews/provider]], [[overviews/webview]], [[overviews/intent]] | map entrypoints, sources, sinks, probing questions, and chain pivots |
-| Pattern cards | [[patterns/intent-redirect]], [[patterns/provider-data-leak]], [[patterns/webview-url-bypass]] | define core concept, guards, rejection, and rating rules for a vulnerability shape |
+| Pattern cards | [[patterns/intent-redirect]], [[patterns/provider-data-leak]], [[patterns/webview-url-bypass]] | route observed code to one vulnerability shape and constrain evidence/rejection rules |
 | Casebooks | [[casebooks/intent-redirect-cases]], [[casebooks/provider-cases]], [[casebooks/webview-cases]] | preserve public-case knowledge as abstract exploit-chain shapes |
 | Rating | [[risk-rating]] | final report gate and severity authority |
 
@@ -20,28 +20,34 @@ Use references as a vulnerability knowledge base, not as a workflow manual. `SKI
 5. Use `Single Pattern Routing` only when the trace is clearly a standalone bug.
 6. Apply [[risk-rating]] before promoting any candidate to a finding.
 
+Pattern cards should add one of three things: a routing signal, a project/casebook-specific trace cue, or a closed-form constraint that prevents false positives. Stop reading a card when it only repeats generic Android security knowledge.
+
 ## Composite Exploit Chains
 
-Prefer this matrix over single-pattern lookup. A reportable app bug usually crosses at least one boundary: external entry to internal component, WebView to native, provider to file/grant, object parser to protected sink, or caller identity to victim identity.
+Prefer this matrix over single-pattern lookup. Pick the smallest chain that proves source, controlled object, sink, guard failure, and impact.
 
 | Chain shape | High-signal code behavior | Load first |
 |---|---|---|
-| exported entry -> intent redirect -> private component / URI grant | exported Activity/Service/Receiver extracts nested `Intent`, selector, `ClipData`, flags, or component and forwards or returns it | [[overviews/activity]], [[patterns/intent-redirect]], [[patterns/uri-grant-leak]], [[casebooks/intent-redirect-cases]] |
-| WebView URL bypass -> JS bridge / cookie / file access / native scheme | deep link, scan result, browser result, or redirect controls WebView content that can invoke bridge, read cookies/files, or launch native schemes | [[overviews/webview]], [[patterns/webview-url-bypass]], [[patterns/webview-js-bridge]], [[patterns/webview-cookie-theft]], [[patterns/webview-file-access]], [[patterns/webview-intent-scheme]], [[casebooks/webview-cases]] |
-| provider traversal / data leak -> grant or result leak | Provider path/query/file handle is attacker-controlled and later exposed through `grantUriPermission`, `setResult`, or broad FileProvider roots | [[overviews/provider]], [[patterns/provider-path-traversal]], [[patterns/provider-data-leak]], [[patterns/uri-grant-leak]], [[patterns/setresult-leak]], [[casebooks/provider-cases]], [[casebooks/uri-grant-cases]] |
-| object parsing -> auth bypass -> protected sink | `Serializable`, `Parcelable`, `Bundle`, JSON, or URI object controls identity, role, target, command, or file/provider argument before authorization | [[patterns/object-parsing-abuse]], [[patterns/exported-access]], [[patterns/service-command-injection]], [[casebooks/object-parsing-cases]] |
-| PendingIntent -> victim identity action -> private component/data grant | caller-supplied, mutable, fill-in, or replayable `PendingIntent` is used to act as the victim app or to reach a protected target | [[patterns/pendingintent-abuse]], [[patterns/intent-redirect]], [[patterns/uri-grant-leak]], [[casebooks/pendingintent-cases]] |
-| broadcast/service command -> protected action -> result/grant leak | external action/extras, ordered broadcast, Messenger, or AIDL dispatch reaches sensitive work and leaks through result, reply, notification, or grant | [[overviews/broadcast]], [[overviews/service]], [[patterns/broadcast-abuse]], [[patterns/service-command-injection]], [[patterns/setresult-leak]], [[casebooks/broadcast-cases]], [[casebooks/service-cases]] |
-| UI/fragment trust pivot -> credential or privileged in-app action | external navigation chooses fragment/task/UI state and tricks user or app logic into privileged authenticated action | [[overviews/activity]], [[patterns/fragment-injection]], [[patterns/ui-trust-abuse]], [[patterns/lifecycle-state-exposure]], [[casebooks/fragment-ui-cases]], [[casebooks/lifecycle-cases]] |
+| exported entry -> Bundle/key mismatch -> Intent redirect -> private component | exported Activity/Service/Receiver validates one extra/key/object but later launches or returns a different caller-controlled `Intent`, component, selector, or flags | [[overviews/activity]], [[overviews/intent]], [[patterns/object-parsing-abuse]], [[patterns/intent-redirect]], [[casebooks/object-parsing-cases]], [[casebooks/intent-redirect-cases]] |
+| exported entry -> Parcelable/Serializable parsing -> auth/role confusion -> protected sink | caller-controlled object field becomes role, package, account, command, file path, provider URI, or target before authorization | [[patterns/object-parsing-abuse]], [[patterns/exported-access]], [[patterns/service-command-injection]], [[casebooks/object-parsing-cases]] |
+| provider traversal/data leak -> URI grant/result leak -> private file disclosure | Provider path/query/file handle is attacker-controlled and later exposed through `grantUriPermission`, `setResult`, or broad FileProvider roots | [[overviews/provider]], [[patterns/provider-path-traversal]], [[patterns/provider-data-leak]], [[patterns/uri-grant-leak]], [[patterns/setresult-leak]], [[casebooks/provider-cases]], [[casebooks/uri-grant-cases]] |
+| provider `call`/batch/oracle -> guard bypass -> protected rows/action | `call()`, `applyBatch()`, `bulkInsert()`, or `getType()` reaches data/action not protected by the normal CRUD guard | [[overviews/provider]], [[patterns/provider-data-leak]], [[patterns/provider-sql-injection]], [[casebooks/provider-cases]] |
+| WebView URL/deeplink -> JS bridge -> native component/provider sink | deep link, scan result, browser result, redirect, or HTML controls WebView script context that can invoke a native bridge method reaching component launch, provider, file, account, token, or command sink | [[overviews/webview]], [[patterns/webview-url-bypass]], [[patterns/webview-js-bridge]], [[patterns/object-parsing-abuse]], [[casebooks/webview-cases]] |
+| WebView file/cookie access -> local/session data -> exfiltration or bridge pivot | attacker-controlled WebView content can read local files/content or session cookies and move them through JS, bridge, network, or native callbacks | [[patterns/webview-file-access]], [[patterns/webview-cookie-theft]], [[patterns/webview-url-bypass]], [[casebooks/webview-cases]] |
+| WebView intent scheme -> Intent redirect -> private component/grant | `intent://`, custom scheme, or `Intent.parseUri()` output is launched under app identity without target, selector, flag, or grant stripping | [[patterns/webview-intent-scheme]], [[patterns/intent-redirect]], [[patterns/uri-grant-leak]], [[casebooks/webview-cases]], [[casebooks/intent-redirect-cases]] |
+| PendingIntent mutable/fill-in -> victim identity action -> URI grant/private component | caller-supplied, mutable, fill-in, replayable, or stored `PendingIntent` is dispatched as the victim app and carries attacker-controlled target, extras, flags, user-visible action, or grant | [[patterns/pendingintent-abuse]], [[patterns/intent-redirect]], [[patterns/uri-grant-leak]], [[casebooks/pendingintent-cases]] |
+| ordered broadcast/service command -> protected action -> result/reply/notification leak | external action/extras, ordered broadcast mutation, Messenger, AIDL, or `onStartCommand()` reaches sensitive work and leaks through result, `replyTo`, notification, grant, or callback | [[overviews/broadcast]], [[overviews/service]], [[patterns/broadcast-abuse]], [[patterns/service-command-injection]], [[patterns/setresult-leak]], [[casebooks/broadcast-cases]], [[casebooks/service-cases]] |
+| task/fragment/UI pivot -> credential/approval action -> persisted state leak | external navigation chooses fragment, task, dialog, lifecycle state, or obscured UI and causes credential entry, approval, stale grant, or persisted sensitive state to move into attacker-relevant context | [[overviews/activity]], [[patterns/fragment-injection]], [[patterns/ui-trust-abuse]], [[patterns/lifecycle-state-exposure]], [[casebooks/fragment-ui-cases]], [[casebooks/lifecycle-cases]] |
 
 ## Single Pattern Routing
 
-Use this as fallback when the trace does not compose with another boundary. If a signal only names an entrypoint, keep tracing until you can name the controlled value, downstream boundary, sink, and guard.
+Use this as fallback when the trace does not compose with another boundary. A route needs an entrypoint, controlled object, final sink, and guard/reject decision.
 
 | Observed signal | Primary direction | Load first |
 |---|---|---|
 | exported Activity directly exposes private protected screen, action, or data | exported access | [[patterns/exported-access]] |
 | nested Intent, `ClipData`, selector, or explicit component is forwarded | Intent redirect | [[patterns/intent-redirect]], then [[casebooks/intent-redirect-cases]] if needed |
+| validated Bundle key differs from the key or object used by the sink | Bundle/key mismatch | [[patterns/object-parsing-abuse]], then [[casebooks/object-parsing-cases]] |
 | fragment class/name comes from extras or URI | fragment injection | [[patterns/fragment-injection]] |
 | path, filename, or URI reaches file APIs | path traversal | [[patterns/provider-path-traversal]], then component variant if needed |
 | `setResult()` returns sensitive extras or grant-bearing URI | result leak | [[patterns/setresult-leak]] |

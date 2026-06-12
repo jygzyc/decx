@@ -1,72 +1,46 @@
 # Pattern: Framework Service Identity Confusion
 
-## When To Use
+## Match
 
-Use this reference when a framework service trusts caller-supplied package/user/UID attribution, cached identity, or cross-user target data instead of deriving identity from Binder and package manager state.
+Service trusts caller-supplied package, UID, user, attribution tag, account, profile, cached record, callback token, or pending intent identity instead of deriving and binding it from Binder/PackageManager state. Two main shapes: (1) the service treats `Binder.getCallingUid()` as the source of truth for who is asking, but the parameter it consumes comes from a caller-supplied identity field and is never bound to that UID; or (2) the service clears caller identity to system, then performs the work with caller-supplied package/user metadata, so the privileged actor and recorded owner diverge.
 
-## Core Concept
+## Analyze
 
-Attacker-controlled identity fields are mistaken for trusted caller identity, allowing cross-package or cross-user access to privileged operations.
-
-**Sources**
-- package name, attribution tag, user ID, UID, `UserHandle`, account, profile, device ID parameters
-- Binder caller UID/user ID
-- callbacks, tokens, pending intents, or cached records that mix caller and target identity
-
-**Sinks**
-- package/user-scoped data reads or writes
-- permission/app-op decisions
-- account, notification, location, telephony, storage, or device policy operations
-- cross-user or profile-boundary access
+- trace where the identity value is derived, where it is bound, and where it is consumed. Treat any parameter named `packageName`, `uid`, `userId`, `attributionTag`, `account`, or `token` as untrusted until it is rebound to Binder state or an owner record.
+- entry: Binder method/callback accepting identity-bearing parameters, identity-cleared block re-using caller-provided identity, cached identity from a prior Binder call, accountManager / keyguard / notification manager
+- control: package, UID, user/profile, attribution, account, device ID, token, callback, pending intent creator/target, `AppOpsManager.checkPackage`
+- sink: app-op/permission decision, package/user-scoped data/action, account/notification/location/storage/device policy, cross-user/profile access, settings mutation, credential/key access, scoped provider query
+- guard: package-to-UID binding via `AppOpsManager.checkPackage(uid, pkg)` (preferred), `PackageManager.getPackageUid(pkg) == Binder.getCallingUid()`, or `ActivityManager.isSameApp(uid1, uid2)`; `UserHandle.getUserId(Binder.getCallingUid())` for caller-user derivation; `INTERACT_ACROSS_USERS` enforcement before any cross-user work; token ownership bound to a specific UID at registration; cached record invalidated when identity or auth state changes
+- impact: cross-package/cross-user data/action, policy bypass, wrong identity launch/grant, persistent state mutation that the legitimate owner cannot revoke; in the framework, identity confusion almost always chains with provider-data-leak or intent-launch to produce a full confused-deputy chain
 
 ## Required Trace Evidence
 
-- Reachability: untrusted caller can invoke the service method.
-- Controllability: attacker supplies or influences identity fields used by the decision.
-- Sink: privileged operation applies to another package/user/profile or returns protected state.
-- Missing or bypassable guard: no UID-to-package, user/profile, ownership, or permission validation binds supplied identity to caller.
-- Visible impact: cross-package/cross-user data access, unauthorized state change, or policy bypass.
+Reachability, Controllability, Sink, Missing guard, Visible impact
 
-## Guards & Rejection
+## Reject
 
-Safe when: caller UID is derived from Binder, package is checked against UID, target user access is enforced, app-op attribution is verified, and cached tokens cannot be replayed across users/packages. Package/UID must be derived from Binder.getCallingUid() and PackageManager; never trust caller-supplied identity fields for authorization.
+Reject when identity is used only for logging, package/user is rebound to `Binder.getCallingUid()` and `UserHandle.getUserId(uid)`, target access is enforced before sink via a non-bypassable check, the token is owner-bound at registration and re-bound at use, or impact remains caller-owned.
 
-Reject when: supplied identity is used only for logging, the service rebinds it to `Binder.getCallingUid()`, cross-user checks are enforced before sink, or impact remains caller-owned.
+## Codes
 
-## Rating
-
-- CRITICAL: cross-user/system policy bypass with persistent device-level impact.
-- HIGH: protected data/action for another app/user/profile.
-- MEDIUM: bounded cross-package or cross-profile state confusion.
-- IGNORED: identity field is not security-relevant.
-
-## Trace Commands
-
-```bash
-decx code method-context "<binderMethod>" -P <port>
-decx code method-source "<identityCheckOrSink>" -P <port>
+```java
+// service-owned callback has no caller identity; writable state becomes identity input
+String owner = settings.getString("owner_package");
+privilegedSpawner.setOwner(owner);
 ```
 
-## Example Shapes
-
-Suspicious:
-```text
-public Bundle getAppData(String packageName) {
-    // trusts caller-supplied package name without binding to Binder UID
-    return mPackageManager.getPackageInfo(packageName, 0); // returns data for arbitrary package
-}
+```java
+// caller-supplied packageName keys protected state without checkPackage(callingUid, packageName)
+return mStore.readPolicy(packageName, userId);
 ```
 
-Safe:
-```text
-public Bundle getAppData(String packageName) {
-    int callerUid = Binder.getCallingUid();
-    String[] packages = mPackageManager.getPackagesForUid(callerUid);
-    if (!Arrays.asList(packages).contains(packageName)) {
-        throw new SecurityException("Package mismatch");
-    }
-    return mPackageManager.getPackageInfo(packageName, 0);
-}
+```java
+// boundary mistake: identity checked at registration, cached package reused at async dispatch
+mRecords.put(token, new Record(packageName));
+sendPrivilegedCallback(mRecords.get(token).packageName);
 ```
 
-Report guidance -- Use: "The service trusts caller-supplied identity fields without binding them to the Binder caller before a privileged operation." Avoid: "The method uses a string parameter for package name" (must show the parameter reaches a privileged decision without Binder-identity binding).
+```java
+// extreme edge: clear identity, then record caller-supplied package/user as owner
+withCleanCallingIdentity(() -> mDeviceState.setOwner(packageNameFromBinder, userIdFromBinder));
+```

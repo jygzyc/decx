@@ -3,226 +3,330 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>DECX Security Report - {{target}}</title>
+  <title>DECX 安全分析报告 - {{target}}</title>
   <style>
     :root {
-      --bg: #f7f8fa;
-      --panel: #ffffff;
-      --text: #1f2328;
-      --muted: #667085;
-      --line: #d0d7de;
-      --accent: #0b6bcb;
-      --critical: #8b0000;
-      --high: #b42318;
-      --medium: #b54708;
-      --low: #175cd3;
-      --ignored: #667085;
-      --code: #f3f4f6;
+      --bg: #f5f6f8; --panel: #fff; --text: #1a1d23; --text-2: #535968;
+      --muted: #6b7280; --line: #e5e7eb; --accent: #2563eb;
+      --critical: #dc2626; --critical-bg: #fef2f2; --critical-border: #fecaca;
+      --high: #ea580c; --high-bg: #fff7ed; --high-border: #fed7aa;
+      --medium: #d97706; --medium-bg: #fffbeb; --medium-border: #fde68a;
+      --low: #2563eb; --low-bg: #eff6ff; --low-border: #bfdbfe;
+      --info: #6b7280; --info-bg: #f9fafb; --info-border: #e5e7eb;
+      --code-bg: #f6f8fa; --code-border: #d1d5db;
+      --tag-entry: #2563eb; --tag-entry-bg: #dbeafe;
+      --tag-control: #0891b2; --tag-control-bg: #cffafe;
+      --tag-guard: #ca8a04; --tag-guard-bg: #fef9c3;
+      --tag-sink: #dc2626; --tag-sink-bg: #fee2e2;
+      --tag-edge: #7c3aed; --tag-edge-bg: #ede9fe;
+      --tag-effect: #059669; --tag-effect-bg: #d1fae5;
+      --tag-dead: #6b7280; --tag-dead-bg: #f3f4f6;
+      --radius: 8px; --radius-sm: 5px;
+      --shadow: 0 1px 3px rgba(0,0,0,.06), 0 1px 2px rgba(0,0,0,.04);
     }
-    * { box-sizing: border-box; }
-    body {
-      margin: 0;
-      background: var(--bg);
-      color: var(--text);
-      font: 14px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg: #111318; --panel: #1a1d26; --text: #e4e6eb; --text-2: #9ca3af;
+        --muted: #6b7280; --line: #2d3140; --accent: #60a5fa;
+        --critical: #f87171; --critical-bg: #1c1111; --critical-border: #5c2020;
+        --high: #fb923c; --high-bg: #1c1610; --high-border: #5c3a1e;
+        --medium: #fbbf24; --medium-bg: #1c1a10; --medium-border: #5c4a1e;
+        --low: #60a5fa; --low-bg: #101828; --low-border: #1e3a5c;
+        --info: #9ca3af; --info-bg: #1a1d26; --info-border: #2d3140;
+        --code-bg: #161920; --code-border: #2d3140;
+        --tag-entry: #60a5fa; --tag-entry-bg: #1e293b;
+        --tag-control: #22d3ee; --tag-control-bg: #0e2a30;
+        --tag-guard: #fbbf24; --tag-guard-bg: #1c1a10;
+        --tag-sink: #f87171; --tag-sink-bg: #1c1111;
+        --tag-edge: #a78bfa; --tag-edge-bg: #1e1b3a;
+        --tag-effect: #34d399; --tag-effect-bg: #0e2a22;
+        --tag-dead: #9ca3af; --tag-dead-bg: #1a1d26;
+        --shadow: 0 1px 3px rgba(0,0,0,.25), 0 1px 2px rgba(0,0,0,.15);
+      }
     }
-    main {
-      max-width: 1160px;
-      margin: 0 auto;
-      padding: 32px 24px 56px;
-    }
-    header, section {
-      background: var(--panel);
-      border: 1px solid var(--line);
-      border-radius: 8px;
-      padding: 24px;
-      margin-bottom: 18px;
-    }
-    h1, h2, h3 {
-      margin: 0 0 12px;
-      line-height: 1.25;
-    }
-    h1 { font-size: 28px; }
-    h2 { font-size: 20px; padding-top: 4px; }
-    h3 { font-size: 16px; margin-top: 18px; }
-    p { margin: 8px 0; }
-    .muted { color: var(--muted); }
-    .meta-grid {
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-      gap: 10px;
-      margin-top: 16px;
-    }
-    .meta-item {
-      border: 1px solid var(--line);
-      border-radius: 6px;
-      padding: 10px 12px;
-      background: #fbfbfc;
-    }
-    .meta-item b {
-      display: block;
-      margin-bottom: 4px;
-      color: var(--muted);
-      font-size: 12px;
-      font-weight: 600;
-      text-transform: uppercase;
-    }
-    table {
-      width: 100%;
-      border-collapse: collapse;
-      margin: 12px 0;
-      background: var(--panel);
-    }
-    th, td {
-      border: 1px solid var(--line);
-      padding: 9px 10px;
-      text-align: left;
-      vertical-align: top;
-    }
-    th { background: #f6f8fa; }
-    code, pre {
-      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-      font-size: 12px;
-    }
-    pre {
-      overflow: auto;
-      padding: 12px;
-      border-radius: 6px;
-      border: 1px solid var(--line);
-      background: var(--code);
-    }
-    .issue { border-left: 4px solid var(--accent); }
+    *, *::before, *::after { box-sizing: border-box; }
+    body { margin: 0; background: var(--bg); color: var(--text); font: 13.5px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif; -webkit-font-smoothing: antialiased; }
+    main { max-width: 860px; margin: 0 auto; padding: 28px 20px 56px; }
+
+    /* Panel */
+    header, section { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); padding: 20px 22px 18px; margin-bottom: 16px; box-shadow: var(--shadow); }
+
+    /* Type */
+    h1 { font-size: 22px; font-weight: 700; margin: 0 0 4px; letter-spacing: -.3px; }
+    h2 { font-size: 16px; font-weight: 700; margin: 0 0 10px; display: flex; align-items: center; gap: 8px; }
+    h3 { font-size: 13px; font-weight: 650; margin: 16px 0 6px; color: var(--text-2); text-transform: uppercase; letter-spacing: .4px; }
+    p { margin: 6px 0; }
+    .muted { color: var(--muted); font-size: 13px; }
+
+    /* Header */
+    .report-header { border-left: 3px solid var(--accent); }
+
+    /* Meta row */
+    .meta-row { display: flex; flex-wrap: wrap; gap: 6px 16px; margin-top: 10px; font-size: 12.5px; color: var(--text-2); }
+    .meta-row b { color: var(--muted); font-size: 10.5px; text-transform: uppercase; letter-spacing: .4px; margin-right: 3px; }
+
+    /* Badge */
+    .badge { display: inline-block; border-radius: 4px; padding: 2px 8px; color: #fff; font-size: 10.5px; font-weight: 700; letter-spacing: .3px; line-height: 1.5; flex-shrink: 0; }
+    .badge.critical { background: var(--critical); } .badge.high { background: var(--high); }
+    .badge.medium { background: var(--medium); } .badge.low { background: var(--low); }
+    .badge.composed { background: var(--tag-edge); }
+    .badge.dead { background: var(--tag-dead); }
+
+    /* Table */
+    table { width: 100%; border-collapse: collapse; margin: 8px 0; font-size: 12.5px; }
+    th, td { border: 1px solid var(--line); padding: 6px 10px; text-align: left; vertical-align: top; }
+    th { background: var(--code-bg); font-weight: 600; font-size: 11px; text-transform: uppercase; letter-spacing: .3px; color: var(--text-2); }
+
+    /* Summary table link */
+    .summary-table td a { color: var(--accent); text-decoration: none; font-weight: 500; }
+    .summary-table td a:hover { text-decoration: underline; }
+
+    /* Code */
+    code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 11.5px; background: var(--code-bg); border: 1px solid var(--code-border); border-radius: 3px; padding: 0 4px; word-break: break-all; }
+    pre { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 11.5px; overflow-x: auto; padding: 10px 12px; border-radius: var(--radius-sm); border: 1px solid var(--code-border); background: var(--code-bg); line-height: 1.45; margin: 6px 0; white-space: pre-wrap; word-break: break-all; }
+
+    /* Issue card */
+    .issue { border-left: 3px solid var(--accent); }
     .risk-critical { border-left-color: var(--critical); }
-    .risk-high { border-left-color: var(--high); }
-    .risk-medium { border-left-color: var(--medium); }
-    .risk-low { border-left-color: var(--low); }
-    .risk-ignored { border-left-color: var(--ignored); }
-    .badge {
-      display: inline-block;
-      border-radius: 999px;
-      padding: 2px 9px;
-      color: #fff;
-      background: var(--accent);
-      font-size: 12px;
-      font-weight: 700;
-    }
-    .badge.critical { background: var(--critical); }
-    .badge.high { background: var(--high); }
-    .badge.medium { background: var(--medium); }
-    .badge.low { background: var(--low); }
-    .badge.ignored { background: var(--ignored); }
-    .call-chain li { margin: 4px 0; }
-    @media print {
-      body { background: #fff; }
-      main { padding: 0; max-width: none; }
-      header, section { break-inside: avoid; border-color: #bbb; }
-    }
+    .risk-high     { border-left-color: var(--high); }
+    .risk-medium   { border-left-color: var(--medium); }
+    .risk-low      { border-left-color: var(--low); }
+
+    /* Tag pill */
+    .tag { display: inline-block; font-size: 10px; font-weight: 600; padding: 1px 6px; border-radius: 3px; letter-spacing: .3px; text-transform: uppercase; line-height: 1.5; flex-shrink: 0; }
+    .tag.entry   { background: var(--tag-entry-bg);   color: var(--tag-entry); }
+    .tag.control { background: var(--tag-control-bg); color: var(--tag-control); }
+    .tag.guard   { background: var(--tag-guard-bg);   color: var(--tag-guard); }
+    .tag.sink    { background: var(--tag-sink-bg);    color: var(--tag-sink); }
+    .tag.edge    { background: var(--tag-edge-bg);     color: var(--tag-edge); }
+    .tag.effect  { background: var(--tag-effect-bg);   color: var(--tag-effect); }
+
+    /* Chain block — compact vertical list */
+    .chain { border: 1px solid var(--line); border-radius: var(--radius-sm); margin: 8px 0; overflow: hidden; }
+    .chain-step { display: grid; grid-template-columns: 56px 1fr; border-bottom: 1px solid var(--line); }
+    .chain-step:last-child { border-bottom: none; }
+    .chain-step .num { display: flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 700; color: #fff; background: var(--muted); }
+    .chain-step .body { padding: 8px 12px; }
+    .chain-step .body p { margin: 2px 0; font-size: 12.5px; }
+    .chain-step .body code { font-size: 11px; }
+    .chain-step.entry .num { background: var(--tag-entry); }
+    .chain-step.control .num { background: var(--tag-control); }
+    .chain-step.guard .num { background: var(--tag-guard); }
+    .chain-step.sink .num { background: var(--tag-sink); }
+    .chain-step.effect .num { background: var(--tag-effect); }
+
+    /* Edge label */
+    .edge-label { display: flex; align-items: center; gap: 6px; padding: 4px 12px 4px 56px; background: var(--tag-edge-bg); color: var(--tag-edge); font-size: 11px; font-weight: 600; letter-spacing: .3px; text-transform: uppercase; }
+
+    /* Attack steps — compact */
+    .attack { list-style: none; padding: 0; margin: 6px 0; counter-reset: atk; }
+    .attack > li { padding: 4px 0 4px 28px; counter-increment: atk; position: relative; font-size: 12.5px; line-height: 1.5; }
+    .attack > li::before { content: counter(atk); position: absolute; left: 0; top: 4px; width: 20px; height: 20px; border-radius: 50%; background: var(--accent); color: #fff; font-size: 10px; font-weight: 700; display: flex; align-items: center; justify-content: center; line-height: 1; }
+
+    /* Fix box */
+    .fix { background: var(--low-bg); border: 1px solid var(--low-border); border-radius: var(--radius-sm); padding: 10px 14px; margin: 8px 0; font-size: 12.5px; line-height: 1.5; }
+
+    /* ═══════ Flow Diagram (pure CSS) ═══════ */
+    .flow { display: flex; flex-direction: column; align-items: center; gap: 0; margin: 12px 0; padding: 16px 8px; background: var(--code-bg); border: 1px solid var(--code-border); border-radius: var(--radius-sm); overflow-x: auto; }
+    .flow-row { display: flex; align-items: center; justify-content: center; gap: 8px; flex-wrap: wrap; }
+    .flow-node { display: flex; flex-direction: column; align-items: center; gap: 3px; padding: 8px 12px; border: 1.5px solid var(--line); border-radius: var(--radius-sm); background: var(--panel); min-width: 100px; max-width: 180px; text-align: center; font-size: 11.5px; line-height: 1.35; box-shadow: var(--shadow); }
+    .flow-node code { font-size: 10.5px; word-break: break-all; background: transparent; border: none; padding: 0; font-weight: 600; }
+    .flow-node .flow-tag { font-size: 9.5px; font-weight: 600; text-transform: uppercase; letter-spacing: .3px; }
+    .flow-node.primitive { border-color: var(--tag-entry); }
+    .flow-node.primitive .flow-tag { color: var(--tag-entry); }
+    .flow-node.composed { border-color: var(--tag-edge); background: var(--tag-edge-bg); }
+    .flow-node.composed .flow-tag { color: var(--tag-edge); }
+    .flow-node.result { border-color: var(--tag-effect); background: var(--tag-effect-bg); }
+    .flow-node.result .flow-tag { color: var(--tag-effect); }
+    .flow-node.target { border-color: var(--tag-sink); background: var(--tag-sink-bg); }
+    .flow-node.target .flow-tag { color: var(--tag-sink); }
+    .flow-arrow { color: var(--muted); font-size: 18px; line-height: 1; flex-shrink: 0; }
+    .flow-arrow-down { color: var(--muted); font-size: 16px; line-height: 1; margin: 2px 0; }
+    .flow-edge-label { font-size: 10px; font-weight: 600; color: var(--tag-edge); text-transform: uppercase; letter-spacing: .3px; }
+    .flow-section-label { font-size: 11px; font-weight: 600; color: var(--text-2); text-transform: uppercase; letter-spacing: .4px; margin: 8px 0 4px; }
+
+    /* Dead-end notice */
+    .dead-end { background: var(--tag-dead-bg); border: 1px dashed var(--tag-dead); border-radius: var(--radius-sm); padding: 12px 14px; margin: 8px 0; font-size: 12.5px; line-height: 1.55; color: var(--text-2); }
+    .dead-end b { color: var(--tag-dead); }
+
+    /* Text overflow guard */
+    p, td, li, .chain-step .body, .flow-node { overflow-wrap: break-word; word-break: break-word; }
+    pre, .flow { max-width: 100%; overflow-x: auto; }
+
+    /* Print */
+    @media print { body { background: #fff; } main { padding: 0; max-width: none; } header, section { break-inside: avoid; border-color: #bbb; box-shadow: none; } }
   </style>
 </head>
 <body>
   <main>
-    <header>
+    <!-- Report Header -->
+    <header class="report-header">
       <h1>DECX 安全分析报告</h1>
       <p class="muted">{{summary}}</p>
-      <div class="meta-grid">
-        <div class="meta-item"><b>目标</b>{{target}}</div>
-        <div class="meta-item"><b>范围</b>{{scope}}</div>
-        <div class="meta-item"><b>会话</b>{{sessionName}}</div>
-        <div class="meta-item"><b>生成日期</b>{{date}}</div>
+      <div class="meta-row">
+        <span><b>目标</b>{{target}}</span>
+        <span><b>范围</b>{{scope}}</span>
+        <span><b>会话</b>{{sessionName}}</span>
+        <span><b>日期</b>{{date}}</span>
       </div>
     </header>
 
+    <!-- ═══════ Findings Summary Table ═══════ -->
     <section>
-      <h2>攻击面覆盖概览</h2>
-      <table>
+      <h2>问题总览</h2>
+      <table class="summary-table">
         <thead>
           <tr>
-            <th>总攻击面</th>
-            <th>静态验证通过</th>
-            <th>候选</th>
-            <th>已排除</th>
-            <th>覆盖完成</th>
+            <th>#</th>
+            <th>风险</th>
+            <th>问题</th>
+            <th>组件</th>
+            <th>组合链</th>
           </tr>
         </thead>
         <tbody>
+          <!-- Repeat for each finding -->
           <tr>
-            <td>{{stats.total}}</td>
-            <td>{{stats.staticallySupported}}</td>
-            <td>{{stats.candidate}}</td>
-            <td>{{stats.rejected}}</td>
-            <td>{{stats.complete}}</td>
+            <td><a href="#F1">{{issue.num}}</a></td>
+            <td><span class="badge {{issue.riskClass}}">{{issue.rating}}</span></td>
+            <td><a href="#F1">{{issue.shortTitle}}</a></td>
+            <td>{{issue.component}}</td>
+            <td>{{issue.chainSummary}}</td>
           </tr>
         </tbody>
       </table>
     </section>
 
+    <!-- ═══════ Finding ═══════ -->
     <section class="issue risk-{{issue.riskClass}}" id="{{issue.anchor}}">
-      <h2><span class="badge {{issue.riskClass}}">{{issue.rating}}</span> {{issue.title}}</h2>
-      <div class="meta-grid">
-        <div class="meta-item"><b>漏洞编号</b>{{issue.findingId}}</div>
-        <div class="meta-item"><b>Source ID</b>{{issue.sourceId}}</div>
-        <div class="meta-item"><b>Sink ID</b>{{issue.sinkId}}</div>
-        <div class="meta-item"><b>Flow</b>{{issue.flowSig}}</div>
+      <h2><span class="badge {{issue.riskClass}}">{{issue.rating}}</span>{{issue.title}}</h2>
+
+      <!-- 1. Target Context -->
+      <h3>目标情况</h3>
+      <p>{{issue.targetContext}}</p>
+      <div class="meta-row">
+        <span><b>组件</b>{{issue.component}}</span>
+        <span><b>权限</b>{{issue.permission}}</span>
+        <span><b>进程</b>{{issue.process}}</span>
       </div>
-
-      <h3>背景</h3>
-      <p>{{issue.background}}</p>
-
-      <h3>完整调用链</h3>
-      <ol class="call-chain">
-        <li>{{issue.entrypoint}}</li>
-        <li>{{issue.source}}</li>
-        <li>{{issue.intermediate}}</li>
-        <li>{{issue.sink}}</li>
-      </ol>
-
-      <h3>代码证据</h3>
-      <ol>
-        <li><strong>入口可达</strong><pre>{{issue.evidence.reachability}}</pre></li>
-        <li><strong>可控性</strong><pre>{{issue.evidence.controllability}}</pre></li>
-        <li><strong>保护检查结果</strong><pre>{{issue.evidence.guard}}</pre></li>
-        <li><strong>影响</strong><pre>{{issue.evidence.impact}}</pre></li>
-      </ol>
-
-      <h3>可绕过条件 / 不确定点</h3>
-      <p>{{issue.bypass}}</p>
-
-      <h3>攻击路径</h3>
-      <ol>
-        <li>{{issue.attackStep1}}</li>
-        <li>{{issue.attackStep2}}</li>
-        <li>{{issue.attackStep3}}</li>
-      </ol>
-
-      <h3>真实影响</h3>
-      <p>{{issue.impact}}</p>
-
-      <h3>风险定级依据</h3>
-      <p>{{issue.ratingRationale}}</p>
-
-      <h3>修复建议</h3>
-      <p>{{issue.remediation}}</p>
     </section>
 
+    <!-- ═══════ 2. Issue Description — own section, same level as composition ═══════ -->
     <section>
-      <h2>残余待证伪攻击面</h2>
-      <table>
+      <h2>问题说明</h2>
+      <p>{{issue.description}}</p>
+
+      <!-- Call chain signatures with context -->
+      <div class="chain">
+        <div class="chain-step entry">
+          <div class="num">1</div>
+          <div class="body">
+            <p><span class="tag entry">入口</span> <code>{{issue.entrypoint}}</code></p>
+            <p>{{issue.entrypointDetail}}</p>
+          </div>
+        </div>
+        <div class="edge-label"><span class="tag edge">→</span> {{issue.edge12}}</div>
+        <div class="chain-step control">
+          <div class="num">2</div>
+          <div class="body">
+            <p><span class="tag control">可控</span> <code>{{issue.control}}</code></p>
+            <p>{{issue.controlDetail}}</p>
+          </div>
+        </div>
+        <div class="edge-label"><span class="tag edge">→</span> {{issue.edge23}}</div>
+        <div class="chain-step guard">
+          <div class="num">3</div>
+          <div class="body">
+            <p><span class="tag guard">保护</span> <code>{{issue.guard}}</code></p>
+            <p>{{issue.guardDetail}}</p>
+          </div>
+        </div>
+        <div class="edge-label"><span class="tag edge">→</span> {{issue.edge34}}</div>
+        <div class="chain-step sink">
+          <div class="num">4</div>
+          <div class="body">
+            <p><span class="tag sink">Sink</span> <code>{{issue.sink}}</code></p>
+            <p>{{issue.sinkDetail}}</p>
+          </div>
+        </div>
+      </div>
+
+      <pre>{{issue.evidence}}</pre>
+    </section>
+
+    <!-- ═══════ 3. Composition — cross-finding composition analysis ═══════ -->
+    <!--
+      Every finding MUST have this section.
+      For dead-end findings: show the single dead-end notice.
+      For all others: show composition analysis (组合分析 + 效果比较表 + 完整攻击路径 + 真实影响).
+    -->
+    <section>
+      <h2>组合链利用</h2>
+
+      {{#if issue.isDeadEnd}}
+      <!-- Dead-end: no cross-finding composition possible -->
+      <div class="dead-end">
+        <b>dead-end</b> — {{issue.deadReason}}<br>
+        已评估组合: {{issue.evaluatedCombinations}}<br>
+        无法组合原因: {{issue.deadBlocker}}
+      </div>
+
+      {{else}}
+      <!-- Block 1: 组合分析 — prose describing each composition pair -->
+      <div class="composition-analysis">
+        <h3>组合分析</h3>
+        {{issue.compositionAnalysis}}
+      </div>
+
+      <!-- Block 2: 效果比较表 — standalone vs composed paths -->
+      <h3>效果比较</h3>
+      <table class="comparison">
         <thead>
           <tr>
-            <th>Source ID</th>
-            <th>Sink ID</th>
-            <th>Flow</th>
-            <th>当前状态</th>
-            <th>仍缺失的证据</th>
+            <th>路径</th>
+            <th>攻击步骤数</th>
+            <th>是否需要暴破</th>
+            <th>最终获取</th>
           </tr>
         </thead>
         <tbody>
+          {{issue.comparisonRows}}
+        </tbody>
+      </table>
+
+      <!-- Block 3: 完整攻击路径 — numbered steps covering the full composed chain -->
+      <h3>完整攻击路径</h3>
+      <ol class="attack">
+        {{issue.fullAttackSteps}}
+      </ol>
+
+      <!-- Block 4: 真实影响 — what changes after composition -->
+      <div class="impact-analysis">
+        <h3>真实影响</h3>
+        <p><b>独立影响:</b> {{issue.standaloneImpact}}</p>
+        <p><b>组合后影响:</b> {{issue.composedImpact}}</p>
+        {{issue.impactDelta}}
+      </div>
+
+      {{/if}}
+    </section>
+
+    <!-- ═══════ 4. Remediation ═══════ -->
+    <section>
+      <h2>安全建议与修复</h2>
+      <div class="fix">{{issue.remediation}}</div>
+    </section>
+
+    <!-- ═══════ Residual ═══════ -->
+    <section>
+      <h2>残余攻击面</h2>
+      <table>
+        <thead><tr><th>组件</th><th>状态</th><th>说明</th></tr></thead>
+        <tbody>
           <tr>
-            <td>{{candidate.sourceId}}</td>
-            <td>{{candidate.sinkId}}</td>
-            <td>{{candidate.flowSig}}</td>
-            <td>candidate</td>
-            <td>{{candidate.missingProof}}</td>
+            <td>{{candidate.component}}</td>
+            <td>{{candidate.status}}</td>
+            <td>{{candidate.note}}</td>
           </tr>
         </tbody>
       </table>

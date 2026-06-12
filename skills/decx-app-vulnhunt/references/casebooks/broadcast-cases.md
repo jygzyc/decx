@@ -1,6 +1,6 @@
 # Casebook: Broadcast Abuse
 
-Use this casebook after [[patterns/broadcast-abuse]]. These cases are abstract exploit shapes, not CVE-specific instructions.
+Use this casebook after [[patterns/broadcast-abuse]]. These cases are abstract exploit shapes, not reproduction instructions.
 
 ## Case: Dynamic Receiver Dispatches External Extras To Protected Action
 

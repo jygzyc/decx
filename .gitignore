@@ -1,5 +1,7 @@
 # Test Directories
 .decx_test/
+.decx
+.decx-analysis/
 
 # FileDump
 Source/
@@ -67,7 +69,8 @@ logs/
 
 # AI
 CLAUDE.md
-AGENTS.md
 .claude/
 .agents/
 .sisyphus/
+.codegraph/
+.omo

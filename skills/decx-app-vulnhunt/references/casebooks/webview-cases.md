@@ -2,11 +2,7 @@
 
 Use this casebook after [[patterns/webview-url-bypass]], [[patterns/webview-js-bridge]], [[patterns/webview-file-access]], or [[patterns/webview-cookie-theft]]. Cases describe transferable exploit shapes.
 
-## Public Case: Untrusted WebView Content Reaches Native Bridge
-
-### Source Type
-
-Public Android security guidance and academic WebView research describing insecure native bridge exposure.
+## Case: Untrusted WebView Content Reaches Native Bridge
 
 ### Abstract Shape
 

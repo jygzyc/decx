@@ -1,54 +1,45 @@
 # Pattern: Provider SQL Injection
 
-## When To Use
+## Match
 
-Use this reference when provider inputs influence SQL selection, projection, sort order, table name, raw query text, group/having clauses, or SQLite helper arguments.
+`ContentProvider.query` / `insert` / `update` / `delete` constructs `selection` / `selectionArgs` / `groupBy` / `having` / `orderBy` / `limit` / `path` from caller-controlled values. High-signal variants:
+- URI path segment is concatenated into `selection` directly.
+- URI query parameter is concatenated into `selection` directly.
+- Caller controls the `sortOrder` extra; `ORDER BY` is appended as-is.
+- `applyBatch` operates on raw `ContentValues` keyed by attacker-controlled columns.
+- `BulkInsert` loops over caller-supplied `ContentValues[]` and writes to a table that includes a sensitive column (e.g. password hash).
 
-## Core Concept
+## Analyze
 
-Attacker-controlled provider query data changes SQL semantics and exposes, modifies, or deletes data outside the intended query boundary.
+- entry: `ContentProvider` public method, `applyBatch`, `BulkInsert`, `call`, URI path/query, deep link with query params, intent extras
+- control: URI `path` / `query`, projection, selection, `selectionArgs`, `groupBy`, `having`, `orderBy`, `limit`, `applyBatch` operation array
+- sink: `SQLiteDatabase.query` / `rawQuery` / `execSQL` / `insert` / `update` / `delete`, `applyBatch` operation, `BulkInsert` row
+- guard: column/table allowlist for `selection`/`groupBy`/`orderBy`/`having`, integer cast for `limit`, never concatenate URI segments into a SQL fragment
+- impact: data exfiltration, data tampering (escalate role, change `is_admin`), `sqlite_master` enumeration to map the schema
 
-**Sources**
-- `selection`, `selectionArgs`, `sortOrder`, projection, URI path segments, query parameters
-- `ContentProvider.query/update/delete`, `SQLiteQueryBuilder`, `rawQuery`, `execSQL`
-- provider `call()` methods that forward SQL fragments
+## Reject
 
-**Sinks**
-- `rawQuery`, `execSQL`, string-built `query`, `update`, `delete`
-- `SQLiteQueryBuilder` with unvalidated projection map, table, sort, group, or having
+Reject when `selection`/`groupBy`/`orderBy` is hard-coded, every caller-controlled value is bound through `selectionArgs` or routed through an allowlist, and no path builds a SQL fragment from URI/extra.
 
-## Guards & Rejection
+## Codes
 
-Safe when: values are bound with placeholders, projection/table/sort are allowlisted, URI IDs are parsed as constrained types, and provider permissions cover the affected rows.
-
-Reject when: attacker controls only `selectionArgs` bound as values, query output is public/non-sensitive, injected syntax cannot affect SQL structure, or a permission gate blocks the operation.
-
-## Rating
-
-- HIGH: broad sensitive row disclosure or modification.
-- MEDIUM: bounded protected table exposure or single-user data tampering.
-- LOW: low-value oracle or metadata leak.
-- IGNORED: no semantic SQL control or no sensitive impact.
-
-## Trace Commands
-
-```bash
-decx code method-source "<providerQueryOrUpdate>" -P <port>
-decx code method-context "<sqliteHelperMethod>" -P <port>
+```java
+// URI path concatenated into selection — SQL injection
+String realSelection = "(path = '" + uri.getPath() + "')";
+return db.query("notes", projection, realSelection, selectionArgs, null, null, sortOrder);
 ```
 
-## Example Shapes
-
-Suspicious:
-
-```text
-external sortOrder -> "... ORDER BY " + sortOrder -> db.rawQuery()
+```java
+// sortOrder appended as-is — order-by injection
+return db.query("notes", projection, selection, selectionArgs, null, null, sortOrder);
 ```
 
-Safe:
-
-```text
-external sort key -> allowlist map -> SQLite query with bound selectionArgs
+```java
+// limit from extra is concatenated into the SQL fragment
+String limit = uri.getQueryParameter("limit");
+return db.query("notes", projection, selection, selectionArgs, null, null, sortOrder, limit);
 ```
 
-Report guidance -- Use: "The exported provider passes attacker-controlled SQL fragments into query construction, enabling unauthorized data access." Avoid: "Provider uses dynamic SQL" without proving attacker-controlled input reaches the query construction.
+```java
+// applyBatch uses raw ContentValues without per-column validation — op.withValue("password_hash", attackerHash) is accepted
+```

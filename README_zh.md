@@ -14,7 +14,7 @@
 
 ## 项目概述
 
-DECX (Decompiler + X) 是一个基于JADX反编译器的智能代码分析平台，专门为AI辅助代码分析而设计。该平台通过HTTP API和MCP (Model Context Protocol) 协议，为AI助手提供强大的Java代码分析能力。
+DECX (Decompiler + X) 是一个基于 JADX 反编译器的智能代码分析平台，专门为 AI 辅助代码分析而设计。该平台通过 HTTP API、MCP (Model Context Protocol)、独立 CLI 和工作流技能，为 AI 助手提供强大的 Java 代码分析能力。
 
 ---
 
@@ -23,7 +23,7 @@ DECX (Decompiler + X) 是一个基于JADX反编译器的智能代码分析平台
 ### 环境要求
 
 - **Java**: JDK 11+
-- **Node.js**: 18+，用于 CLI
+- **Node.js**: 22.5+，用于 CLI
 - **JADX**: v1.5.2+，使用 GUI 插件时需要
 - **Python**: 3.10+ 或 `uv`，用于插件 MCP 伴生进程；不使用 `uv` 时需准备 `requests`、`fastmcp`、`pydantic`
 
@@ -52,10 +52,11 @@ ln -s ~/.decx/source/skills ~/.agents/skills
 
 | 技能 | 用途 |
 |---|---|
-| `decxcli` | 通用代码导航、源码查看、交叉引用、Manifest 和资源检查 |
-| `decxcli-app-vulnhunt` | APK 攻击面枚举、组件/WebView/IPC 追踪、可利用性评估和中英文报告 |
-| `decxcli-framework-vulnhunt` | 只面向处理后的最终 framework 包，分析 Android framework、Binder 和系统服务漏洞 |
-| `decxcli-poc` | 将一个已确认漏洞转换为可构建的 Android PoC App 和可选辅助服务 |
+| `decx-cli` | DECX CLI 使用、通用代码导航、源码查看、交叉引用、Manifest/资源检查和工作流路由 |
+| `decx-app-vulnhunt` | 基于 SQLite 黑板工作流的 APK 应用层漏洞挖掘 |
+| `decx-framework-vulnhunt` | 面向处理后的 framework 包，分析 Android framework、Binder 和系统服务漏洞 |
+| `decx-poc` | 从一个已最终确认的黑板发现或选定图路径构建 Android PoC App 和可选辅助服务 |
+| `decx-report` | 从已最终确认的黑板发现生成 HTML/Markdown 报告 |
 
 ### JADX 插件
 
@@ -87,9 +88,12 @@ decx process close --port 25419
 
 典型技能顺序：
 
-- `decxcli` 用于探索和收集证据
-- `decxcli-app-vulnhunt` 或 `decxcli-framework-vulnhunt` 用于聚焦漏洞挖掘
-- `decxcli-poc` 用于把一个确认漏洞转换为可构建 PoC
+- `decx-cli` 用于探索、收集证据和工作流路由
+- `decx-app-vulnhunt` 或 `decx-framework-vulnhunt` 用于聚焦漏洞挖掘
+- `decx-report` 用于从已最终确认的黑板发现生成报告
+- `decx-poc` 用于把一个已最终确认的黑板发现或选定图路径转换为可构建 PoC
+
+漏洞挖掘技能会把分析状态写入 `.decx-analysis/<target>/decx-analysis.db`。App 挖掘用 `--kind android_app` 初始化黑板；framework 挖掘用 `--kind android_framework`。黑板保存 facts、intents、events、links 和 chains，供后续报告和 PoC 技能消费。
 
 常用命令分组：
 
@@ -106,7 +110,7 @@ decx process close --port 25419
 
 - 基于会话的 `code` 和 `ard` 命令支持 `--page <n>`，也可用 `-s, --session <name>` 或 `-P, --port <port>` 指向指定会话。
 - `decx code class-source` 支持用 `--limit <n>` 最多返回 N 行源码。
-- `decx process open <file>` 会透传标准 `jadx-cli` 参数，并默认启用 `--show-bad-code`。
+- `decx process open <file>` 会透传标准 `jadx-cli` 参数，默认启用 `--show-bad-code` 和 `--no-imports`，并会移除 `--deobf`，因为 DECX 分析需要保留原始名称。
 - `decx ard all-resources` 支持用 `--include`、`--no-regex` 按文件名过滤。
 - `system-services` 和 `perm-info` 是 adb 命令，使用 `--serial` / `--adb-path`，不使用 `-P <port>`。
 - `decx ard framework run` 默认从已连接设备收集、处理、打包并打开最终 framework JAR；`process <oem>` 用于处理本地 framework dump。
@@ -177,7 +181,7 @@ decx process close --port 25419
 | `decx/decx-plugin/` | JADX GUI 插件和内置 MCP 资源 |
 | `decx/decx-server/` | 独立 headless server 入口和 fat JAR 打包 |
 | `decx-cli/` | TypeScript CLI，负责会话、代码分析、Android 辅助、framework 处理和自管理 |
-| `skills/` | 面向 AI Agent 的 DECX 分析、App/Framework 漏洞挖掘和 PoC 构造技能 |
+| `skills/` | 面向 AI Agent 的 DECX 分析、App/Framework 漏洞挖掘、报告生成和 PoC 构造技能 |
 
 核心请求链路：
 

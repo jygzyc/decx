@@ -5,10 +5,14 @@ on:
     branches: [ main ]
     paths:
       - 'decx-cli/**'
+      - 'version'
+      - 'VERSION'
   pull_request:
     branches: [ main ]
     paths:
       - 'decx-cli/**'
+      - 'version'
+      - 'VERSION'
   workflow_dispatch:
 
 jobs:
@@ -16,9 +20,17 @@ jobs:
     runs-on: ubuntu-latest
     defaults:
       run:
-        working-directory: cli
+        working-directory: decx-cli
     steps:
     - uses: actions/checkout@v6
+
+    - name: Prepare version file
+      working-directory: .
+      run: |
+        if [ ! -f version ] && [ -f VERSION ]; then
+          cp VERSION version
+        fi
+        test -s version
 
     - uses: actions/setup-node@v6
       with:

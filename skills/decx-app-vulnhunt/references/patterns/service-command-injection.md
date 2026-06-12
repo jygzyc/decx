@@ -1,56 +1,51 @@
 # Pattern: Service Command Injection
 
-## When To Use
+## Match
 
-Use this reference when an externally reachable started or bound service consumes attacker-controlled action, extras, URI, nested intent, path, command, message, or target.
+Exported service, `IntentService`, AIDL/Binder, `Messenger`, Job/WorkManager handoff consuming attacker-controlled action, extras, command, URI, path, nested `Intent`, message, or `replyTo`. Implicit `<intent-filter>` means `exported="true"` unless explicit declaration on API 31+.
 
-## Core Concept
+High-signal trigger shapes:
+- `startService` / `startService` (deprecated) with implicit Intent carrying a `command` extra — service routes to `onStartCommand` and dispatches the command to a privileged action (e.g. SMS send, file write, dial).
+- `bindService` returning a binder stub to a sensitive AIDL — the attacker can `transact` any method without the original `.aidl` file by generating the `Stub` interface from the decompiled `Stub$Proxy` class or by `dex2jar`-ing the app and using the produced jar as a library.
+- `Messenger` from `onBind` whose `Handler` dispatches `msg.what` / `Bundle` to a command switch.
+- AIDL `Stub.onTransact` reading a `Parcelable` argument that comes from a public-extras path; subclass/reader mismatch can shift the read and reach privileged branches.
+- `IntentService` (deprecated) with `onHandleIntent` that does not check action / null extras / wrong type — deserialization exceptions in `getSerializableExtra` / `getParcelableExtra` cause `RuntimeException` and crash the service (denial of service primitive).
 
-Untrusted service input drives protected app work, victim-identity component launch, file/provider access, or command-like dispatch without complete validation.
+## Analyze
 
-**Sources**
-- `onStartCommand`, `onHandleIntent`, JobIntentService/work manager handoff
-- AIDL/Binder/Messenger parameters
-- action strings, extras, URI, path, nested `Intent`, command name, target ID
+- entry: `onStartCommand`, `onHandleIntent`, `Stub.onTransact` (AIDL), `Messenger.handleMessage`, `onBind` returning attacker-reachable IBinder
+- control: action string, command name, `msg.what`, URI/path, nested `Intent`, `replyTo` Messenger, `Parcelable` creator mismatch
+- sink: arbitrary AIDL method invocation (attacker needs `Stub` bytecode, not `.aidl` source), protected action (SMS/dial/file/provider), `PendingIntent` send
+- guard: `Binder.getCallingUid()` before each privileged branch, mark internal services `exported="false"`, explicit `exported` on API 12+, never return sensitive stub from `onBind` without caller check
+- impact: victim performs protected work on attacker's behalf, data exfiltration, AIDL surface exposes privileged methods
 
-**Sinks**
-- file/provider/network/account operations
-- component launch/broadcast/service dispatch
-- shell/interpreter execution only when directly proven
-- pending intent creation or send
+## Reject
 
-## Guards & Rejection
+Reject when service unreachable, command from trusted constants, or AIDL method unreachable to privileged branch on attacker input.
 
-Safe when: manifest/signature permission and in-code caller checks protect the service, command names map to trusted constants, payloads are validated before use, and downstream sinks recheck permissions.
+## Codes
 
-Reject when: reachability-only, benign refresh/logging/no-op actions, crash-only paths, and shell-injection claims without a shell/interpreter or equivalent command sink.
-
-## Rating
-
-- HIGH: victim app performs dangerous action or exposes sensitive data.
-- MEDIUM: bounded protected workflow requiring local malicious app.
-- LOW: weak UI/service noise.
-- IGNORED: no protected downstream behavior.
-
-## Trace Commands
-
-```bash
-decx code method-context "<serviceEntryMethod>" -P <port>
-decx code method-source "<dispatchOrSinkMethod>" -P <port>
+```java
+// command dispatched from external Intent to privileged action (sender / body fully attacker-controlled)
+SmsManager.getDefault().sendTextMessage(intent.getStringExtra("number"), null, intent.getStringExtra("body"), null, null);
 ```
 
-## Example Shapes
-
-Suspicious:
-
-```text
-exported bound service -> AIDL method trusts caller args without validation -> dispatches to privileged internal action
+```java
+// type-confusion DoS — no type check on the extra
+SomeData data = (SomeData) intent.getSerializableExtra("data");
 ```
 
-Safe:
-
-```text
-exported bound service -> AIDL method validates caller UID/package -> only permitted operations reachable
+```java
+// Messenger handler trusts msg.what + Bundle, no caller check
+switch (msg.what) { case MSG_DO_PRIVILEGED: doPrivilegedWork(msg.getData().getString("target")); break; }
 ```
 
-Report guidance -- Use: "An externally reachable service dispatches attacker-controlled command data to protected work without complete validation." Avoid: "service is exported" without proving caller-controlled args reach a privileged method without guard.
+```java
+// AIDL onTransact with creator-mismatched Parcelable. See object-parsing-abuse.
+Intent _arg2 = _Parcel.readTypedObject(data, Intent.CREATOR);
+```
+
+```java
+// onBind returns a sensitive AIDL stub to any caller — no caller check
+return downloadServiceHandler.onBind(intent);
+```

@@ -1,71 +1,39 @@
-# Pattern: Framework Service Cross-User Boundary
+# Pattern: Framework Service Cross-User
 
-## When To Use
+## Match
 
-Use this reference when framework service methods accept user IDs, profile IDs, handles, package names, account names, or state keys that may cross Android user/profile boundaries.
+Binder input controls target user/profile or per-user key, and service reads/writes/launches/returns state for a different user without same-user or cross-user authorization. Two recurring shapes: an API whose `userId` parameter is taken as a target without first checking that the caller has `INTERACT_ACROSS_USERS` / `INTERACT_ACROSS_USERS_FULL` (e.g. `areNotificationsEnabledForPackage`, `getDefaultSmsPackage`); and an API that asks the caller to pass a `uid` and trusts that the uid belongs to the right user without binding to the caller UID. Cross-user content URIs are written `content://<userId>@authority/path` and require explicit cross-user permission to open.
 
-## Core Concept
+## Analyze
 
-Caller-controlled target-user data reaches privileged operations without enforcing whether the Binder caller may act for that user or profile.
-
-**Sources**
-- `userId`, `UserHandle`, profile ID, parent/managed profile ID, account/profile/package parameters
-- URI, `Intent`, or token fields that imply a target user
-- service records cached per user but looked up with caller-controlled keys
-
-**Sinks**
-- cross-user data reads/writes
-- package, settings, policy, notification, account, permission, storage, or intent operations for another user/profile
-- broadcasts or launches using `asUser` variants
+- trace the target user from Binder input, URI prefix, or cached record to the sink. Derive caller user from `Binder.getCallingUid()` and prove the exact branch when `targetUser != callerUser`.
+- entry: Binder method, manager facade, callback, provider/launch helper with target user, content URI authority prefix `10@authority/...` denoting userId 10
+- control: user ID, profile ID, `UserHandle`, account/profile target, per-user package/state key, `UserHandle.getIdentifier()`, `ActivityManager.getCurrentUser()`, `getCallingUserId()`
+- sink: `Context.startActivityAsUser(intent, userHandle)`, `sendBroadcastAsUser`, `sendOrderedBroadcastAsUser`, `getContentResolver().query(uri)` with `crossUserUriPermission`, per-user store (Settings.Secure, account manager, notification manager, keyguard), package/account/settings state, cross-profile action
+- guard: derive caller user from `Binder.getCallingUid()` (e.g. `UserHandle.getUserId(callingUid)`); require `INTERACT_ACROSS_USERS` or `INTERACT_ACROSS_USERS_FULL` when `targetUser != callerUser`; in API code, reject `uid` parameters that resolve to another user's UID unless the caller has cross-user permission; for provider code, strip the `userId@` prefix from content URIs and re-enforce cross-user permission
+- impact: other-user/profile data read, action, grant, state change, or policy bypass
 
 ## Required Trace Evidence
 
-- Reachability: caller can invoke the method with chosen target user/profile data.
-- Controllability: attacker controls the target user/profile or indirectly selects it.
-- Sink: service reads/writes/launches/returns state for a different user/profile.
-- Missing or bypassable guard: no `INTERACT_ACROSS_USERS`, profile ownership, same-user, or user restriction check blocks the path.
-- Visible impact: cross-user data disclosure, unauthorized state change, or policy bypass.
+Reachability, Controllability, Sink, Missing guard, Visible impact
 
-## Guards & Rejection
+## Reject
 
-Safe when: caller user is derived from Binder, target user is checked against caller permissions/profile relationship, `asUser` calls use validated users, and per-user stores cannot be indexed by attacker-controlled IDs. Target user must be bound to Binder.getCallingUid via INTERACT_ACROSS_USERS permission or same-user check before any asUser operation.
+Reject when target user is caller user, `INTERACT_ACROSS_USERS` is enforced before the sink (caller passes the check), the profile relationship is verified (`UserManager.isSameProfileGroup`), the returned data is filtered to caller scope, or the only cross-user branch is on a known trusted same-app context (e.g. an internal service that always operates on the system user).
 
-Reject when: target user is forced to the caller user, cross-user permission is enforced on all paths, data is public/non-sensitive, or no cross-user sink is reached.
+## Codes
 
-## Rating
-
-- CRITICAL: cross-user policy/device compromise or persistent protected state tampering.
-- HIGH: sensitive data/action across users or profiles.
-- MEDIUM: bounded cross-profile state change.
-- IGNORED: no cross-user effect.
-
-## Trace Commands
-
-```bash
-decx code method-context "<binderMethod>" -P <port>
-decx code method-source "<crossUserSink>" -P <port>
+```java
+// caller-selected userId reaches per-user state without same-user/cross-user gate
+Settings.Secure.getStringForUser(mResolver, key, userId);
 ```
 
-## Example Shapes
-
-Suspicious:
-```text
-public void removeUserApp(int userId, String packageName) {
-    // no cross-user check before asUser operation
-    mPackageManagerInternal.deletePackageAsUser(packageName, userId, 0);
-}
+```java
+// boundary mistake: caller supplies uid; service derives user from that uid, not Binder uid
+int userId = UserHandle.getUserId(uidFromBinder);
 ```
 
-Safe:
-```text
-public void removeUserApp(int userId, String packageName) {
-    int callerUid = Binder.getCallingUid();
-    int callerUser = UserHandle.getUserId(callerUid);
-    if (userId != callerUser) {
-        enforceCallingPermission(android.Manifest.permission.INTERACT_ACROSS_USERS_FULL);
-    }
-    mPackageManagerInternal.deletePackageAsUser(packageName, userId, 0);
-}
+```java
+// extreme edge: content://10@authority path opens another user's provider data
+resolver.query(Uri.parse("content://10@settings/secure/sms_default_application"), ...);
 ```
-
-Report guidance -- Use: "The service applies attacker-selected target-user data to a privileged operation without enforcing cross-user authorization." Avoid: "The method accepts a userId parameter" (must show the parameter reaches a cross-user sink without INTERACT_ACROSS_USERS or same-user enforcement).

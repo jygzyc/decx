@@ -1,115 +1,142 @@
 # Installing DECX for Codex
 
-Enable DECX skills in Codex via native skill discovery. Clone the repo, then link `skills/` into `~/.agents/skills/decx`.
+DECX skills are discovered by Codex through a symlinked `skills/` directory under `~/.agents/skills/decx`.
 
 ## Prerequisites
 
+- Codex CLI
 - Git
+- `decx` CLI binary ([install guide](../../README.md))
+- `node` 18+ (required by DECX blackboard, report, and PoC helper scripts)
 
 ## Installation
 
 ### macOS / Linux
 
-1. **Clone the DECX repository:**
-
 ```bash
 git clone https://github.com/jygzyc/decx.git ~/.codex/decx
-```
-
-2. **Create the skills symlink:**
-
-```bash
 mkdir -p ~/.agents/skills
 ln -s ~/.codex/decx/skills ~/.agents/skills/decx
 ```
 
-3. **Restart Codex** (quit and relaunch the CLI) to discover the skills.
+Restart Codex to discover the skills.
 
 ### Windows (PowerShell)
 
-1. **Clone the DECX repository:**
-
 ```powershell
 git clone https://github.com/jygzyc/decx.git "$HOME\.codex\decx"
-```
-
-2. **Create the skills link:**
-
-```powershell
 New-Item -ItemType Directory -Force -Path "$HOME\.agents\skills" | Out-Null
 New-Item -ItemType SymbolicLink -Path "$HOME\.agents\skills\decx" -Target "$HOME\.codex\decx\skills"
 ```
 
-If symbolic links are blocked on your machine, use a junction instead:
+If symbolic links are blocked, use a junction:
 
 ```powershell
-New-Item -ItemType Directory -Force -Path "$HOME\.agents\skills" | Out-Null
 New-Item -ItemType Junction -Path "$HOME\.agents\skills\decx" -Target "$HOME\.codex\decx\skills"
 ```
 
-3. **Restart Codex** to discover the skills.
+Restart Codex to discover the skills.
+
+## Available Skills
+
+| Skill | Trigger | Requires |
+|---|---|---|
+| `decx-cli` | Run `decx` commands, open targets, inspect classes/methods/xrefs, manage sessions | `decx` |
+| `decx-app-vulnhunt` | Audit APK app-layer attack surfaces with the SQLite blackboard workflow | `decx`, `node` |
+| `decx-framework-vulnhunt` | Audit processed framework bundles, Binder services, AIDL implementations, vendor/OEM code | `decx`, `node` |
+| `decx-poc` | Build a PoC app from a finalized blackboard finding or selected graph path | `decx`, `node` |
+| `decx-report` | Generate HTML/Markdown reports from finalized blackboard findings | `decx`, `node` |
+
+## Usage
+
+### Workflow
+
+All DECX analysis starts through Codex's native skill system. Load a skill to activate its instructions.
+
+```
+use skill decx-cli
+```
+
+From `decx-cli`, specialized skills are loaded automatically when the task matches:
+
+```
+use skill decx-app-vulnhunt
+use skill decx-framework-vulnhunt
+use skill decx-poc
+use skill decx-report
+```
+
+### Skill Workflow
+
+The typical analysis flow:
+
+1. **Navigate** — `decx-cli` to open a target and inspect code
+2. **Hunt** — `decx-app-vulnhunt` or `decx-framework-vulnhunt` to create and review blackboard facts, intents, links, and chains
+3. **Report** — `decx-report` to generate reports from finalized blackboard findings
+4. **PoC** — `decx-poc` to build an exploit app from one finalized blackboard finding or selected graph path
+
+### Blackboard
+
+All analysis output lives under `.decx-analysis/<target>/`:
+
+- `decx-analysis.db` — SQLite blackboard for the target
+- app hunts initialize with `--kind android_app`
+- framework hunts initialize with `--kind android_framework`
+- facts, intents, events, links, and chains are managed by `scripts/decx-analysis-db.mjs`
+
+## Updating
+
+```bash
+cd ~/.codex/decx && git pull
+```
+
+Skills update instantly through the symlink.
 
 ## Migrating from old bootstrap
 
 If you installed DECX before native skill discovery:
 
-### macOS / Linux
+1. Update the repo:
 
-1. **Update the repo:**
+   ```bash
+   cd ~/.codex/decx && git pull
+   ```
 
-```bash
-cd ~/.codex/decx && git pull
-```
+2. Create the skills symlink using the installation steps above.
+3. Remove any old DECX bootstrap block from `~/.codex/AGENTS.md`.
+4. Restart Codex.
 
-2. **Create the skills symlink** using the installation step above.
-3. **Remove the old bootstrap block** from `~/.codex/AGENTS.md` if it references an older DECX bootstrap.
-4. **Restart Codex.**
+## Troubleshooting
 
-### Windows (PowerShell)
+### Skills not discovered
 
-1. **Update the repo:**
+1. Verify the symlink exists:
 
-```powershell
-cd "$HOME\.codex\decx"
-git pull
-```
+   ```bash
+   ls -la ~/.agents/skills/decx
+   ```
 
-2. **Create the skills link** using the installation step above.
-3. **Remove the old bootstrap block** from `$HOME\.codex\AGENTS.md` if it references an older DECX bootstrap.
-4. **Restart Codex.**
+2. Confirm `skills/` directory contains `SKILL.md` files:
 
-## Verify
+   ```bash
+   ls ~/.agents/skills/decx/*/SKILL.md
+   ```
 
-### macOS / Linux
+3. Restart Codex.
 
-```bash
-ls -la ~/.agents/skills/decx
-```
+### `decx` command not found
 
-### Windows (PowerShell)
+1. Verify `decx` is on `PATH`:
 
-```powershell
-Get-Item "$HOME\.agents\skills\decx" | Format-List FullName,LinkType,Target
-```
+   ```bash
+   which decx
+   ```
 
-You should see `~/.agents/skills/decx` pointing to the DECX `skills/` directory.
+2. Install or update the CLI following the instructions in `README.md`.
 
-## Updating
+### Permission errors on symlink (Windows)
 
-### macOS / Linux
-
-```bash
-cd ~/.codex/decx && git pull
-```
-
-### Windows (PowerShell)
-
-```powershell
-cd "$HOME\.codex\decx"
-git pull
-```
-
-Skills update instantly through the link.
+Use a junction instead of a symbolic link (see installation steps).
 
 ## Uninstalling
 

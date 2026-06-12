@@ -1,55 +1,49 @@
 # Pattern: Implicit Intent Hijack
 
-## When To Use
+## Match
 
-Use this reference when sensitive data, URI grants, workflow control, or protected actions are sent through an implicit `Intent` that an attacker app can resolve.
+Sensitive data, URI grant, callback, result, or protected workflow sent through implicit `Intent` resolution — any app with matching `<intent-filter>` and higher priority can receive, modify, or satisfy the request.
 
-## Core Concept
+High-signal trigger shapes:
+- Implicit `startActivity` carrying token/password/grant flag — attacker enters the chooser.
+- Implicit `startService` carrying a privileged command — Android 5+ blocks implicit `bindService` but NOT `startService` on exported services.
+- Activity-for-result with implicit Intent — attacker returns forged grant-bearing `Intent` via `setResult`.
 
-The app sends security-relevant data or control to an untrusted resolver because the target component/package is not pinned.
+## Analyze
 
-**Sources**
-- app-generated implicit `Intent`
-- action/category/data/type fields influenced by attacker or app state
-- extras, `ClipData`, URI grants, pending intents, chooser/share flows
+- entry: `startActivity`, `startService`, `startActivityForResult` with implicit Intent (no explicit component)
+- control: resolver target (action/data/type), extras, grant flags, chooser default
+- sink: grant-bearing payload (`FLAG_GRANT_READ_URI_PERMISSION` / `FLAG_GRANT_WRITE_URI_PERMISSION`), forged result Intent via `setResult`, protected workflow continuation
+- guard: explicit target (`setClassName` / `setComponent`), avoid `startActivityForResult` with implicit Intent; `setPackage` is not enough — resolver picks any matching activity inside target package
+- impact: `content://` grant leak, result manipulation, attacker interposed in trusted workflow chain
 
-**Sinks**
-- `startActivity`, `startService`, `sendBroadcast`, chooser flows
-- `setResult` or callbacks returning attacker-captured handles
-- grant-bearing data delivered to resolved component
+> **`setPackage` is not a safety guarantee** — the resolver can still pick any matching activity within that package. Verify the resolved `ActivityInfo`. Also see broadcast-abuse for the ordered-broadcast receiver-vs-result distinction.
 
-## Guards & Rejection
+## Reject
 
-Safe when: the target is explicit and trusted, sensitive payloads are removed before implicit dispatch, grants are not attached, and recipient identity is validated when callbacks/results matter.
+Reject when target is explicit (`setClassName` / `setComponent`), payload is public, or recipient verified before trust. Note: `setPackage(packageName)` still allows any matching activity inside that package — verify `ActivityInfo`.
 
-Reject when: the implicit intent carries only public data, no attacker resolver can match, target is pinned before dispatch, or no caller-visible security effect exists.
+## Codes
 
-## Rating
-
-- HIGH: credentials, tokens, private file grants, or protected workflow handles captured.
-- MEDIUM: bounded sensitive data or local workflow hijack.
-- LOW: low-value metadata or weak phishing.
-- IGNORED: implicit routing with no sensitive payload or impact.
-
-## Trace Commands
-
-```bash
-decx code method-context "<implicitIntentCreator>" -P <port>
-decx code method-source "<dispatchMethod>" -P <port>
+```java
+// implicit Intent with grant flag + content:// — attacker app with matching filter is offered as target
+intent.setData(Uri.parse("content://victim.fileprovider/.../secret.txt"));
+intent.setFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_GRANT_WRITE_URI_PERMISSION);
+startActivityForResult(intent, 0);
 ```
 
-## Example Shapes
-
-Suspicious:
-
-```text
-app sends implicit Intent with sensitive extras/data -> attacker app resolves and receives the data
+```java
+// implicit startService carrying a privileged command (Android 5+ still allows this on exported service)
+startService(new Intent("com.example.SEND_SMS").putExtra("number", "...").putExtra("body", "..."));
 ```
 
-Safe:
-
-```text
-app sends implicit Intent with no sensitive payload -> or uses explicit Intent / signature permission receiver
+```java
+// higher-priority dynamic receiver intercepts a system broadcast
+filter.setPriority(Integer.MAX_VALUE);
+registerReceiver(attackerReceiver, filter);
 ```
 
-Report guidance -- Use: "The app sends sensitive data or grants through an implicit Intent that can be resolved by an attacker-controlled component." Avoid: "implicit Intent is sent" without sensitive payload proof or attacker-resolvable confirmation.
+```java
+// implicit Intent for result — attacker returns a forged grant-bearing result
+startActivityForResult(new Intent("com.example.PICK_CONTACT"), 3);
+```

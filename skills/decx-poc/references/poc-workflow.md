@@ -1,26 +1,44 @@
 ---
 name: poc-workflow
-description: PoC XML contract, re-verification, compile/deploy, and final output format.
+description: PoC blackboard contract, re-verification, compile/deploy, and final output format.
 ---
 
 # PoC Workflow Reference
 
-## PoC-Ready XML Result
+## PoC-Ready Graph Path
 
-Use one finalized `.decx-analysis/<target>/r_<sourceId>_<sinkId>_<flowSig>.xml` with `metadata.kind = result`. Select exactly one `result` with `status = statically-supported` and `pocReady = true`.
+Use one verified chain from the SQLite blackboard. Query with:
 
-Required XML fields:
+```bash
+node scripts/decx-analysis-db.mjs export <dir>
+node scripts/decx-analysis-db.mjs path <dir> --from <entrypoint_fact> --to <sink_fact>
+```
 
-- `metadata.sourceId`, `metadata.sinkId`, `metadata.flowSig`, `metadata.decxSession`, `context.entrypoint`
-- `analysis.taintedVariables`, `analysis.analyzedChains`
-- selected `result.node`, `result.status`, `result.impact`, `result.rating`, `result.evidence`, `result.rationale`
-- selected `result.poc.trigger`, `steps`, `expectedResult`, `successSignal`, `requirements`
+Required data from the blackboard:
 
-Do not create or consume a separate handoff file. Do not use session handoff `h_<sessionName>.xml` as source of truth.
+- entrypoint fact, sink fact, and the full fact→intent→fact path between them
+- controllability, guard, and impact facts along the path (prefixes differ by target kind; see below)
+- PoC trigger description, steps, expected result, success signal, and requirements (stored as fact descriptions or event data)
+
+Determine target kind from fact descriptions: if any fact starts with `service-entrypoint:` or `binder-reachability:`, the target is framework; otherwise app.
+
+Fact prefixes by target kind:
+
+| Aspect | App prefix | Framework prefix |
+|---|---|---|
+| Entry | `entrypoint:` | `service-entrypoint:` |
+| Reachability | `reachability:` | `binder-reachability:` |
+| Identity | (not used) | `identity:` |
+| Control | `control:` | `control:` |
+| Guard | `guard:` | `permission-guard:` / `appop-guard:` / `user-guard:` / `identity-transition:` |
+| Sink | `sink:` | `sink:` |
+| Impact | `impact:` | `impact:` |
+
+Do not create or consume XML artifacts. Use `export` and `path` queries as source of truth.
 
 ## Re-Verification
 
-Mandatory and must be delegated to `decx-subagent`. The main workflow passes the XML path and selected result; the subagent checks sink and trigger conditions.
+Mandatory re-verification before coding. The main workflow queries the blackboard graph and verifies sink/trigger conditions inline.
 
 Minimum checks:
 

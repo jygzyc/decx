@@ -1,57 +1,46 @@
 # Pattern: Framework Service Race Condition
 
-## When To Use
+## Match
 
-Use this reference when authorization, identity, user selection, file/provider state, or privileged operations depend on mutable framework state across asynchronous or concurrent boundaries.
+Authorization, identity, user/package selection, token/callback ownership, provider/file state, or privileged operation depends on mutable state across async, callback, observer, lock, delayed handler, or concurrent Binder boundary. High-signal shapes include check-then-use across handlers, stale callback/token records, Binder object lifetime mismatch, and identity restore paths that can be skipped before the next privileged operation.
 
-## Core Concept
+## Analyze
 
-Attacker-controlled timing changes state between check and use, allowing a privileged framework operation to execute with stale authorization or wrong target state.
-
-**Sources**
-- Binder calls racing shared maps, tokens, callbacks, file/provider paths, package/user state, pending operations
-- async handlers, locks, callbacks, observers, broadcasts, delayed runnables
-
-**Sinks**
-- privileged state update, data return, package/user/policy change, file/provider access, identity-cleared work, cross-user launch
+- entry: Binder method plus async/callback/handler/observer path reachable by attacker; Binder transaction/release lifetime path; delayed `Handler` message with attacker-controlled `what`/`Bundle`; callback or pending-result handoff
+- control: checked state, token, callback, package/user record, pending operation, file/provider path, transition state, lifetime/refcount state, queued work item
+- sink: privileged state update, data return, grant/PI dispatch, provider/file access, cross-user launch, transition finish, cross-service call, memory/lifetime corruption primitive
+- guard: lock/immutable snapshot, final authorization recheck at the async boundary, token owner binding, identity/user/package rebound at sink, atomic check-and-act, `finally` fence with `restoreCallingIdentity(token)`, `synchronized` on binder release/transaction paths
+- impact: stale authorization reaches protected sink, wrong identity/target is used, or concurrent lifetime misuse creates a memory-safety primitive
 
 ## Required Trace Evidence
 
-- Reachability: attacker can trigger the relevant concurrent or asynchronous paths.
-- Controllability: attacker can influence the checked state or target state across the race window.
-- Sink: stale or changed state reaches a privileged operation.
-- Missing or bypassable guard: no lock, atomic recheck, immutable snapshot, token binding, or final authorization check protects use.
-- Visible impact: protected data/action, policy bypass, cross-user confusion, or persistent DoS.
+Reachability, Controllability, Sink, Missing guard, Visible impact
 
-## Guards & Rejection
+## Reject
 
-Safe when: checks and use share a lock or immutable snapshot, identity/user/package is rebound at the final sink, and callbacks cannot mutate the target between validation and operation. Authorization must rebind identity/user/package at the final sink, not rely on a pre-async snapshot.
-Reject when: speculative races without attacker-controlled timing, without a reachable concurrent path, or without visible security impact.
+Reject when timing is not attacker-influenced, no reachable concurrent path exists, check and use are atomic, the final sink rechecks authorization using a Binder-snapshot identity, or impact is transient/no-security.
 
-## Rating
+## Codes
 
-- HIGH: race reaches privileged data/action or system policy bypass.
-- MEDIUM: bounded state confusion with practical prerequisites.
-- LOW: fragile transient effect with limited impact.
-- IGNORED: no attacker-controlled race window.
-
-## Trace Commands
-
-```bash
-decx code method-cfg "<checkedMethod>" -P <port>
-decx code method-context "<asyncOrCallbackMethod>" -P <port>
+```c
+// failure cleanup releases a partially initialized Binder object/lifetime state
+if (parse_failed) goto err_release_with_stale_offset;
 ```
 
-## Example Shapes
-
-Suspicious:
-```text
-Binder method checks caller UID in map → async callback removes entry → delayed runnable uses stale UID to perform privileged install
+```c
+// work item removed under one lock window while another path can still use it
+spin_lock(&proc->todo_lock);
+list_del(&work->todo);
+spin_unlock(&proc->todo_lock);
+kfree(work);
 ```
 
-Safe:
-```text
-Binder method validates caller UID → holds lock through check-and-use → rebinds identity at final sink; callback cannot mutate target during critical section
+```java
+// cached callback/token record reused without rebinding owner at dispatch
+record = records.get(token);
+dispatch(record.packageName, record.userId);
 ```
 
-Report guidance -- Use: "Framework service authorization depends on mutable state that can change before the privileged sink is reached." Avoid: "Race condition possible."
+```java
+// clearCallingIdentity without finally; restore skipped on exception path
+```

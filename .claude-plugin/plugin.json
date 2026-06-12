@@ -1,7 +1,7 @@
 {
   "name": "decx",
-  "description": "DECX Android analysis workflows for skills, agents, and hooks",
-  "version": "3.2.0",
+  "version": "3.3.0",
+  "description": "DECX (`Decompiler + X`) is an AI-oriented analysis layer built on top of JADX.",
   "author": {
     "name": "Yves",
     "email": "jyg.zyc@outlook.com"
@@ -14,11 +14,9 @@
     "security",
     "decompiler",
     "jadx",
-    "analysis",
     "vulnerability",
     "poc",
-    "mcp",
-    "agents",
-    "skills"
-  ]
+    "analysis"
+  ],
+  "hooks": "../hooks/hooks.json"
 }

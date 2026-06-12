@@ -25,7 +25,7 @@ Guidance for DECX skills.
 ### Single Source of Truth
 
 - **Chain pivot routing**: `index.md` only. Do not duplicate in overviews or pattern files.
-- **Rating authority**: `risk-rating.md` only. Patterns include pattern-specific rating sections that describe typical impact scope.
+- **Rating authority**: `risk-rating.md` only. Patterns convey impact scope in the `## Analyze` `impact` field; they do not have a standalone `## Rating` section.
 - **False-positive and sibling-card loading rules**: SKILL.md `Constraints` + `index.md` Load Order. Do not repeat in pattern files.
 
 ### Pattern Template
@@ -35,25 +35,23 @@ Every pattern file must follow this structure:
 ```
 # Pattern: <Name>
 
-## When To Use
-## Core Concept
-**Sources** / **Sinks**
-## Guards & Rejection  (or Required Trace Evidence for framework patterns)
-## Rating
-## Trace Commands
-## Example Shapes  (Suspicious / Safe)
-Report guidance -- Use: "<good>". Avoid: "<bad>".
+## Match
+## Analyze   (entry / control / sink / guard / impact as dash-prefixed items)
+## Reject
+## Codes     (suspicious code, edge cases; no trivially safe examples)
 ```
 
+- `## Match` — observable routing signals and entry-specific behavioral notes (API level quirks, non-obvious defaults). Not explanatory text.
+- `## Analyze` — structured as `- entry:`, `- control:`, `- sink:`, `- guard:`, `- impact:` dash items. Guard covers both pass-through guards and bypass conditions. Impact covers rating-relevant scope.
+- `## Reject` — negative constraints: when to stop analyzing.
+- `## Codes` — concrete suspicious code shapes and edge case examples. No trivially obvious "safe pattern" code blocks.
 - No `## Related Problems` section — chain pivots live in `index.md`.
-- Sources and Sinks use `**Sources**` / `**Sinks**` bold headings, not `##` subheadings.
-- Guard and rejection rules must be combined in one `## Guards & Rejection` section.
-- Every pattern must include `## Example Shapes` with concrete Suspicious and Safe chain diagrams.
-- Report guidance uses the full form: `Report guidance -- Use: "..." Avoid: "..."`.
+- No `## Rating` section — rating authority is `risk-rating.md` only; patterns convey impact scope in `## Analyze`'s `impact` field.
+- No `## Trace Commands` section — DECX CLI commands belong in the parent SKILL.md, not in pattern references.
 
 ### Framework Pattern Additions
 
-Framework patterns add one section before `## Guards & Rejection`:
+Framework patterns add one section before `## Reject`:
 
 ```
 ## Required Trace Evidence
@@ -80,8 +78,7 @@ Every case follows this structure:
 | Skill | Scope |
 |---|---|
 | `decx-cli` | DECX CLI command usage. Independent, no cross-skill routing. |
-| `decx-app-vulnhunt` | APK app-layer vulnerability hunting. Delegates chain traces to `decx-subagent`. |
-| `decx-framework-vulnhunt` | Framework/Binder vulnerability hunting. Delegates chain traces to `decx-subagent`. |
-| `decx-subagent` | Delegated subagent for chain traces, sink checks, guard checks, and PoC sink re-verification. Invoked by parent skills only. |
-| `decx-report` | Report generation from finalized `r_*.xml` artifacts. |
-| `decx-poc` | PoC app construction from one finalized finding. Delegates re-verification to `decx-subagent`. |
+| `decx-app-vulnhunt` | APK app-layer vulnerability hunting. Uses Cairn-style SQLite blackboard for vulnerability discovery. |
+| `decx-framework-vulnhunt` | Framework/Binder vulnerability hunting. Uses Cairn-style SQLite blackboard for vulnerability discovery. |
+| `decx-report` | Report generation from blackboard export data. |
+| `decx-poc` | PoC app construction from verified graph paths. |

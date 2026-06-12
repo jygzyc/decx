@@ -1,57 +1,42 @@
 # Pattern: Framework Service Data Leak
 
-## When To Use
+## Match
 
-Use this reference when Binder-exposed framework code returns protected system, package, user, account, policy, device, or service state to a lower-privileged caller.
+Binder-exposed framework code returns protected system/package/user/account/policy/device/service state, callback payload, `Bundle`, list, FD, cursor data, or result to a lower-privileged caller. Most data-leak cases are either a sub-case of missing permission (the method returns because the guard is missing) or a sub-case of caller-forged scope (the method trusts a caller-supplied string and returns the wrong data). A specific framework data-leak shape is the `applyBatch` / `call` path: `query`/`insert`/`update`/`delete` enforce a permission, but `applyBatch` or `call` skip the per-operation check and return rows/file descriptors to the caller.
 
-## Core Concept
+## Analyze
 
-Untrusted callers can read privileged framework data because authorization, identity binding, or user-boundary checks do not protect the returned value.
-
-**Sources**
-- Binder method parameters, package/user/UID selectors, attribution tags, callbacks
-- service caches, manager facade methods, provider/file reads under system identity
-
-**Sinks**
-- return values, callbacks, bundles, lists, file descriptors, provider cursor data, broadcast/result payloads
+- entry: Binder read/query method, callback registration, manager facade, provider/file helper, `call()`, `applyBatch()`, permission/package/user/account/device-state getter, process/task listing getter, cross-profile listing getter
+- control: package/user/account/scope/flags, attribution, token, callback, query filter, `app-op` mode, `UserManager.getUserInfo`, `UserHandle.getIdentifier`
+- sink: return value, callback, `Bundle`, list, FD, cursor, broadcast/result payload, account/notification/settings/policy state
+- guard: signature permission via `enforceCallingOrSelfPermission`, package-to-UID binding via `AppOpsManager.checkPackage(uid, pkg)`, user/profile check via `getCallingUserId` / `INTERACT_ACROSS_USERS`, per-caller filtering of returned data, lower-level callee guard, `applyBatch` per-operation permission check (rarely present)
+- impact: protected state visible to unauthorized caller or scope widened beyond caller-owned package, user, account, profile, process, or device state
 
 ## Required Trace Evidence
 
-- Reachability: attacker can call the Binder/service method.
-- Controllability: attacker can select or influence the protected data scope.
-- Sink: returned data is protected and visible to the caller.
-- Missing or bypassable guard: no permission, app-op, UID/package ownership, same-user/cross-user, or caller validation protects the read.
-- Visible impact: sensitive system/user/app data disclosure or chain-enabling protected metadata.
+Reachability, Controllability, Sink, Missing guard, Visible impact
 
-## Guards & Rejection
+## Reject
 
-Safe when: the service enforces the right signature permission, binds package to UID, enforces user/profile boundaries, filters returned data per caller, and lower-level callees repeat the guard. Returned data must be filtered per caller UID/package/user; no raw privileged state reaches lower-privileged callers.
-Reject when: data is public, caller-owned, synthetic, debug-only, or fully filtered before return.
+Reject when data is public, caller-owned, synthetic/debug-only, fully filtered before return, or all paths enforce caller authorization for selected scope. For `applyBatch` / `call`, reject when the lower-level `query` / `insert` / `update` / `delete` is reachable with the same permission guard and the call is restricted to public data.
 
-## Rating
+## Codes
 
-- CRITICAL: leak directly enables device/system compromise or high-value auth material theft.
-- HIGH: sensitive system/user/app data disclosure.
-- MEDIUM: bounded protected metadata with practical chain value.
-- IGNORED: public or caller-owned data only.
-
-## Trace Commands
-
-```bash
-decx code method-context "<binderReadMethod>" -P <port>
-decx code method-source "<dataProducerOrFilter>" -P <port>
+```java
+// getter returns per-package data keyed on a caller-supplied packageName without
+// AppOpsManager.checkPackage
 ```
 
-## Example Shapes
-
-Suspicious:
-```text
-Binder method returns List<ApplicationInfo> filtered by caller-supplied flags → no permission check → caller reads all installed packages including system-hidden apps
+```java
+// provider call() / applyBatch bypasses the per-operation permission gate
 ```
 
-Safe:
-```text
-Binder method enforces GET_PACKAGE_INFO permission → binds calling UID to package → filters returned fields per caller identity before returning
+```java
+// exported system provider declares no android:permission and leaks protected content
+// to any caller that knows the authority
 ```
 
-Report guidance -- Use: "A Binder-exposed framework method returns protected service data without enforcing caller authorization for the selected scope." Avoid: "Data returned without checks."
+```java
+// getter returns data for the caller's request without filtering to caller scope
+// (cross-package, cross-user, or all-instances)
+```

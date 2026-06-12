@@ -18,9 +18,9 @@ session_context=$(cat <<'EOF'
 <EXTREMELY_IMPORTANT>
 You have DECX skills installed.
 
-Use `using-decx` first for any DECX-related task.
-Route to `decxcli`, `decxcli-app-vulnhunt`, `decxcli-framework-vulnhunt`, or `decxcli-poc` as needed.
-If the work can be split, use `decx-subagent-analysis`.
+Use `decx-cli` first for any DECX-related task.
+Route to `decx-app-vulnhunt`, `decx-framework-vulnhunt`, `decx-poc`, or `decx-report` as needed.
+If the work can be split, use `decx-subagent`.
 
 DECX rules:
 - Session-backed `decx code` and `decx ard` commands need `-P <port>`

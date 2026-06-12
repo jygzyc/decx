@@ -1,53 +1,54 @@
 # Pattern: Object Parsing Abuse
 
-## When To Use
+## Match
 
-Use this reference when `Parcelable`, `Serializable`, `Bundle`, custom class loaders, or validation/execution parser mismatches cross component or IPC boundaries.
+Parser split: one process validates serialized data, but a later process reserializes/deserializes into different keys or object types across a component, service, provider, WebView bridge, AIDL, or IPC boundary. High-priority.
 
-## Core Concept
+High-signal variant taxonomy:
+- **Read/write length or type mismatch** — read uses `int` (4 bytes) but write uses `long` (8 bytes) / `byte` (4 bytes when using `writeByte`) / `writeString` (length-prefixed) / `writeParcelableList` vs `writeTypedArrayList` (different header semantics).
+- **Exception swallowed during read** — read wraps `createFromParcel` in try/catch returning null or default, so a second read sees different content than the first validation.
+- **Deferred parcel value reuse** — a parcel-backed object keeps a reference to data that is later recycled, pooled, or re-read in another IPC context.
+- **AIDL creator mismatch** — AIDL generated `Stub.onTransact` calls `_Parcel.readTypedObject(data, Intent.CREATOR)` (parent class reader), but a subclass (e.g. `LabeledIntent`, `ReferrerIntent`) is written via its own `writeToParcel` (extra fields). On second deserialization the extra fields are read as the method's next argument.
+- **Untyped `getParcelable` reflection** — `getParcelable("key")` (no class param) still calls the target's `CREATOR.createFromParcel`; constructors that read from the same `Parcel` can chain into another parse cycle.
+- **Creator Mismatch** — read uses class A's `CREATOR` to parse an object written by class B that inherits A; B's extra fields are then consumed as the next Parcel fields.
 
-Untrusted serialized object data is deserialized, interpreted, or validated inconsistently across trust boundaries, enabling type confusion, guard bypass, or dangerous object-driven behavior.
+## Analyze
 
-**Sources**
-- `getParcelableExtra`, `getSerializableExtra`, `Bundle`, `Parcel`, AIDL parcelables
-- class loader assignment, custom parcel readers, validation parser and execution parser split
-- nested object fields controlling target, URI, path, command, or identity
+- entry: `getParcelableExtra`, `getBundleExtra`, `Bundle.readFromParcel`, `Parcel.readValue`, `Parcel.readTypedObject`, `Parcelable.Creator.createFromParcel`, `readObject`, AIDL parcelable, JSON parser, bridge method, remote-view factory, queued callback item, `setExtrasClassLoader` / custom class loader
+- control: key mismatch, key-size/type mismatch, `mParcelledData`, subclass/type confusion, role/account/package/user, command, path, URI, component, request code, policy flag, first-read vs second-read position offset, deferred parcel pointer
+- sink: authorization decision (`if (intent.getXxxExtra("role") == "admin")`), component launch/result, provider/file access (`openFile`), service command, native bridge action, reflective/class loading, `Activity` start with `launchTaskId` from a malformed `Bundle` (task hijack)
+- guard: same normalized object for validation AND consumption (not a re-read); class allowlist with fixed class loader; type-specific reader `getParcelable(key, Intent.class)`; avoid callback/remote-view gadgets surviving parcel round-trips; check `mParcelledData` not modified between validation and consumption
+- impact: auth bypass, private component reachability, file/provider access, code/class-loading risk, or privileged launch when parser split crosses an IPC boundary
 
-**Sinks**
-- deserialization into app classes, reflective loading, parser-dependent authorization, component launch, file/provider access, privileged command dispatch
+## Reject
 
-## Guards & Rejection
+Reject when parsed data is display-only, type/class is fixed and harmless, same normalized object used for validation and consumption (same reference, not a re-read), dangerous fields revalidated before use, typed readers (`getParcelable(key, Type.class)`) with an allowlist, or no security sink consumes the object.
 
-Safe when: class loaders are fixed, allowed classes are explicit, validation and execution consume the same normalized object, and dangerous fields are revalidated before sink use.
+## Codes
 
-Reject when: object data is used only as inert display text, class/type is fixed and harmless, parser mismatch does not reach a security decision, or no downstream impact exists.
-
-## Rating
-
-- HIGH: parser/object abuse reaches protected action or code/class-loading risk.
-- MEDIUM: bounded validation bypass or local app chain pivot.
-- LOW: weak crash/DoS only if broader security effect exists.
-- IGNORED: malformed object crash or no security sink.
-
-## Trace Commands
-
-```bash
-decx code method-context "<objectExtractionMethod>" -P <port>
-decx code method-source "<validationOrExecutionMethod>" -P <port>
+```java
+// write used long (8B), read used int (4B) — subsequent fields shift on the same Parcel
+out.writeLong(a); out.writeInt(b);
+a = in.readInt();  // reads lower 4 bytes of a
+b = in.readInt();
 ```
 
-## Example Shapes
-
-Suspicious:
-
-```text
-external Binder/Intent carries caller-controlled Parcelable -> receiver deserializes without class allowlist -> unexpected class reaches privileged method
+```java
+// AIDL reads with parent Creator, but attacker wrote a subclass with extra fields
+Intent _arg2 = _Parcel.readTypedObject(data, Intent.CREATOR);
 ```
 
-Safe:
-
-```text
-Parcelable crosses trust boundary -> classloader is restricted or Bundle key allowlist is enforced -> only expected types are deserialized
+```java
+// gadget: constructor reads from Parcel, called by getParcelable reflection
+public Activity(Parcel source) { source.readInt(); }
 ```
 
-Report guidance -- Use: "Untrusted object data crosses a component boundary and is interpreted inconsistently before a security-relevant sink." Avoid: "Parcelable is received" without proof that unexpected types reach privileged code paths.
+```java
+// gadget: constructor writes into Parcel and shifts the later deferred read
+public PooledStringWriter(Parcel dest) { dest.writeInt(0); }
+```
+
+```java
+// untyped getParcelable still constructs the typed object
+Intent inner = intent.getParcelableExtra("target");
+```

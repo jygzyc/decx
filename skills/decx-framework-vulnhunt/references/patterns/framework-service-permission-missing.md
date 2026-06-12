@@ -1,71 +1,45 @@
 # Pattern: Framework Service Permission Missing
 
-## When To Use
+## Match
 
-Use this reference when a Binder-exposed framework method performs privileged work, returns protected state, or changes system configuration without a strong caller permission or UID/package check.
+Binder-exposed framework method performs privileged work, returns protected state, changes policy/configuration, launches/grants, or proxies data before a non-bypassable permission, app-op, UID/package, or user restriction check. Four common shapes: a Binder method that never calls `enforceCallingOrSelfPermission`; a method that only checks on the client-side wrapper while the service-side implementation is unprotected; the special `dump` / `shellCommand` paths where the default `Binder.onShellCommand` check is bypassed by overriding `onShellCommand`; and a method that checks `Binder.getCallingUid()` but trusts a caller-supplied `packageName` without binding it to the UID.
 
-## Core Concept
+## Analyze
 
-Untrusted Binder input crosses into `system_server` or another privileged service and reaches privileged operations before a non-bypassable authorization check.
-
-**Sources**
-- Binder interface methods, manager service stubs, shell/system service entrypoints
-- method parameters, caller UID/user ID, package name, attribution tag, `Intent`, `Uri`, `Bundle`
-
-**Sinks**
-- protected settings, package/user/device policy, account, notification, location, telephony, storage, or permission operations
-- file/provider reads or writes under system identity
-- privileged component launches or broadcasts
+- trace from the public Binder/manager facade to the first privileged sink. Record the earliest guard that dominates the sink, then check whether alternate branches (`dump`, `onShellCommand`, callback, batch loop, helper overload) bypass that guard.
+- entry: Binder Stub/manager method, shell/system service entrypoint, callback reachable by lower-privileged caller, `onShellCommand` override, `applyBatch` per-operation loop
+- control: method parameters, package/UID/user, attribution tag, `Intent`, `Uri`, `Bundle`, token, callback, caller-supplied `packageName` / `userId` / `attributionTag`
+- sink: settings/package/user/device policy, account/notification/location/telephony/storage/permission operation, provider/file access, privileged launch/broadcast, grant/PI dispatch, `dumpsys` output, `cmd xxx yyy` shell command
+- guard: signature/system permission via `enforceCallingOrSelfPermission` (or `enforcePermission` + `Binder.getCallingPid`), app-op via `AppOpsManager`, UID/package ownership via `AppOpsManager.checkPackage(uid, pkg)` or `isSameApp`, user restriction via `UserManager`/`DevicePolicyManager`, callee guard before sink, package-to-UID binding in every Binder entry that accepts `packageName` as a parameter
+- impact: protected data/action, state change, privilege misuse, persistent device effect, shell/dump exposure, or privileged diagnostic output
 
 ## Required Trace Evidence
 
-- Reachability: attacker app or lower-privileged caller can invoke the Binder method.
-- Controllability: attacker controls parameters used by the privileged operation.
-- Sink: operation affects protected state/data/action.
-- Missing or bypassable guard: no enforced signature/system permission, app-op, UID/package ownership, or user restriction check applies before sink.
-- Visible impact: system-level data/action exposure, protected state change, privilege escalation, or persistent DoS.
+Reachability, Controllability, Sink, Missing guard, Visible impact
 
-## Guards & Rejection
+## Reject
 
-Safe when: the method enforces the right signature permission, verifies UID/package ownership, checks target user restrictions, validates app-ops where relevant, and repeats checks after identity-clearing or async boundaries. Binder caller identity must be bound before any privileged operation, identity-clearing block, or async handoff.
+Reject when caller cannot reach the method, guard covers every path before sink, operation is public/harmless, or a lower-level callee enforces the same non-bypassable guard. For shell command paths, reject when the service uses `handleShellCommand` (so the default `Binder.onShellCommand` UID=root/shell check applies) or every `ShellCommand` action re-checks permission/UID.
 
-Reject when: the caller cannot reach the method, permission is enforced on all paths before the sink, the operation is harmless/public, or a lower-level callee enforces the same non-bypassable guard.
+## Codes
 
-## Rating
-
-- CRITICAL: broad system compromise, privileged code execution, root/system capability, persistent device-level impact.
-- HIGH: protected system data/action exposure or meaningful privilege misuse.
-- MEDIUM: bounded settings/state change with additional prerequisites.
-- IGNORED: missing-looking check is covered by a proven callee guard or no impact.
-
-## Trace Commands
-
-```bash
-decx ard system-service-impl "<Interface>" -P <port>
-decx code method-context "<binderMethod>" -P <port>
-decx code method-source "<privilegedSinkOrCallee>" -P <port>
+```java
+// missing service-side gate before protected state/action
+return mPolicyStore.getUserPolicy(userId).isKeyguardDisabled(packageName);
 ```
 
-## Example Shapes
-
-Suspicious:
-```text
-// Binder entrypoint with no permission check
-public int setGlobalSetting(String name, String value) {
-    Settings.Global.putString(getContentResolver(), name, value); // sink under system_server identity
-    return 0;
-}
+```java
+// boundary mistake: check exists only in manager/client wrapper, not Binder implementation
+managerWrapper.enforcePermission();
+mService.setPolicy(pkg, value); // Binder entry bypasses wrapper
 ```
 
-Safe:
-```text
-// Permission enforced before any privileged operation
-public int setGlobalSetting(String name, String value) {
-    getContext().enforceCallingOrSelfPermission(
-        android.Manifest.permission.WRITE_SECURE_SETTINGS, "setGlobalSetting");
-    Settings.Global.putString(getContentResolver(), name, value);
-    return 0;
-}
+```java
+// extreme edge: override skips Binder's default root|shell onShellCommand gate
+override onShellCommand(...) -> new MyShellCommand(...).exec(...)
 ```
 
-Report guidance -- Use: "A Binder-exposed framework method performs a privileged operation before enforcing a non-bypassable caller permission." Avoid: "The method lacks a permission check" (too vague; must specify which privileged sink is reached and why the guard is bypassable).
+```java
+// shell path opens caller-selected file under system_server; should use ShellCallback FD
+new FileOutputStream(pathFromArgs);
+```

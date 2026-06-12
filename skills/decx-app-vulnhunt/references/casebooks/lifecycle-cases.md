@@ -1,6 +1,6 @@
 # Casebook: Lifecycle State Exposure
 
-Use this casebook after [[patterns/lifecycle-state-exposure]]. These cases are abstract exploit shapes, not CVE-specific instructions.
+Use this casebook after [[patterns/lifecycle-state-exposure]]. These cases are abstract exploit shapes, not reproduction instructions.
 
 ## Case: onNewIntent Re-entry Uses Stale Intent Without Revalidation
 

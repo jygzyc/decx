@@ -1,51 +1,49 @@
 # Pattern: WebView File Access
 
-## When To Use
+## Match
 
-Use this reference when attacker-controlled WebView content interacts with `file://`, `content://`, universal file URL access, asset loaders, local HTML, or URI grants.
+WebView's `WebSettings`, content-scheme handler, `shouldInterceptRequest`, or `WebResourceResponse` lets an attacker-influenced URL reach `file://`, `content://`, or app-private storage. Three primitives:
+1. `setAllowFileAccessFromFileURLs(true)` — a `file://` page reads other `file://` via `XMLHttpRequest`.
+2. `setAllowUniversalAccessFromFileURLs(true)` — a `file://` page reads across origin (`content://`, `http://`).
+3. `setAllowFileAccess(true)` — `file://` page reads `file://` files. Historical default `true`; API 30+ defaults to `false` for cross-origin loads.
 
-## Core Concept
+AOSP fires `WARNING: ... file URLs may be dangerous` when ANY one of the three is `true`. Reading app-private files (`/data/data/<pkg>/...`) requires `setAllowFileAccess(true)` — on rooted/emulator builds the WebView is the app process and can read app-private files directly. On production, the WebView reads any `file://` the app process can read (e.g. files in `files-dir`).
 
-Untrusted web content gains script or navigation access to local app/private resources because WebView file/content access is enabled without strict origin separation.
+## Analyze
 
-**Sources**
-- deep link, scan result, redirect, external Intent, or remote config controlling URL/HTML/base URL; `loadUrl("file://...")`, `loadDataWithBaseURL`, `WebViewAssetLoader`; `setAllowFileAccess`, `setAllowContentAccess`, `setAllowUniversalAccessFromFileURLs`, `setAllowFileAccessFromFileURLs`.
+- entry: `WebView.getSettings().setAllowFileAccess*`, `loadUrl(file://...)`, `loadDataWithBaseURL(file://..., ...)`, `shouldOverrideUrlLoading` redirecting to `file://` / `content://`, `shouldInterceptRequest` returning a `WebResourceResponse` with attacker-controlled `Content-Type` (XSS path), WebView reaching attacker-controlled `http(s)://` page that triggers `intent://` / `file://` / `content://`
+- control: baseURL, `setAllowFileAccess` / `setAllowFileAccessFromFileURLs` / `setAllowUniversalAccessFromFileURLs`, file path / URI, MIME, `WebViewClient.shouldInterceptRequest` response, `intent://` payload
+- sink: `XMLHttpRequest` reading another `file://` or `content://`, file I/O path in `shouldInterceptRequest`, `WebView.loadUrl("javascript:...")` triggered by a `file://` page, app-private file read on rooted/emulator/debuggable build
+- guard: `setAllowFileAccess(false)`, `setAllowFileAccessFromFileURLs(false)`, `setAllowUniversalAccessFromFileURLs(false)`, host allowlist in `shouldOverrideUrlLoading`, reject attacker-controlled `intent://` payload, never use `loadDataWithBaseURL` with `file://` baseURL at app-private dir, avoid `setAllowContentAccess(true)` + `setAllowFileAccess(true)` combo
+- impact: read app-private files (token, cookie, db), cross-origin file read, XSS via `WebResourceResponse` MIME, chain into `intent-redirect` from `file://` page
 
-**Sinks**
-- file/content reads from WebView renderer; JavaScript exfiltration to attacker-controlled network origin; bridge calls using data loaded from local files.
+## Reject
 
-## Guards & Rejection
+Reject when file access is disabled across relevant axes, the WebView loads only allowlisted trusted URLs, the `file://`/`content://` maps only to public cache, or the read has no sensitive impact.
 
-Safe when: file/content access is disabled for untrusted content, local assets are served through constrained loaders, external navigation is blocked before local access, and sensitive cookies/bridges are unavailable.
+## Codes
 
-Reject when: only trusted packaged assets load, attacker cannot inject script or choose a local target, exposed files are public/non-sensitive, or origin policy prevents exfiltration and bridge access.
-
-## Rating
-
-- HIGH: app-private file/token/session disclosure or bridge chain.
-- MEDIUM: bounded local file disclosure requiring local malicious app/user interaction.
-- LOW: low-value local metadata exposure.
-- IGNORED: setting is enabled but no attacker-controlled content reaches it.
-
-## Trace Commands
-
-```bash
-decx code xref-method "android.webkit.WebSettings.setAllowFileAccess(boolean):void" -P <port>
-decx code method-context "<webviewSetupOrLoadMethod>" -P <port>
+```java
+// file:// baseURL + universal access from file URLs = arbitrary file read
+s.setAllowFileAccess(true);
+s.setAllowFileAccessFromFileURLs(true);
+s.setAllowUniversalAccessFromFileURLs(true);
+webView.loadDataWithBaseURL("file:///data/data/com.victim/", html, "text/html", "utf-8", null);
 ```
 
-## Example Shapes
-
-Suspicious:
-
-```text
-external URL -> loadDataWithBaseURL(file://app/) -> attacker JS -> read local content
+```java
+// shouldInterceptRequest returns attacker-controlled content for trusted origin — XSS via MIME
+return new WebResourceResponse("text/html", "utf-8", new ByteArrayInputStream(attackerHtml.getBytes()));
 ```
 
-Safe:
-
-```text
-trusted asset loader -> no external script -> file/content access disabled for external pages
+```java
+// shouldOverrideUrlLoading lets any URL through, including intent://
+view.loadUrl(request.getUrl().toString());
+return true;
 ```
 
-Report guidance -- Use: "Attacker-controlled WebView content can access local app resources because file/content access is enabled without origin isolation." Avoid: "file access is enabled" without proving attacker-controlled content can read local files.
+```javascript
+// XHR on a file:// page reads another file:// (requires setAllowFileAccessFromFileURLs)
+x.open("GET", "file:///data/data/com.victim/databases/secrets.db");
+x.send();
+```

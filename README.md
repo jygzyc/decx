@@ -14,7 +14,7 @@
 
 ## Overview
 
-DECX (Decompiler + X) is a smart code analysis platform built on the JADX decompiler, designed specifically for AI-assisted code analysis. The platform provides powerful Java code analysis capabilities to AI assistants through HTTP API and MCP (Model Context Protocol).
+DECX (Decompiler + X) is a smart code analysis platform built on the JADX decompiler, designed specifically for AI-assisted code analysis. The platform provides powerful Java code analysis capabilities to AI assistants through an HTTP API, MCP (Model Context Protocol), a standalone CLI, and workflow skills.
 
 ---
 
@@ -23,7 +23,7 @@ DECX (Decompiler + X) is a smart code analysis platform built on the JADX decomp
 ### Prerequisites
 
 - **Java**: JDK 11+
-- **Node.js**: 18+ for the CLI
+- **Node.js**: 22.5+ for the CLI
 - **JADX**: v1.5.2+ with plugin support if you use the GUI plugin
 - **Python**: 3.10+ or `uv` for the plugin MCP sidecar; without `uv`, ensure `requests`, `fastmcp`, and `pydantic` are available
 
@@ -52,10 +52,11 @@ The `skills/` directory contains:
 
 | Skill | Use |
 |---|---|
-| `decxcli` | General code navigation, source lookup, xrefs, manifest, and resource inspection |
-| `decxcli-app-vulnhunt` | APK attack-surface enumeration, component/WebView/IPC tracing, exploitability triage, and bilingual reports |
-| `decxcli-framework-vulnhunt` | Android framework and Binder/service vulnerability hunting on the processed final framework bundle |
-| `decxcli-poc` | Build a focused Android PoC app and optional helper server from one confirmed finding |
+| `decx-cli` | DECX CLI usage, general code navigation, source lookup, xrefs, manifest/resource inspection, and workflow routing |
+| `decx-app-vulnhunt` | APK app-layer vulnerability hunting with the SQLite blackboard workflow |
+| `decx-framework-vulnhunt` | Android framework and Binder/service vulnerability hunting on processed framework bundles |
+| `decx-poc` | Build a focused Android PoC app and optional helper server from one finalized blackboard finding or selected graph path |
+| `decx-report` | Generate HTML/Markdown reports from finalized blackboard findings |
 
 ### JADX Plugin
 
@@ -87,9 +88,12 @@ decx process close --port 25419
 
 Typical skill sequence:
 
-- `decxcli` for exploration and evidence gathering
-- `decxcli-app-vulnhunt` or `decxcli-framework-vulnhunt` for focused vulnerability hunting
-- `decxcli-poc` for turning one confirmed finding into a buildable PoC
+- `decx-cli` for exploration, evidence gathering, and routing
+- `decx-app-vulnhunt` or `decx-framework-vulnhunt` for focused vulnerability hunting
+- `decx-report` for generating reports from finalized blackboard findings
+- `decx-poc` for turning one finalized blackboard finding or selected graph path into a buildable PoC
+
+Vulnerability hunting skills write analysis state to `.decx-analysis/<target>/decx-analysis.db`. App hunts initialize the blackboard with `--kind android_app`; framework hunts use `--kind android_framework`. The blackboard stores facts, intents, events, links, and chains that downstream report and PoC skills consume.
 
 Useful command groups:
 
@@ -106,7 +110,7 @@ Notes:
 
 - Session-backed `code` and `ard` commands support `--page <n>` and can target a session with `-s, --session <name>` or a port with `-P, --port <port>`.
 - `decx code class-source` supports `--limit <n>` to return at most N source lines.
-- `decx process open <file>` passes standard `jadx-cli` flags through and enables `--show-bad-code` by default.
+- `decx process open <file>` passes standard `jadx-cli` flags through, enables `--show-bad-code` and `--no-imports` by default, and strips `--deobf` because DECX analysis requires original names.
 - `decx ard all-resources` supports file-name filtering with `--include` and `--no-regex`.
 - `system-services` and `perm-info` are adb-backed commands. They use `--serial` / `--adb-path`, not `-P <port>`.
 - `decx ard framework run` collects from the connected device, processes, packs, and opens the final framework JAR by default; `process <oem>` is for local framework dumps.
@@ -177,7 +181,7 @@ DECX returns the same structured error format from plugin and standalone server 
 | `decx/decx-plugin/` | JADX GUI plugin and bundled MCP resources |
 | `decx/decx-server/` | Standalone headless server entry point and fat JAR packaging |
 | `decx-cli/` | TypeScript CLI for sessions, code analysis, Android helpers, framework processing, and self-management |
-| `skills/` | AI agent skills for DECX analysis, app/framework vulnerability hunting, and PoC construction |
+| `skills/` | AI agent skills for DECX analysis, app/framework vulnerability hunting, reporting, and PoC construction |
 
 Core request path:
 

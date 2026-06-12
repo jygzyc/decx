@@ -14,13 +14,13 @@ Add DECX to the `plugin` array in your `opencode.json` (global or project-level)
 }
 ```
 
-Restart OpenCode. The plugin installs from git, injects a light DECX bootstrap, and registers DECX skills.
+Restart OpenCode. The plugin installs from git and adds DECX `skills/` to OpenCode's skill search path.
 
 Verify with OpenCode's native `skill` tool:
 
 ```text
 use skill tool to list skills
-use skill tool to load using-decx
+use skill tool to load decx-cli
 ```
 
 ## Migrating From Old Manual Install
@@ -48,11 +48,21 @@ Use OpenCode's native `skill` tool:
 
 ```text
 use skill tool to list skills
-use skill tool to load using-decx
-use skill tool to load decxcli-app-vulnhunt
+use skill tool to load decx-cli
+use skill tool to load decx-app-vulnhunt
 ```
 
-Start with `using-decx` for DECX-related work. It routes to `decxcli`, `decxcli-app-vulnhunt`, `decxcli-framework-vulnhunt`, `decxcli-poc`, or `decx-subagent-analysis`.
+### Available Skills
+
+| Skill | Description |
+|---|---|
+| `decx-cli` | DECX CLI usage, session management, code inspection, and Android metadata commands. Routes to specialized skills as needed. |
+| `decx-app-vulnhunt` | APK app-layer vulnerability hunting with the SQLite blackboard workflow for Facts, Intents, Events, links, and composed exploit chains. |
+| `decx-framework-vulnhunt` | Framework and Binder-service vulnerability hunting with caller identity, authorization, privileged sink, and composition evidence gates. |
+| `decx-poc` | Builds PoC or verification artifacts from finalized DECX analysis graph paths or selected findings. |
+| `decx-report` | Generates reports from finalized DECX analysis artifacts. |
+
+Start with `decx-cli` for general DECX work. It handles CLI navigation and routes to `decx-app-vulnhunt`, `decx-framework-vulnhunt`, `decx-poc`, or `decx-report` as needed.
 
 ## Updating
 

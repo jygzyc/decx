@@ -1,12 +1,8 @@
 # Casebook: PendingIntent Abuse
 
-Use this casebook after [[patterns/pendingintent-abuse]]. These cases are abstract exploit shapes, not CVE-specific instructions.
+Use this casebook after [[patterns/pendingintent-abuse]]. These cases are abstract exploit shapes, not reproduction instructions.
 
-## Public Case: Mutable PendingIntent Redirects Victim Identity
-
-### Source Type
-
-Public Android security guidance on mutable `PendingIntent` risks and implicit/mutable target confusion.
+## Case: Mutable PendingIntent Redirects Victim Identity
 
 ### Abstract Shape
 

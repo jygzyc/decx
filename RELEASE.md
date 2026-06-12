@@ -1,13 +1,19 @@
-# DECX v3.2.0
+# DECX v3.3.0
 
-DECX v3.2.0 unifies CLI filter parameter naming by merging `--first` and `--max-results` into a single `--limit` option.
+DECX v3.3.0 restructures and unifies the skill system: renames skills to follow consistent naming, simplifies reference architecture, eliminates cross-skill redundancy, and adds framework casebook content.
 
 ### Changes
 
-- CLI: `--first` and `--max-results` unified to `--limit` across `classes`, `search-global`, `search-class`, `class-source`, and other filter-bearing commands.
-
-- Server: `DecxFilter` merges `first`/`maxResults` fields into `limit`, simplifying filter logic.
-
-- MCP server: updated to match unified filter parameter naming.
-
-- Docs: updated all README files, cli/README.md, and skill SKILL.md files with new command examples.
+- Skills: renamed `decxcli` to `decx-cli`, `decxcli-app-vulnhunt` to `decx-app-vulnhunt`, `decxcli-framework-vulnhunt` to `decx-framework-vulnhunt`, `decxcli-poc` to `decx-poc`.
+- Skills: renamed `decx-subagent-analysis` to `decx-subagent`.
+- Skills: unified `flowSig` definition across all skills — "current analyzed component signature for the analysis chain".
+- Skills: unified banned-claim lists across `decx-app-vulnhunt` and `decx-framework-vulnhunt`.
+- Skills: established single-source-of-truth principles — chain pivots only in `index.md`, rating authority in `risk-rating.md`, false-positive rules in SKILL.md + `index.md`.
+- Skills: deleted `## Chain Pivots` sections from all 6 app overviews and 1 framework overview.
+- Skills: unified format across all 31 pattern files (22 app + 9 framework) — consistent headings, bold Sources/Sinks, combined Guards & Rejection, Example Shapes, report guidance.
+- Skills: added Example Shapes (Suspicious/Safe) to all 9 framework patterns.
+- Skills: added 5 new framework service casebook entries.
+- Skills: added `skills/AGENTS.md` documenting skill authoring rules and reference architecture.
+- Added `decx/decx/AGENTS.md` documenting Kotlin module architecture and coding conventions.
+- Updated root `AGENTS.md` — fixed path typo, added `skills/AGENTS.md` cross-reference.
+- Updated `hooks/session-start` with correct skill name references.

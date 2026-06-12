@@ -1,12 +1,8 @@
 # Casebook: Intent Redirect
 
-Use this casebook after [[patterns/intent-redirect]]. These cases are abstract exploit shapes, not CVE-specific instructions.
+Use this casebook after [[patterns/intent-redirect]]. These cases are abstract exploit shapes, not reproduction instructions.
 
-## Public Case: Nested Intent Unsafe Launch
-
-### Source Type
-
-Public Android security guidance on unsafe nested Intent launches and explicit target validation.
+## Case: Nested Intent Unsafe Launch
 
 ### Abstract Shape
 

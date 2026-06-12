@@ -1,55 +1,46 @@
 # Pattern: URI Grant Leak
 
-## When To Use
+## Match
 
-Use this reference when `content://` URIs, `ClipData`, `FLAG_GRANT_*`, `grantUriPermission`, `setResult`, sharing flows, redirects, or FileProvider roots can expose app-private content.
+Caller-controlled flow carries `content://` URI, `ClipData`, or `FLAG_GRANT_*` into a result, redirect, share, notification, pending intent, or explicit grant path. High-signal grant-bearing flows:
 
-## Core Concept
+1. **`setResult` returning caller-supplied Intent** — see `setresult-leak`. The attacker can pre-load `FLAG_GRANT_READ_URI_PERMISSION` / `FLAG_GRANT_WRITE_URI_PERMISSION` / `FLAG_GRANT_PERSISTABLE_URI_PERMISSION` / `FLAG_GRANT_PREFIX_URI_PERMISSION` plus a `content://` URI; `setResult(intent)` returns the caller's own intent verbatim, giving the caller URI grant on the victim's provider.
+2. **Intent redirect** — see `intent-redirect`. The nested Intent in `getParcelableExtra("target")` carries the grant flags, and the redirecting Activity launches the nested intent under victim-app identity, transitively granting the attacker the URI grant.
+3. **`grantUriPermission` parameters controlled by caller** — explicit grant call where `toPackage`, `uri`, or flags come from a caller-supplied source. Combined with `FLAG_GRANT_PERSISTABLE_URI_PERMISSION` the grant survives the activity lifetime.
+4. **FileProvider misconfig + grant** — broad `<root-path name="root" path="."/>` lets any granted URI map to any path; with one of the grant primitives above, the attacker can read/write any file the app can read.
 
-Untrusted control over URI, target, or grant flags causes the app to grant read/write access to sensitive content without a non-bypassable policy check.
+## Analyze
 
-**Sources**
-- external `Intent` data, extras, `ClipData`, chooser/share payloads, activity result paths
-- app-generated `Uri` built from caller-controlled path, filename, row ID, or provider authority
-- nested `Intent` that preserves grant flags or `ClipData`
+- entry: external Intent/result, share/chooser, FileProvider, provider result, WebView/native scheme, pending intent, `grantUriPermission`, `ACTION_SEND` / `ACTION_SEND_MULTIPLE` share target, `onActivityResult` path
+- control: URI authority/path, recipient package, flags, `ClipData`, result target, provider file mapping
+- sink: temporary/persistable URI grant (`takePersistableUriPermission`), returned grant-bearing `Intent`, private file/provider access by attacker recipient, downstream component launch
+- guard: grant flag stripping (`Intent.removeFlags(FLAG_GRANT_READ_URI_PERMISSION | FLAG_GRANT_WRITE_URI_PERMISSION)`), provider permission/path confinement, do not forward caller-controlled Intent through any grant-bearing sink, never use `<root-path>` with `path` empty/`.`/`/`
+- impact: attacker reads/writes private file/provider data or carries grant into another chain
 
-**Sinks**
-- `Intent.FLAG_GRANT_READ_URI_PERMISSION`, `FLAG_GRANT_WRITE_URI_PERMISSION`
-- `grantUriPermission`, `setResult`, `startActivity`, `sendBroadcast`
-- FileProvider or custom Provider access through a granted URI
+## Reject
 
-## Guards & Rejection
+Reject when URI is public, recipient is trusted constant, grants are stripped, provider denies original attacker, or path is confined to non-sensitive data.
 
-Safe when: recipients are exact-allowlisted, URI roots are narrow, paths are canonicalized, write grants are avoided, flags are stripped before redirects, and provider permissions still enforce access.
+## Codes
 
-Reject when: granted content is public/non-sensitive, recipient cannot be attacker-controlled, provider denies access despite the grant, or the URI is a trusted constant with no sensitive backing data.
-
-## Rating
-
-- HIGH: arbitrary app-private file or high-value data read/write.
-- MEDIUM: bounded sensitive file/row exposure requiring local app or interaction.
-- LOW: low-value file name or metadata exposure only.
-- IGNORED: no sensitive content or no usable grant.
-
-## Trace Commands
-
-```bash
-decx code method-context "<grantOrResultMethod>" -P <port>
-decx code method-source "<providerOrFileMappingMethod>" -P <port>
+```java
+// caller's exact Intent (with FLAG_GRANT_*) returns through setResult
+setResult(RESULT_OK, intent);
 ```
 
-## Example Shapes
-
-Suspicious:
-
-```text
-external recipient/path -> FileProvider URI -> FLAG_GRANT_READ -> setResult/startActivity
+```java
+// grantUriPermission with caller-controlled target package, URI, flags
+grantUriPermission(data.getStringExtra("toPackage"), data.getData(), data.getIntExtra("flags", 0));
 ```
 
-Safe:
-
-```text
-trusted file ID -> narrow root -> trusted recipient allowlist -> read-only bounded grant
+```java
+// nested Intent carries grant flag in redirect (chains into intent-redirect)
+next.setData(Uri.parse("content://com.victim.localfile/secret.db"));
+next.setFlags(FLAG_GRANT_READ_URI_PERMISSION | FLAG_GRANT_WRITE_URI_PERMISSION
+            | FLAG_GRANT_PERSISTABLE_URI_PERMISSION | FLAG_GRANT_PREFIX_URI_PERMISSION);
 ```
 
-Report guidance -- Use: "The app grants attacker-controlled recipients access to private content URIs without recipient and path validation." Avoid: "URI grant is used" without proving the grant target is attacker-reachable and the URI covers protected content.
+```xml
+<!-- broad root + grant enables arbitrary file access — see provider-path-traversal
+     <paths><root-path name="root" path="." /></paths> -->
+```
