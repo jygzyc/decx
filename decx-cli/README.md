@@ -47,7 +47,6 @@ decx self update [-p]           # Update decx-server.jar and the currently insta
 | `-P, --port <port>` | Server port |
 | `--force` | Force start even if session exists |
 | `-n, --name <name>` | Custom session name |
-| `--heap <size>` | Java max heap for `decx-server.jar` (default: 2/3 of machine memory, rounded down; use larger values such as `8g` for large APK/framework initialization) |
 
 All standard [jadx-cli options](https://github.com/skylot/jadx) are passed through directly. `decx process open` enables `--show-bad-code` by default, and common passthrough options also include `--deobf`, `--no-res`, `-j`/`--threads-count`, `--no-imports`, `--no-debug-info`, `--escape-unicode`, `--log-level`.
 
@@ -155,7 +154,6 @@ decx process close --port 25419
 | `--no-open` | Do not open the generated framework jar after packing |
 | `-n, --name <name>` | Custom DECX session name when opening the jar |
 | `-P, --port <port>` | Server port when opening the jar |
-| `--heap <size>` | Java max heap when opening the framework jar (default: 2/3 of machine memory, rounded down) |
 
 **Artifact naming**
 
@@ -179,7 +177,10 @@ Artifact segments are resolved like this:
 **Platform notes**
 
 - Windows is not supported for `decx ard framework` yet
-- The CLI ships packaged extractor binaries for supported Darwin/Linux targets
+- Framework tooling checks the current system first: `adb` or `--adb-path`, system `debugfs`, then system `fsck.erofs` / `extract.erofs`
+- If a required framework tool is missing, the CLI falls back to packaged native tools for supported Darwin/Linux targets
+- Packaged native tools are distributed as `dist/bin.tar.gz`; they are not unpacked during `npm install`
+- Packaged tools are unpacked lazily when needed into `$DECX_HOME/cache/bin/decx-cli/<archive-hash>/`, or `~/.decx/cache/bin/decx-cli/<archive-hash>/` when `DECX_HOME` is not set
 - `framework open` and `framework run` reuse the normal `decx process open` flow
 - After a framework jar is opened, use the existing `decx process` commands to inspect or close that session
 - `framework open` uses an explicit jar path when provided; otherwise it resolves the jar for the currently connected device OEM
@@ -242,6 +243,17 @@ npm test          # run tests
 npm run lint      # lint check
 npm run dev       # run locally
 ```
+
+`npm run build` type-checks the TypeScript sources, then writes a compact runtime package under `dist/`:
+
+```text
+dist/index.js      # CLI entry
+dist/sdk/index.js  # SDK import entry
+dist/bin.tar.gz    # packaged native framework tools
+dist/package.json  # package metadata for the built artifact
+```
+
+The published npm package is limited to the built `dist/` artifact plus npm's required package metadata and README.
 
 ## License
 

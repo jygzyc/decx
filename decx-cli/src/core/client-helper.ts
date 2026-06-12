@@ -6,6 +6,7 @@ import type { Command } from "commander";
 import { DecxClient } from "./client.js";
 import { Formatter } from "../utils/formatter.js";
 import { Manager } from "./config.js";
+import { DecxError } from "../utils/errors.js";
 
 export function resolveClient(
   opts: Record<string, unknown>
@@ -14,8 +15,7 @@ export function resolveClient(
   const mgr = Manager.get();
 
   if (opts.session && opts.port) {
-    fmt.error("Cannot specify both --session and --port");
-    process.exit(1);
+    throw new DecxError("Cannot specify both --session and --port", "CLIENT_OPTIONS_CONFLICT");
   }
 
   let port: number;
@@ -25,8 +25,7 @@ export function resolveClient(
   } else if (opts.session) {
     const s = mgr.getSession(opts.session as string);
     if (!s) {
-      fmt.error(`Session not found: ${opts.session}`);
-      process.exit(1);
+      throw new DecxError(`Session not found: ${opts.session}`, "SESSION_NOT_FOUND");
     }
     port = s.port;
     sessionName = s.name;

@@ -207,13 +207,12 @@ export async function buildFramework(
 
 export async function openFrameworkJar(
   jarPath: string,
-  options: Pick<FrameworkCommandOptions, "name" | "port" | "heap">,
+  options: Pick<FrameworkCommandOptions, "name" | "port">,
 ): Promise<Record<string, unknown>> {
   const defaultName = options.name ?? summarizeFrameworkJarPath(jarPath)?.session;
   return openAnalysisTarget(jarPath, {
     name: defaultName,
     port: options.port,
-    heap: options.heap,
     force: false,
     passthroughArgs: [],
   });

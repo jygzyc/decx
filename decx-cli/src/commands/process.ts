@@ -58,7 +58,6 @@ export function makeProcessCommand(): Command {
     .option("-P, --port <port>", "DECX HTTP server port to bind")
     .option("--force", "Start a new server even when a matching file/session already exists")
     .option("-n, --name <name>", "Session name used by -s/--session (default: input filename without extension)")
-    .option("--heap <size>", "Maximum Java heap for the DECX server JVM (default: floor(2/3 machine memory))")
     .action(async (filePath: string, opts) => {
       const fmt = new Formatter();
       try {
@@ -66,7 +65,6 @@ export function makeProcessCommand(): Command {
         port: opts.port,
         force: opts.force ?? false,
         name: opts.name,
-        heap: opts.heap,
         passthroughArgs: extractPassthroughArgs(),
       }));
       } catch (err) { handleCliError(err, fmt); }

@@ -2,7 +2,7 @@ import { spawnSync } from "child_process";
 import { DecxError, FileError, ProcessError } from "../utils/errors.js";
 import type { AdbClientOptions, AdbCommandResult, PermissionInfo, SystemServicesResult } from "./types.js";
 
-const SUPPORTED_FRAMEWORK_OEMS = ["vivo", "oppo", "xiaomi", "honor", "google"] as const;
+const SUPPORTED_FRAMEWORK_OEMS = ["vivo", "oppo", "xiaomi", "honor", "google", "samsung"] as const;
 type SupportedFrameworkOem = typeof SUPPORTED_FRAMEWORK_OEMS[number];
 
 export function parseAdbDevicesOutput(output: string): string[] {

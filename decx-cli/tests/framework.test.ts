@@ -27,10 +27,11 @@ describe("framework collector", () => {
   it("normalizes supported OEM names", () => {
     expect(normalizeOem("XIAOMI")).toBe("xiaomi");
     expect(normalizeOem("google")).toBe("google");
+    expect(normalizeOem("Samsung")).toBe("samsung");
   });
 
   it("rejects unsupported OEM names", () => {
-    expect(() => normalizeOem("samsung")).toThrow("Unsupported OEM");
+    expect(() => normalizeOem("meizu")).toThrow("Unsupported OEM");
   });
 });
 

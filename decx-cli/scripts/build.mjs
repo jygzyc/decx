@@ -3,45 +3,33 @@
 /**
  * DECX CLI build script.
  *
- * 1. tsc — emit .d.ts declarations only (no JS, no source maps)
- * 2. esbuild — bundle, minify, and compress into dist/
- * 3. Copy native binaries and gzip-compress them
+ * 1. tsc — type-check only (no JS, declarations, or source maps)
+ * 2. esbuild — bundle CLI and SDK into two partially obfuscated index files
+ * 3. Pack native binaries into one compressed archive
  */
 
 import { build } from "esbuild";
-import { rmSync, readdirSync, statSync, cpSync, existsSync, readFileSync, writeFileSync, chmodSync } from "fs";
+import { rmSync, readdirSync, statSync, existsSync, readFileSync, writeFileSync, mkdirSync } from "fs";
 import { join, dirname } from "path";
 import { execSync } from "child_process";
-import { gzipSync } from "zlib";
 
 const ROOT = join(dirname(new URL(import.meta.url).pathname), "..");
+const REPO_ROOT = join(ROOT, "..");
 const DIST = join(ROOT, "dist");
 const SRC = join(ROOT, "src");
 const BIN = join(SRC, "bin");
+const projectVersion = readVersionFile();
+const npmPackageVersion = projectVersion.replace(/^v/, "");
 
 // ── Step 1: Clean ──────────────────────────────────────────────────────────
 rmSync(DIST, { recursive: true, force: true });
 
-// ── Step 2: TypeScript declarations (d.ts only) ────────────────────────────
-console.log("▸ Generating type declarations...");
-execSync("npx tsc -p tsconfig.build.json --emitDeclarationOnly --declaration --declarationMap false", {
+// ── Step 2: TypeScript type-check ──────────────────────────────────────────
+console.log("▸ Type-checking...");
+execSync("npx tsc -p tsconfig.build.json --noEmit", {
   cwd: ROOT,
   stdio: "pipe",
 });
-
-// Move .d.ts files from dist/src to dist/src (keep structure), remove JS
-function removeJsFiles(dir) {
-  for (const entry of readdirSync(dir)) {
-    const full = join(dir, entry);
-    const stat = statSync(full);
-    if (stat.isDirectory()) {
-      removeJsFiles(full);
-    } else if (entry.endsWith(".js")) {
-      rmSync(full);
-    }
-  }
-}
-removeJsFiles(DIST);
 
 // ── Step 3: esbuild — bundle & minify ──────────────────────────────────────
 console.log("▸ Bundling with esbuild...");
@@ -49,7 +37,6 @@ console.log("▸ Bundling with esbuild...");
 const cliEntryPoint = join(SRC, "index.ts");
 const sdkEntryPoint = join(SRC, "sdk", "index.ts");
 
-// Read version for esbuild define
 const pkgJson = JSON.parse(
   await import("fs").then(fs => fs.promises.readFile(join(ROOT, "package.json"), "utf-8"))
 );
@@ -60,13 +47,18 @@ const esbuildOptions = {
   target: "node18",
   format: "esm",
   minify: true,
+  mangleProps: /^_/,
+  mangleQuoted: false,
+  reserveProps: /^__(.*)|^_events$|^_eventsCount$|^_maxListeners$/,
   treeShaking: true,
-  packages: "external",
   sourcemap: false,
   legalComments: "none",
   logLevel: "info",
+  banner: {
+    js: "import { createRequire } from 'module';const require=createRequire(import.meta.url);",
+  },
   define: {
-    "process.env.npm_package_version": JSON.stringify(pkgJson.version),
+    "process.env.DECX_PROJECT_VERSION": JSON.stringify(projectVersion),
   },
 };
 
@@ -85,13 +77,22 @@ await build({
 // ── Step 4: Copy package.json (production only) ────────────────────────────
 console.log("▸ Copying package.json...");
 // Keep only production fields
+const prodExports = {
+  ".": {
+    import: "./index.js",
+  },
+  "./sdk": {
+    import: "./sdk/index.js",
+  },
+};
+
 const prodPkg = {
   name: pkgJson.name,
-  version: pkgJson.version,
+  version: npmPackageVersion,
   description: pkgJson.description,
   type: pkgJson.type,
   bin: { decx: "./index.js" },
-  exports: pkgJson.exports,
+  exports: prodExports,
   engines: pkgJson.engines,
   keywords: pkgJson.keywords,
   author: pkgJson.author,
@@ -99,47 +100,50 @@ const prodPkg = {
   repository: pkgJson.repository,
   bugs: pkgJson.bugs,
   homepage: pkgJson.homepage,
-  dependencies: { ...pkgJson.dependencies },
 };
 writeFileSync(join(DIST, "package.json"), JSON.stringify(prodPkg, null, 2) + "\n");
 
-// ── Step 5: Copy native binaries and gzip-compress ────────────────────────
+// ── Step 5: Pack native binaries ──────────────────────────────────────────
 if (existsSync(BIN)) {
-  cpSync(BIN, join(DIST, "bin"), { recursive: true });
+  console.log("▸ Packing native binaries...");
+  mkdirSync(DIST, { recursive: true });
 
-  // Gzip all binary files in-place (replace .erofs/debugfs with .erofs.gz/debugfs.gz)
-  const binDist = join(DIST, "bin");
-  let compressedCount = 0;
-  let totalBefore = 0;
-  let totalAfter = 0;
-
-  function gzipBinDir(dir) {
+  function dirSize(dir) {
+    let total = 0;
     for (const entry of readdirSync(dir)) {
       const full = join(dir, entry);
       const stat = statSync(full);
       if (stat.isDirectory()) {
-        gzipBinDir(full);
+        total += dirSize(full);
       } else {
-        // Only gzip actual binary files (not .gz, not .d.ts, etc.)
-        if (entry.endsWith(".gz")) continue;
-        const original = readFileSync(full);
-        const compressed = gzipSync(original, { level: 9 });
-        const gzPath = full + ".gz";
-        writeFileSync(gzPath, compressed);
-        chmodSync(gzPath, 0o644);
-        rmSync(full);
-        compressedCount++;
-        totalBefore += original.length;
-        totalAfter += compressed.length;
+        total += stat.size;
       }
     }
+    return total;
   }
-  gzipBinDir(binDist);
 
-  if (compressedCount > 0) {
-    console.log(`▸ Compressed ${compressedCount} binaries: ${(totalBefore / 1024 / 1024).toFixed(1)}MB → ${(totalAfter / 1024 / 1024).toFixed(1)}MB (${Math.round((1 - totalAfter / totalBefore) * 100)}% reduction)`);
-  }
+  const archive = join(DIST, "bin.tar.gz");
+  execSync(`tar -czf ${JSON.stringify(archive)} -C ${JSON.stringify(BIN)} .`, {
+    cwd: ROOT,
+    stdio: "pipe",
+  });
+
+  const totalBefore = dirSize(BIN);
+  const totalAfter = statSync(archive).size;
+  console.log(`▸ Packed binaries: ${(totalBefore / 1024 / 1024).toFixed(1)}MB → ${(totalAfter / 1024 / 1024).toFixed(1)}MB (${Math.round((1 - totalAfter / totalBefore) * 100)}% reduction)`);
 }
 
 // ── Done ───────────────────────────────────────────────────────────────────
 console.log("✓ Build complete");
+
+function readVersionFile() {
+  const versionPath = join(REPO_ROOT, "version");
+  if (!existsSync(versionPath)) {
+    throw new Error(`Missing version file: ${versionPath}`);
+  }
+  const version = readFileSync(versionPath, "utf-8").trim();
+  if (!version) {
+    throw new Error(`Empty version file: ${versionPath}`);
+  }
+  return version;
+}

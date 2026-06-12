@@ -1,18 +1,19 @@
 {
   "name": "@jygzyc/decx-cli",
-  "version": "3.2.0",
+  "version": "dev",
   "description": "DECX CLI - Decompiler + X",
   "type": "module",
+  "files": [
+    "dist"
+  ],
   "bin": {
     "decx": "dist/index.js"
   },
   "exports": {
     ".": {
-      "types": "./dist/sdk/index.d.ts",
-      "import": "./dist/sdk/index.js"
+      "import": "./dist/index.js"
     },
     "./sdk": {
-      "types": "./dist/sdk/index.d.ts",
       "import": "./dist/sdk/index.js"
     }
   },

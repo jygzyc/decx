@@ -6,11 +6,13 @@
  */
 
 import { Command } from "commander";
+import { jest } from "@jest/globals";
 import { makeProcessCommand } from "../src/commands/process.js";
 import { makeCodeCommand } from "../src/commands/code.js";
 import { makeArdCommand } from "../src/commands/ard.js";
 import { makeSelfCommand } from "../src/commands/self.js";
 import { ROOT_DESCRIPTION } from "../src/core/constants.js";
+import { main } from "../src/index.js";
 
 function createProgram(): Command {
   const program = new Command();
@@ -64,6 +66,19 @@ describe("root", () => {
     expect(help).toContain("powered by JADX");
     expect(help).toContain("Query decompiled classes, methods, source, control flow");
     expect(help).toContain("Android app, framework, resource, permission, and device analysis");
+  });
+
+  it("prints top-level help when invoked without arguments", () => {
+    const log = jest.spyOn(console, "log").mockImplementation(() => {});
+    let output = "";
+    try {
+      main(["node", "decx"]);
+      output = log.mock.calls.map((call) => String(call[0])).join("");
+    } finally {
+      log.mockRestore();
+    }
+    expect(output).toContain("Usage: decx [options] [command]");
+    expect(output).toContain("Commands:");
   });
 });
 

@@ -75,13 +75,13 @@ describe("process command structure", () => {
       expect(open.registeredArguments.length).toBeGreaterThanOrEqual(1);
     });
 
-    it("has --port, --force, --name, and --heap options", () => {
+    it("has --port, --force, and --name options", () => {
       const open = findCommand(processCmd, ["open"])!;
       const flags = getOptionFlags(open);
       expect(flags.some(f => f.includes("--port"))).toBe(true);
       expect(flags.some(f => f.includes("--force"))).toBe(true);
       expect(flags.some(f => f.includes("--name"))).toBe(true);
-      expect(flags.some(f => f.includes("--heap"))).toBe(true);
+      expect(flags.some(f => f.includes("--heap"))).toBe(false);
     });
   });
 
@@ -124,12 +124,16 @@ describe("process command structure", () => {
 // ============================================================================
 
 describe("normalizeJadxPassthroughArgs", () => {
-  it("adds --show-bad-code by default", () => {
+  it("adds --show-bad-code by default without enabling deobfuscation", () => {
     expect(normalizeJadxPassthroughArgs(["--deobf"])).toEqual([
-      "--deobf",
       "--show-bad-code",
+      "--no-imports",
       "-Pdex-input.verify-checksum=no",
     ]);
+  });
+
+  it("adds --no-imports by default", () => {
+    expect(normalizeJadxPassthroughArgs([])).toContain("--no-imports");
   });
 
   it("adds checksum verification disable option by default", () => {
@@ -140,9 +144,25 @@ describe("normalizeJadxPassthroughArgs", () => {
     expect(normalizeJadxPassthroughArgs([
       "--deobf",
       "--show-bad-code",
+      "--no-imports",
       "-Pdex-input.verify-checksum=no",
     ])).toEqual([
+      "--show-bad-code",
+      "--no-imports",
+      "-Pdex-input.verify-checksum=no",
+    ]);
+  });
+
+  it("removes deobfuscation passthrough because DECX requires original names", () => {
+    expect(normalizeJadxPassthroughArgs([
+      "--threads-count",
+      "4",
       "--deobf",
+      "--no-imports",
+    ])).toEqual([
+      "--threads-count",
+      "4",
+      "--no-imports",
       "--show-bad-code",
       "-Pdex-input.verify-checksum=no",
     ]);
@@ -156,15 +176,13 @@ describe("extractPassthroughArgs", () => {
     process.argv = originalArgv;
   });
 
-  it("does not pass DECX heap option through to jadx", () => {
+  it("passes unknown options through to jadx", () => {
     process.argv = [
       "node",
       "decx",
       "process",
       "open",
       "app.apk",
-      "--heap",
-      "8g",
       "--deobf",
     ];
 
@@ -183,9 +201,5 @@ describe("buildDecxServerJavaArgs", () => {
       "25419",
       "--show-bad-code",
     ]);
-  });
-
-  it("uses the requested max heap when provided", () => {
-    expect(buildDecxServerJavaArgs("server.jar", "app.apk", 25419, [], "8g")[0]).toBe("-Xmx8g");
   });
 });

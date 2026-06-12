@@ -9,7 +9,7 @@ const OEM_DIRS: Record<FrameworkOem, string[]> = {
   xiaomi: ["/system/framework", "/system/apex", "/system_ext/framework", "/vendor/framework"],
   honor: ["/system/framework", "/system/apex", "/vendor/framework", "/system_ext/framework"],
   google: ["/system/framework", "/system/apex", "/vendor/framework", "/system_ext/framework"],
-  sansumg: ["/system/framework", "/system/apex", "/vendor/framework", "/system_ext/framework"]
+  samsung: ["/system/framework", "/system/apex", "/vendor/framework", "/system_ext/framework"]
 };
 
 const FILE_TYPES = [".apk", ".jar", ".apex", ".capex", ".dex"];

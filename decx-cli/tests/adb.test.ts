@@ -55,6 +55,7 @@ describe("adb device selection", () => {
   it("detects a supported framework OEM directly from brand", () => {
     expect(detectFrameworkOemFromBrand("Xiaomi")).toBe("xiaomi");
     expect(detectFrameworkOemFromBrand("GOOGLE")).toBe("google");
+    expect(detectFrameworkOemFromBrand("Samsung")).toBe("samsung");
   });
 
   it("parses system service list output into non-empty lines", () => {

@@ -11,6 +11,7 @@ import { Formatter } from "../utils/formatter.js";
 import { Manager } from "../core/config.js";
 import { checkForServerUpdate, installDecxServer, type InstallDecxServerResult } from "../core/installer.js";
 import { DecxError, ServerError, withErrorHandler } from "../utils/errors.js";
+import { VERSION } from "../core/version.js";
 
 interface CliPackageMetadata {
   name: string;
@@ -44,7 +45,7 @@ export function getCliPackageMetadata(
   const pkg = readCliPackageJson(startDir);
   return {
     name: env.npm_package_name ?? pkg.name ?? "unknown",
-    version: env.npm_package_version ?? pkg.version ?? "unknown",
+    version: VERSION,
   };
 }
 

@@ -1,8 +1,8 @@
-import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "fs";
+import { createHash } from "crypto";
+import { chmodSync, existsSync, mkdirSync, readFileSync } from "fs";
 import * as path from "path";
 import { fileURLToPath } from "url";
-import { spawnSync } from "child_process";
-import { gunzipSync } from "zlib";
+import { execFileSync, spawnSync } from "child_process";
 import { FileError } from "../utils/errors.js";
 import { decxPath } from "../core/paths.js";
 import type {
@@ -10,6 +10,8 @@ import type {
   FrameworkToolPaths,
   ToolCheckResult,
 } from "./types.js";
+
+const archiveCacheKeys = new Map<string, string>();
 
 function assertSupportedFrameworkPlatform(): void {
   if (process.platform === "win32") {
@@ -31,31 +33,48 @@ function currentArchDir(): string {
 }
 
 function packagedBinPath(...parts: string[]): string {
-  const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-  const rawPath = path.join(root, "bin", ...parts);
-  if (existsSync(rawPath)) return rawPath;
-  // Fallback: binary may be gzip-compressed in the package; decompress to cache
-  const gzPath = rawPath + ".gz";
-  if (existsSync(gzPath)) return decompressBinToCache(gzPath, parts);
-  return rawPath;
+  const entryDir = path.dirname(fileURLToPath(import.meta.url));
+  const candidates = [
+    path.join(entryDir, "bin", ...parts),
+    path.join(path.resolve(entryDir, ".."), "bin", ...parts),
+  ];
+
+  for (const rawPath of candidates) {
+    if (existsSync(rawPath)) return rawPath;
+  }
+
+  const extracted = extractPackagedBinArchive(parts);
+  return extracted ?? candidates[0];
 }
 
-/**
- * Decompress a gzip binary into ~/.decx/cache/bin/<key>.
- * Returns the path to the decompressed executable.
- */
-function decompressBinToCache(gzPath: string, parts: string[]): string {
-  const cacheDir = decxPath("cache", "bin");
-  mkdirSync(cacheDir, { recursive: true });
-  // Cache key: flatten the platform/arch/filename path into one segment
-  const cacheFile = path.join(cacheDir, parts.join("-"));
+function extractPackagedBinArchive(parts: string[]): string | null {
+  const entryDir = path.dirname(fileURLToPath(import.meta.url));
+  const archiveCandidates = [
+    path.join(entryDir, "bin.tar.gz"),
+    path.join(path.resolve(entryDir, ".."), "bin.tar.gz"),
+  ];
+  const archive = archiveCandidates.find((candidate) => existsSync(candidate));
+  if (!archive) return null;
+
+  const cacheDir = decxPath("cache", "bin", "decx-cli", archiveCacheKey(archive));
+  const cacheFile = path.join(cacheDir, ...parts);
   if (!existsSync(cacheFile)) {
-    const compressed = readFileSync(gzPath);
-    const original = gunzipSync(compressed);
-    writeFileSync(cacheFile, original);
-    chmodSync(cacheFile, 0o755);
+    mkdirSync(cacheDir, { recursive: true });
+    try {
+      execFileSync("tar", ["-xzf", archive, "-C", cacheDir], { stdio: "ignore" });
+    } catch {
+      throw new FileError(`Failed to extract packaged binaries from ${archive}`);
+    }
   }
-  return cacheFile;
+  return existsSync(cacheFile) ? cacheFile : null;
+}
+
+function archiveCacheKey(archive: string): string {
+  const cached = archiveCacheKeys.get(archive);
+  if (cached) return cached;
+  const key = createHash("sha256").update(readFileSync(archive)).digest("hex").slice(0, 16);
+  archiveCacheKeys.set(archive, key);
+  return key;
 }
 
 function resolvePackagedErofsExtractor(): string | null {
@@ -77,7 +96,16 @@ function resolvePackagedErofsExtractor(): string | null {
 
 function resolveDebugfs(): string | null {
   if (commandExists("debugfs")) return "debugfs";
-  return null;
+  if (process.platform !== "linux") return null;
+
+  const candidate = packagedBinPath("linux", currentArchDir(), "debugfs");
+  if (!existsSync(candidate)) return null;
+  try {
+    chmodSync(candidate, 0o755);
+  } catch {
+    // Best effort.
+  }
+  return candidate;
 }
 
 function resolveAdb(adbPath?: string): string {
@@ -87,10 +115,10 @@ function resolveAdb(adbPath?: string): string {
 }
 
 function resolveErofsExtractor(): string {
-  const packaged = resolvePackagedErofsExtractor();
-  if (packaged) return packaged;
   if (commandExists("fsck.erofs")) return "fsck.erofs";
   if (commandExists("extract.erofs")) return "extract.erofs";
+  const packaged = resolvePackagedErofsExtractor();
+  if (packaged) return packaged;
   throw new FileError("No EROFS extractor found. Install fsck.erofs/extract.erofs or use the packaged binary.");
 }
 
@@ -127,9 +155,9 @@ export function checkFrameworkTools(adbPath?: string): FrameworkToolsCheck {
 
   const adbResolved = adbPath ?? (commandExists("adb") ? "adb" : null);
   const debugfs = resolveDebugfs();
-  const erofs = resolvePackagedErofsExtractor()
-    ?? (commandExists("fsck.erofs") ? "fsck.erofs" : null)
-    ?? (commandExists("extract.erofs") ? "extract.erofs" : null);
+  const erofs = (commandExists("fsck.erofs") ? "fsck.erofs" : null)
+    ?? (commandExists("extract.erofs") ? "extract.erofs" : null)
+    ?? resolvePackagedErofsExtractor();
 
   return {
     adb: makeToolCheck(adbResolved, adbResolved ? "adb is available" : "adb not found"),

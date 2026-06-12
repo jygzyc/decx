@@ -2,23 +2,24 @@ import { jest } from "@jest/globals";
 import { mkdirSync, writeFileSync } from "fs";
 import * as path from "path";
 import { buildCliUpdateArgs, executeSelfInstall, getCliPackageMetadata } from "../src/commands/self.js";
+import { VERSION } from "../src/core/version.js";
 import { resetTestDir, testPath } from "./test-paths.js";
 
 describe("self command metadata", () => {
-  it("prefers npm env metadata when available", () => {
+  it("uses npm env package name and project version from VERSION", () => {
     expect(getCliPackageMetadata({
       npm_package_name: "@custom/decx-cli",
       npm_package_version: "9.9.9",
     } as NodeJS.ProcessEnv)).toEqual({
       name: "@custom/decx-cli",
-      version: "9.9.9",
+      version: VERSION,
     });
   });
 
-  it("falls back to package.json metadata when npm env is missing", () => {
+  it("falls back to package.json package name when npm env is missing", () => {
     const { name, version } = getCliPackageMetadata({} as NodeJS.ProcessEnv);
     expect(name).toBe("@jygzyc/decx-cli");
-    expect(version).toMatch(/^\d+\.\d+\.\d+/);
+    expect(version).toBe(VERSION);
   });
 
   it("finds package metadata from the bundled dist directory", () => {
@@ -32,7 +33,7 @@ describe("self command metadata", () => {
 
     expect(getCliPackageMetadata({} as NodeJS.ProcessEnv, nestedDir)).toEqual({
       name: "@custom/bundled-decx",
-      version: "1.2.3",
+      version: VERSION,
     });
   });
 

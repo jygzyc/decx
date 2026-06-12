@@ -19,7 +19,6 @@ export interface OpenAnalysisTargetOptions {
   port?: string;
   force?: boolean;
   name?: string;
-  heap?: string;
   passthroughArgs?: string[];
 }
 
@@ -32,10 +31,9 @@ export function buildDecxServerJavaArgs(
   filePath: string,
   port: number,
   jadxArgs: string[],
-  heap?: string,
 ): string[] {
   return [
-    `-Xmx${heap ?? defaultJavaHeap()}`,
+    `-Xmx${defaultJavaHeap()}`,
     "-jar",
     jarPath,
     filePath,
@@ -46,9 +44,12 @@ export function buildDecxServerJavaArgs(
 }
 
 export function normalizeJadxPassthroughArgs(args: string[] = []): string[] {
-  const result = [...args];
+  const result = args.filter((arg) => arg !== "--deobf");
   if (!result.includes("--show-bad-code")) {
     result.push("--show-bad-code");
+  }
+  if (!result.includes("--no-imports")) {
+    result.push("--no-imports");
   }
   if (!result.includes("-Pdex-input.verify-checksum=no")) {
     result.push("-Pdex-input.verify-checksum=no");
@@ -121,7 +122,6 @@ export async function openAnalysisTarget(
     resolvedFile,
     port,
     normalizeJadxPassthroughArgs(opts.passthroughArgs ?? []),
-    opts.heap,
   );
   const logDir = decxPath("logs");
   mkdirSync(logDir, { recursive: true });
@@ -291,7 +291,7 @@ export function extractPassthroughArgs(argv: readonly string[] = process.argv): 
   if (openIdx === -1) return [];
 
   const raw = cmdArgs.slice(openIdx + 1);
-  const decxFlagsWithValue = ["-P", "--port", "-n", "--name", "--heap"];
+  const decxFlagsWithValue = ["-P", "--port", "-n", "--name"];
   const decxFlags = ["--force"];
 
   const result: string[] = [];

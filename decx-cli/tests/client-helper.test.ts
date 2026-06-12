@@ -9,13 +9,9 @@ import { resolveClient } from "../src/core/client-helper.js";
 import { Manager } from "../src/core/config.js";
 import { jest } from "@jest/globals";
 
-const mockExit = jest.spyOn(process, "exit").mockImplementation((() => {
-  throw new Error("process.exit");
-}) as () => never);
 const mockConsole = jest.spyOn(console, "error").mockImplementation(() => {});
 
 afterAll(() => {
-  mockExit.mockRestore();
   mockConsole.mockRestore();
 });
 
@@ -44,6 +40,6 @@ describe("resolveClient", () => {
   });
 
   it("throws when both --session and --port specified", () => {
-    expect(() => resolveClient({ session: "test", port: "3000" })).toThrow("process.exit");
+    expect(() => resolveClient({ session: "test", port: "3000" })).toThrow("Cannot specify both --session and --port");
   });
 });
