@@ -13,6 +13,7 @@ import jadx.plugins.decx.model.DecxError
 import jadx.plugins.decx.model.DecxServiceInterface
 import jadx.plugins.decx.utils.AnalysisResultUtils
 import jadx.plugins.decx.utils.CodeUtils
+import jadx.plugins.decx.utils.DecompileGuard
 import jadx.plugins.decx.utils.ItemKind
 import java.nio.file.Files
 
@@ -171,7 +172,12 @@ class ContextService(override val decompiler: JadxDecompiler) : DecxServiceInter
         return try {
             val clazz = decompiler.classesWithInners.find { it.fullName == cls }
                 ?: return DecxApiResult.fail( AnalysisResultUtils.error(DecxKind.CLASS_SOURCE, query, DecxError.CLASS_NOT_FOUND, cls))
-            clazz.decompile()
+            val decision = DecompileGuard.decompile(clazz, if (smali) DecompileGuard.Purpose.SMALI else DecompileGuard.Purpose.JAVA)
+            if (!decision.allowed) {
+                return DecxApiResult.fail(
+                    AnalysisResultUtils.error(DecxKind.CLASS_SOURCE, query, DecxError.DECOMPILATION_SKIPPED, decision.messageFor(cls))
+                )
+            }
             val code = (if (smali) clazz.smali else clazz.code) ?: ""
             val lines = code.lines()
             val returnedLineCount = filter.limit?.coerceAtMost(lines.size) ?: lines.size
@@ -205,7 +211,12 @@ class ContextService(override val decompiler: JadxDecompiler) : DecxServiceInter
                 ?: return DecxApiResult.fail( AnalysisResultUtils.error(DecxKind.METHOD_CONTEXT, query, DecxError.METHOD_NOT_FOUND, mth))
             val jcls = mthPair.first
             val jmth = mthPair.second
-            jcls.decompile()
+            val decision = DecompileGuard.decompile(jcls, DecompileGuard.Purpose.XREF)
+            if (!decision.allowed) {
+                return DecxApiResult.fail(
+                    AnalysisResultUtils.error(DecxKind.METHOD_CONTEXT, query, DecxError.DECOMPILATION_SKIPPED, decision.messageFor(jcls.fullName))
+                )
+            }
             val methodNode = jmth.methodNode
             val xrefMap = CodeUtils.buildUsageQuery(decompiler, jmth)
             val callerItems = processUsage(jmth, xrefMap.values.flatten().toMutableList())
@@ -261,7 +272,14 @@ class ContextService(override val decompiler: JadxDecompiler) : DecxServiceInter
         return try {
             val mthPair = CodeUtils.findMethod(decompiler, mth)
                 ?: return DecxApiResult.fail( AnalysisResultUtils.error(DecxKind.METHOD_XREF, query, DecxError.METHOD_NOT_FOUND, mth))
+            val jcls = mthPair.first
             val jmth = mthPair.second
+            val decision = DecompileGuard.decompile(jcls, DecompileGuard.Purpose.XREF)
+            if (!decision.allowed) {
+                return DecxApiResult.fail(
+                    AnalysisResultUtils.error(DecxKind.METHOD_XREF, query, DecxError.DECOMPILATION_SKIPPED, decision.messageFor(jcls.fullName))
+                )
+            }
             val xrefMap = CodeUtils.buildUsageQuery(decompiler, jmth)
             val xrefNodes = xrefMap.values.flatten().toMutableList()
             val items = processUsage(jmth, xrefNodes)
@@ -277,7 +295,14 @@ class ContextService(override val decompiler: JadxDecompiler) : DecxServiceInter
         return try {
             val fldPair = CodeUtils.findField(decompiler, fld)
                 ?: return DecxApiResult.fail( AnalysisResultUtils.error(DecxKind.FIELD_XREF, query, DecxError.FIELD_NOT_FOUND, fld))
+            val jcls = fldPair.first
             val jfld = fldPair.second
+            val decision = DecompileGuard.decompile(jcls, DecompileGuard.Purpose.XREF)
+            if (!decision.allowed) {
+                return DecxApiResult.fail(
+                    AnalysisResultUtils.error(DecxKind.FIELD_XREF, query, DecxError.DECOMPILATION_SKIPPED, decision.messageFor(jcls.fullName))
+                )
+            }
             val xrefMap = CodeUtils.buildUsageQuery(decompiler, jfld)
             val xrefNodes = xrefMap.values.flatten().toMutableList()
             val items = processUsage(jfld, xrefNodes)
@@ -293,6 +318,12 @@ class ContextService(override val decompiler: JadxDecompiler) : DecxServiceInter
         return try {
             val jclazz = decompiler.searchJavaClassOrItsParentByOrigFullName(cls)
                 ?: return DecxApiResult.fail( AnalysisResultUtils.error(DecxKind.CLASS_XREF, query, DecxError.CLASS_NOT_FOUND, cls))
+            val decision = DecompileGuard.decompile(jclazz, DecompileGuard.Purpose.XREF)
+            if (!decision.allowed) {
+                return DecxApiResult.fail(
+                    AnalysisResultUtils.error(DecxKind.CLASS_XREF, query, DecxError.DECOMPILATION_SKIPPED, decision.messageFor(jclazz.fullName))
+                )
+            }
             val xrefMap = CodeUtils.buildUsageQuery(decompiler, jclazz)
             val xrefNodes = xrefMap.values.flatten().toMutableList()
             val items = processUsage(jclazz, xrefNodes)

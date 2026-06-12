@@ -69,11 +69,8 @@ class PluginLifecycleManager(
                 val classes = WarmupUtils.selectWarmupClasses(decompiler)
                 if (classes.isEmpty()) return@Thread
 
-                val startTime = System.currentTimeMillis()
                 LogUtils.debug("Warmup classes count: ${classes.size}")
-                WarmupUtils.warmup(classes, logProgress = { message -> LogUtils.info(message) })
-
-                val elapsed = System.currentTimeMillis() - startTime
+                val elapsed = WarmupUtils.warmup(classes, logProgress = { message -> LogUtils.info(message) })
                 LogUtils.info("Warmup completed in ${elapsed}ms, decompiler engine ready")
             } catch (e: Exception) {
                 LogUtils.debug("Warmup failed: ${e.message}")

@@ -26,91 +26,81 @@ class DecxApiImpl(
     // ==================== Common Service ====================
 
     override fun getClasses(filter: DecxFilter): DecxApiResult {
-        return if (cacheEnabled) cached("getClasses", filter.toQuery()) { commonService.handleGetClasses(filter) }
-        else commonService.handleGetClasses(filter)
+        return maybeCached("getClasses", filter.toQuery()) { commonService.handleGetClasses(filter) }
     }
 
     override fun searchGlobalKey(key: String, filter: DecxFilter): DecxApiResult {
         val params = mapOf("key" to key) + filter.toQuery()
-        return if (cacheEnabled) cached("searchGlobalKey", params) { commonService.handleSearchGlobalKey(key, filter) }
-        else commonService.handleSearchGlobalKey(key, filter)
+        return maybeCached("searchGlobalKey", params) { commonService.handleSearchGlobalKey(key, filter) }
     }
 
     override fun getClassSource(cls: String, smali: Boolean, filter: DecxFilter): DecxApiResult {
         val sourceFilter = filter.forSourcePrefix()
         val params = mapOf("cls" to cls, "smali" to smali) + sourceFilter.toQuery()
-        return if (cacheEnabled) cached("getClassSource", params) {
+        return maybeCached("getClassSource", params) {
             contextService.handleGetClassSource(cls, smali, sourceFilter)
-        } else contextService.handleGetClassSource(cls, smali, sourceFilter)
+        }
     }
 
     override fun searchClassKey(cls: String, key: String, filter: DecxFilter): DecxApiResult {
         val params = mapOf("cls" to cls, "key" to key) + filter.toQuery()
-        return if (cacheEnabled) cached("searchClassKey", params) {
+        return maybeCached("searchClassKey", params) {
             commonService.handleSearchClassKey(cls, key, filter)
-        } else commonService.handleSearchClassKey(cls, key, filter)
+        }
     }
 
     override fun searchMethod(mth: String): DecxApiResult {
-        return if (cacheEnabled) cached("searchMethod", mapOf("mth" to mth)) { commonService.handleSearchMethod(mth) }
-        else commonService.handleSearchMethod(mth)
+        return maybeCached("searchMethod", mapOf("mth" to mth)) { commonService.handleSearchMethod(mth) }
     }
 
     // ==================== Context Service ====================
 
     override fun getClassContext(cls: String): DecxApiResult {
-        return if (cacheEnabled) cached("getClassContext", mapOf("cls" to cls)) { contextService.handleGetClassContext(cls) }
-        else contextService.handleGetClassContext(cls)
+        return maybeCached("getClassContext", mapOf("cls" to cls)) { contextService.handleGetClassContext(cls) }
     }
 
     override fun getMethodSource(mth: String, smali: Boolean): DecxApiResult {
-        return if (cacheEnabled) cached("getMethodSource", mapOf("mth" to mth, "smali" to smali)) {
+        return maybeCached("getMethodSource", mapOf("mth" to mth, "smali" to smali)) {
             commonService.handleGetMethodSource(mth, smali)
-        } else commonService.handleGetMethodSource(mth, smali)
+        }
     }
 
     override fun getMethodContext(mth: String): DecxApiResult {
-        return if (cacheEnabled) cached("getMethodContext", mapOf("mth" to mth)) { contextService.handleGetMethodContext(mth) }
-        else contextService.handleGetMethodContext(mth)
+        return maybeCached("getMethodContext", mapOf("mth" to mth)) { contextService.handleGetMethodContext(mth) }
     }
 
     override fun getMethodCfg(mth: String): DecxApiResult {
-        return if (cacheEnabled) cached("getMethodCfg", mapOf("mth" to mth)) { contextService.handleGetMethodCfg(mth) }
-        else contextService.handleGetMethodCfg(mth)
+        return maybeCached("getMethodCfg", mapOf("mth" to mth)) { contextService.handleGetMethodCfg(mth) }
     }
 
     override fun getMethodXref(mth: String): DecxApiResult {
-        return if (cacheEnabled) cached("getMethodXref", mapOf("mth" to mth)) { contextService.handleGetMethodXref(mth) }
-        else contextService.handleGetMethodXref(mth)
+        return maybeCached("getMethodXref", mapOf("mth" to mth)) { contextService.handleGetMethodXref(mth) }
     }
 
     override fun getFieldXref(fld: String): DecxApiResult {
-        return if (cacheEnabled) cached("getFieldXref", mapOf("fld" to fld)) { contextService.handleGetFieldXref(fld) }
-        else contextService.handleGetFieldXref(fld)
+        return maybeCached("getFieldXref", mapOf("fld" to fld)) { contextService.handleGetFieldXref(fld) }
     }
 
     override fun getClassXref(cls: String): DecxApiResult {
-        return if (cacheEnabled) cached("getClassXref", mapOf("cls" to cls)) { contextService.handleGetClassXref(cls) }
-        else contextService.handleGetClassXref(cls)
+        return maybeCached("getClassXref", mapOf("cls" to cls)) { contextService.handleGetClassXref(cls) }
     }
 
     override fun getImplementOfInterface(iface: String): DecxApiResult {
-        return if (cacheEnabled) cached("getImplementOfInterface", mapOf("iface" to iface)) {
+        return maybeCached("getImplementOfInterface", mapOf("iface" to iface)) {
             contextService.handleGetImplementOfInterface(iface)
-        } else contextService.handleGetImplementOfInterface(iface)
+        }
     }
 
     override fun getSubclasses(cls: String): DecxApiResult {
-        return if (cacheEnabled) cached("getSubclasses", mapOf("cls" to cls)) { contextService.handleGetSubclasses(cls) }
-        else contextService.handleGetSubclasses(cls)
+        return maybeCached("getSubclasses", mapOf("cls" to cls)) { contextService.handleGetSubclasses(cls) }
     }
 
     // ==================== Android App Service ====================
 
     override fun getAidlInterfaces(filter: DecxFilter): DecxApiResult {
-        return if (cacheEnabled) cached("getAidlInterfaces", filter.toQuery()) {
+        return maybeCached("getAidlInterfaces", filter.toQuery()) {
             androidService.handleGetAidlInterfaces(filter)
-        } else androidService.handleGetAidlInterfaces(filter)
+        }
     }
 
     override fun getAppManifest(): DecxApiResult {
@@ -126,9 +116,9 @@ class DecxApiImpl(
     }
 
     override fun getExportedComponents(filter: DecxFilter): DecxApiResult {
-        return if (cacheEnabled) cached("getExportedComponents", filter.toQuery()) {
+        return maybeCached("getExportedComponents", filter.toQuery()) {
             androidService.handleGetExportedComponents(filter)
-        } else androidService.handleGetExportedComponents(filter)
+        }
     }
 
     override fun getDeepLinks(): DecxApiResult {
@@ -136,16 +126,16 @@ class DecxApiImpl(
     }
 
     override fun getDynamicReceivers(filter: DecxFilter): DecxApiResult {
-        return if (cacheEnabled) cached("getDynamicReceivers", filter.toQuery()) {
+        return maybeCached("getDynamicReceivers", filter.toQuery()) {
             androidService.handleGetDynamicReceivers(filter)
-        } else androidService.handleGetDynamicReceivers(filter)
+        }
     }
 
     override fun getAllResources(filter: DecxFilter): DecxApiResult {
         val resourceFilter = filter.forResourceNames()
-        return if (cacheEnabled) cached("getAllResources", resourceFilter.toQuery()) {
+        return maybeCached("getAllResources", resourceFilter.toQuery()) {
             androidService.handleGetAllResources(resourceFilter)
-        } else androidService.handleGetAllResources(resourceFilter)
+        }
     }
 
     override fun getResourceFile(res: String): DecxApiResult {
@@ -189,6 +179,10 @@ class DecxApiImpl(
             excludes = emptyList(),
             caseSensitive = false
         )
+    }
+
+    private fun maybeCached(endpoint: String, params: Map<String, Any>, loader: () -> DecxApiResult): DecxApiResult {
+        return if (cacheEnabled) cached(endpoint, params, loader) else loader()
     }
 
     private fun cached(endpoint: String, params: Map<String, Any>, loader: () -> DecxApiResult): DecxApiResult {

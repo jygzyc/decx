@@ -18,6 +18,7 @@ enum class DecxError(val code: String, val status: Int, val message: String) {
     NO_MAIN_ACTIVITY("NO_MAIN_ACTIVITY", 404, "No MAIN/LAUNCHER Activity found"),
     NO_APPLICATION("NO_APPLICATION", 404, "Application class not found"),
     EMPTY_SEARCH_KEY("EMPTY_SEARCH_KEY", 400, "Search key cannot be empty"),
+    DECOMPILATION_SKIPPED("DECOMPILATION_SKIPPED", 503, "Decompilation skipped: %s"),
     NOT_GUI_MODE("NOT_GUI_MODE", 503, "Not in GUI mode");
 
     fun format(vararg args: Any): String {

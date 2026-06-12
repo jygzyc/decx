@@ -1,5 +1,7 @@
 package jadx.plugins.decx
 
+import java.io.File
+
 object DecxConstants {
     const val DEFAULT_PORT: Int = 25419
     val SUPPORTED_CACHE_MODES = setOf("memory", "disk")
@@ -18,6 +20,18 @@ object DecxConstants {
         DecxConstants::class.java.`package`?.implementationVersion
             ?.takeIf { it.isNotBlank() }
             ?.let { return it }
-        return System.getenv("DECX_VERSION") ?: "dev"
+        return readVersionFile() ?: "dev"
+    }
+
+    private fun readVersionFile(): String? {
+        var dir: File? = File(System.getProperty("user.dir")).absoluteFile
+        while (dir != null) {
+            val file = File(dir, "version")
+            if (file.isFile) {
+                return file.readText().trim().takeIf { it.isNotBlank() }
+            }
+            dir = dir.parentFile
+        }
+        return null
     }
 }

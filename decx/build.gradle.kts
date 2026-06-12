@@ -13,7 +13,8 @@ repositories {
     maven(url = "https://jitpack.io")
 }
 
-val projectVersion = System.getenv("DECX_VERSION") ?: "dev"
+val versionFile = rootProject.file("../version")
+val projectVersion = versionFile.readText().trim()
 version = projectVersion
 
 subprojects {

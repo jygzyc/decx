@@ -52,7 +52,12 @@ object CodeUtils {
 
     // From jadx core - usage analysis
     fun buildUsageQuery(decompiler: JadxDecompiler, node: JavaNode): Map<JavaNode, List<JavaNode>> {
-        node.declaringClass?.decompile()
+        node.declaringClass?.let { clazz ->
+            val decision = DecompileGuard.decompile(clazz, DecompileGuard.Purpose.XREF)
+            if (!decision.allowed) {
+                return emptyMap()
+            }
+        }
         val map = HashMap<JavaNode, List<JavaNode>>()
         map[node] = node.useIn
 

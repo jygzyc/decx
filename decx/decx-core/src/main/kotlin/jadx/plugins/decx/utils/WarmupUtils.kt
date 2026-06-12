@@ -52,6 +52,7 @@ object WarmupUtils {
             Runtime.getRuntime().availableProcessors().coerceAtLeast(1)
         ).coerceAtLeast(1)
         val completed = AtomicInteger(0)
+        val skipped = AtomicInteger(0)
         val executor = Executors.newFixedThreadPool(threadCount) { r ->
             Thread(r, "Decx-Warmup-${warmupThreadId.incrementAndGet()}").apply { isDaemon = true }
         }
@@ -61,12 +62,15 @@ object WarmupUtils {
             classes.forEach { clazz ->
                 executor.execute {
                     try {
-                        clazz.decompile()
+                        val decision = DecompileGuard.decompile(clazz, DecompileGuard.Purpose.WARMUP)
+                        if (!decision.allowed) {
+                            skipped.incrementAndGet()
+                        }
                     } catch (_: Exception) {
                     } finally {
                         val count = completed.incrementAndGet()
                         if (count % PROGRESS_INTERVAL == 0 || count == classes.size) {
-                            logProgress("Warmup progress: $count/${classes.size}")
+                            logProgress("Warmup progress: $count/${classes.size}, skipped=${skipped.get()}")
                         }
                     }
                 }
@@ -75,7 +79,7 @@ object WarmupUtils {
             executor.shutdown()
             if (!executor.awaitTermination(timeoutSeconds, TimeUnit.SECONDS)) {
                 executor.shutdownNow()
-                logProgress("Warmup timed out after ${timeoutSeconds}s: ${completed.get()}/${classes.size}")
+                logProgress("Warmup timed out after ${timeoutSeconds}s: ${completed.get()}/${classes.size}, skipped=${skipped.get()}")
             }
         }
 

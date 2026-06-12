@@ -8,6 +8,7 @@ import jadx.plugins.decx.model.DecxServiceInterface
 import jadx.plugins.decx.api.DecxApiResult
 import jadx.plugins.decx.utils.AnalysisResultUtils
 import jadx.plugins.decx.utils.CodeUtils
+import jadx.plugins.decx.utils.DecompileGuard
 import jadx.plugins.decx.utils.ItemKind
 import java.util.regex.PatternSyntaxException
 
@@ -50,26 +51,38 @@ class CommonService(override val decompiler: JadxDecompiler) : DecxServiceInterf
                 ?: return DecxApiResult.fail(AnalysisResultUtils.error(DecxKind.SEARCH_GLOBAL, query, DecxError.INVALID_PARAMETER, "invalid filter regex"))
             val classes = decompiler.classesWithInners
                 .filter { clazz -> filters.matches(clazz.fullName) }
-            val matches = classes.mapNotNull { clazz ->
+            var skipped = 0
+            val matches = mutableListOf<Map<String, Any>>()
+            for (clazz in classes) {
                 try {
-                    clazz.decompile()
+                    val decision = DecompileGuard.decompile(clazz, DecompileGuard.Purpose.JAVA)
+                    if (!decision.allowed) {
+                        skipped += 1
+                        continue
+                    }
                     val code = clazz.code ?: ""
                     if (matcher.matches(clazz.fullName) || matcher.matches(code)) {
-                        AnalysisResultUtils.item(
+                        matches += AnalysisResultUtils.item(
                             id = clazz.fullName,
                             kind = ItemKind.SYMBOL,
                             title = "Class match: ${clazz.fullName.substringAfterLast('.')}",
                             content = clazz.fullName
                         )
-                    } else {
-                        null
+                        if (filter.limit != null && matches.size >= filter.limit) break
                     }
                 } catch (_: Exception) {
-                    null
+                    skipped += 1
                 }
             }
             val items = filter.limit(matches)
-            DecxApiResult.ok(AnalysisResultUtils.success(DecxKind.SEARCH_GLOBAL, query, items))
+            DecxApiResult.ok(
+                AnalysisResultUtils.success(
+                    DecxKind.SEARCH_GLOBAL,
+                    query,
+                    items,
+                    summary = mapOf("skipped_decompile_count" to skipped)
+                )
+            )
         } catch (e: Exception) {
             DecxApiResult.fail(AnalysisResultUtils.error(DecxKind.SEARCH_GLOBAL, query, DecxError.SERVER_INTERNAL_ERROR, e.message ?: "unknown"))
         }
@@ -90,7 +103,12 @@ class CommonService(override val decompiler: JadxDecompiler) : DecxServiceInterf
             if (limit <= 0) {
                 return DecxApiResult.ok(AnalysisResultUtils.success(DecxKind.SEARCH_CLASS, query, emptyList()))
             }
-            clazz.decompile()
+            val decision = DecompileGuard.decompile(clazz, DecompileGuard.Purpose.JAVA)
+            if (!decision.allowed) {
+                return DecxApiResult.fail(
+                    AnalysisResultUtils.error(DecxKind.SEARCH_CLASS, query, DecxError.DECOMPILATION_SKIPPED, decision.messageFor(cls))
+                )
+            }
             val items = mutableListOf<Map<String, Any>>()
             for (method in clazz.methods) {
                 val signature = CodeUtils.methodSignature(method)
@@ -178,7 +196,12 @@ class CommonService(override val decompiler: JadxDecompiler) : DecxServiceInterf
                 ?: return DecxApiResult.fail(AnalysisResultUtils.error(DecxKind.METHOD_SOURCE, query, DecxError.METHOD_NOT_FOUND, mth))
             val jcls = mthPair.first
             val jmth = mthPair.second
-            jcls.decompile()
+            val decision = DecompileGuard.decompile(jcls, if (smali) DecompileGuard.Purpose.SMALI else DecompileGuard.Purpose.JAVA)
+            if (!decision.allowed) {
+                return DecxApiResult.fail(
+                    AnalysisResultUtils.error(DecxKind.METHOD_SOURCE, query, DecxError.DECOMPILATION_SKIPPED, decision.messageFor(jcls.fullName))
+                )
+            }
             val code = if (smali) CodeUtils.extractMethodSmaliCode(jcls, jmth) else jmth.codeStr
             val signature = CodeUtils.methodSignature(jmth)
             val items = listOf(
