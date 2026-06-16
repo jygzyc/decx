@@ -4,12 +4,12 @@ Use references to select the right PoC construction pattern for a given finding 
 
 ## Upstream Sources
 
-Findings come from two vulnhunt skills via the shared `decx-analysis-db.mjs` blackboard CLI (located in `scripts/`):
+Findings come from two vulnhunt skills via the shared `decx-analysis-db.mjs` proof graph CLI (located in `scripts/`):
 
 | Target kind | Upstream skill | Target type | Session open command |
 |---|---|---|---|
-| App (facts with `entrypoint:` prefix) | `decx-app-vulnhunt` | APK | `decx process open "<apk>"` |
-| Framework (facts with `service-entrypoint:` prefix) | `decx-framework-vulnhunt` | Framework JAR | `decx ard framework open "<jar>"` |
+| App (facts with `entrypoint` prefix) | `decx-app-vulnhunt` | APK | `decx process open "<apk>"` |
+| Framework (facts with `service-entrypoint` prefix) | `decx-framework-vulnhunt` | Framework JAR | `decx ard framework open "<jar>"` |
 
 Determine the target kind from fact description prefixes before selecting a reference.
 

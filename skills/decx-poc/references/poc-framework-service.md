@@ -7,7 +7,7 @@ description: Framework-service PoC reference covering clearCallingIdentity misus
 
 Binder calls into `system_server` or another privileged framework process. Almost always `binder-caller` shape. Findings come from `decx-framework-vulnhunt` (`--kind framework`).
 
-Framework fact prefixes used in re-verification: `service-entrypoint:`, `binder-reachability:`, `identity:`, `permission-guard:`, `appop-guard:`, `user-guard:`, `identity-transition:`, `control:`, `sink:`, `impact:`.
+Framework fact prefixes used in re-verification: `service-entrypoint`, `binder-reachability`, `identity`, `permission-guard`, `appop-guard`, `user-guard`, `identity-transition`, `control`, `sink`, `impact`.
 
 ## Hidden API Rule
 
