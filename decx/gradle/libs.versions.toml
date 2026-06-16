@@ -1,5 +1,5 @@
 [versions]
-kotlin = "2.2.0"
+kotlin = "2.4.0"
 jadx = "1.5.5"
 gson = "2.14.0"
 javalin = "6.7.0"
