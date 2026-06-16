@@ -1,7 +1,7 @@
 [versions]
 kotlin = "2.2.0"
 jadx = "1.5.5"
-gson = "2.13.2"
+gson = "2.14.0"
 javalin = "6.7.0"
 jackson = "2.21.1"
 slf4j = "2.0.17"
