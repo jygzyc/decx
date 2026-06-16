@@ -3,7 +3,8 @@ import { AgentRuntime, type RunOptions, type StartRunInput } from "../agent-runt
 import type { WorkerName } from "../core/types.js";
 import { positiveInt, stringArray, stringValue } from "../core/utils.js";
 import { auditUiHtml } from "./audit-ui.js";
-import type { ProjectDetail } from "./repository-types.js";
+import type { ProjectDetail } from "../core/types.js";
+import { knownWorkers } from "../workers/registry.js";
 
 export interface ServeOptions {
   host: string;
@@ -79,7 +80,7 @@ export class DecxAgentServer {
       }
       const match = /^\/api\/projects\/([^/]+)(?:\/([^/]+))?(?:\/([^/]+))?(?:\/([^/]+))?$/.exec(url.pathname);
       if (match) {
-        await this.handleProjectRoute(match.slice(1).filter(Boolean), request, response);
+        await this.handleProjectRoute(match.slice(1).filter(Boolean), request, response, url);
         return;
       }
       sendJson(response, { error: { message: "not found" } }, 404);
@@ -88,7 +89,7 @@ export class DecxAgentServer {
     }
   }
 
-  private async handleProjectRoute(parts: string[], request: IncomingMessage, response: ServerResponse): Promise<void> {
+  private async handleProjectRoute(parts: string[], request: IncomingMessage, response: ServerResponse, url: URL): Promise<void> {
     const [projectId, segment, intentId, action] = parts;
     if (!segment && request.method === "GET") {
       sendJson(response, this.runtime.repo.getProject(projectId));
@@ -102,58 +103,73 @@ export class DecxAgentServer {
       sendJson(response, this.runtime.repo.getProject(projectId));
       return;
     }
-    if (segment === "hints" && request.method === "POST") {
-      const body = await readJson(request);
-      const project = this.runtime.repo.getProject(projectId).project;
-      sendJson(response, this.runtime.repo.addHint(project.id, stringValue(body.content) ?? "", stringValue(body.creator) ?? "human"), 201);
-      return;
-    }
     if (segment === "intents" && request.method === "POST" && !intentId) {
       const body = await readJson(request);
-      const project = this.runtime.repo.getProject(projectId).project;
-      sendJson(response, this.runtime.repo.addIntent(project.id, {
-        from: Array.isArray(body.from) ? body.from.map(String) : ["origin"],
-        description: stringValue(body.description) ?? "",
+      const detail = this.runtime.repo.getProject(projectId);
+      const description = requiredString(body.description, "description");
+      const from = Array.isArray(body.from) ? body.from.map(String) : ["origin"];
+      validateFactIds(detail, from);
+      const worker = validateWorker(detail, workerField(body.worker));
+      sendJson(response, this.runtime.repo.addIntent(detail.project.id, {
+        from,
+        description,
         creator: stringValue(body.creator) ?? "human",
-        agent: stringValue(body.agent) ?? stringValue(body.role) ?? "explorer",
-        worker: workerField(body.worker),
+        worker,
+        priority: positiveInt(body.priority),
       }), 201);
       return;
     }
     if (segment === "intents" && intentId && (action === "claim" || action === "release") && request.method === "POST") {
       const body = await readJson(request);
-      const project = this.runtime.repo.getProject(projectId).project;
-      const worker = workerField(body.worker) ?? project.worker;
+      const detail = this.runtime.repo.getProject(projectId);
+      const worker = validateRequiredWorker(detail, workerField(body.worker) ?? detail.project.worker);
       const intent = action === "claim"
-        ? this.runtime.repo.claimIntent(project.id, intentId, worker)
-        : this.runtime.repo.releaseIntent(project.id, intentId, worker);
+        ? this.runtime.repo.claimIntent(detail.project.id, intentId, worker)
+        : this.runtime.repo.releaseIntent(detail.project.id, intentId, worker);
       sendJson(response, intent);
       return;
     }
     if (segment === "intents" && intentId && action === "conclude" && request.method === "POST") {
       const body = await readJson(request);
       const project = this.runtime.repo.getProject(projectId).project;
+      const description = requiredString(body.description, "description");
       sendJson(response, this.runtime.repo.concludeIntent(
         project.id,
         intentId,
-        stringValue(body.description) ?? "",
+        description,
         stringArrayField(body.evidence),
         stringValue(body.source) ?? "api",
       ));
       return;
     }
+    if (segment === "links" && request.method === "POST") {
+      const body = await readJson(request);
+      const detail = this.runtime.repo.getProject(projectId);
+      const fromFactId = requiredString(body.fromFactId, "fromFactId");
+      const toFactId = requiredString(body.toFactId, "toFactId");
+      validateFactIds(detail, [fromFactId, toFactId]);
+      sendJson(response, this.runtime.repo.addLink(detail.project.id, {
+        fromFactId,
+        toFactId,
+        kind: stringValue(body.kind) ?? "related",
+        evidence: stringArrayField(body.evidence),
+      }), 201);
+      return;
+    }
+    if (segment === "proof-chain" && request.method === "GET") {
+      const factId = url.searchParams.get("factId");
+      if (!factId) throw new Error("factId query parameter is required");
+      sendJson(response, this.runtime.repo.proofChain(this.runtime.repo.getProject(projectId).project.id, factId));
+      return;
+    }
     if (segment === "complete" && request.method === "POST") {
       const project = this.runtime.repo.getProject(projectId).project;
       this.runtime.repo.updateProjectStatus(project.id, "completed");
-      sendJson(response, this.runtime.repo.getProject(project.id));
+      sendJson(response, this.runtime.repo.getProject(projectId));
       return;
     }
     if (segment === "export" && request.method === "GET") {
       sendText(response, JSON.stringify(this.runtime.repo.getProject(projectId), null, 2));
-      return;
-    }
-    if (segment === "reviews" && request.method === "GET") {
-      sendJson(response, this.runtime.repo.getProject(projectId).reviews);
       return;
     }
     sendJson(response, { error: { message: "not found" } }, 404);
@@ -162,6 +178,31 @@ export class DecxAgentServer {
 
 function workerField(value: unknown): WorkerName | undefined {
   return stringValue(value);
+}
+
+function requiredString(value: unknown, field: string): string {
+  const text = stringValue(value)?.trim();
+  if (!text) throw new Error(`${field} is required`);
+  return text;
+}
+
+function validateWorker(detail: ProjectDetail, worker: WorkerName | undefined): WorkerName | undefined {
+  if (!worker) return undefined;
+  if (!knownWorkers(detail.project.taskConfig.workers).includes(worker)) {
+    throw new Error(`unsupported worker: ${worker}`);
+  }
+  return worker;
+}
+
+function validateRequiredWorker(detail: ProjectDetail, worker: WorkerName): WorkerName {
+  return validateWorker(detail, worker) ?? worker;
+}
+
+function validateFactIds(detail: ProjectDetail, factIds: string[]): void {
+  const facts = new Set(detail.facts.map((fact) => fact.id));
+  for (const id of factIds) {
+    if (!facts.has(id)) throw new Error(`fact not found: ${id}`);
+  }
 }
 
 async function readJson(request: IncomingMessage): Promise<Record<string, unknown>> {

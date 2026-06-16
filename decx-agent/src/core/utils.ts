@@ -37,3 +37,12 @@ export function safeSessionName(value: string): string {
 export function utcnow(): string {
   return new Date().toISOString();
 }
+
+/** Parse JSON value with fallback on failure. */
+export function parseJson(value: unknown, fallback: unknown): unknown {
+  try {
+    return JSON.parse(String(value ?? ""));
+  } catch {
+    return fallback;
+  }
+}

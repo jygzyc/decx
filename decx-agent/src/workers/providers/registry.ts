@@ -1,19 +1,16 @@
 /**
- * Provider registry. The three built-in providers (openai, openai-compatible,
- * anthropic) are registered on first import. External code can call
- * `registerProvider` to add a custom adapter without touching this file —
- * that's the configured-extension surface the worker layer is missing.
+ * Provider registry. Built dynamically from providers.json + built-in presets.
+ *
+ * On first import, the registry loads ~/.decx/agent/providers.json (or path
+ * from DECX_AGENT_PROVIDERS env), merges with presets, and registers a
+ * ConfiguredProvider for each entry. External code can still call
+ * `registerProvider` to add custom adapters programmatically.
  */
 
-import { AnthropicProvider } from "./anthropic.js";
-import { OpenAICompatibleProvider, OpenAIProvider } from "./openai.js";
+import { buildProvidersFromConfig } from "./configured.js";
 import type { ModelProvider } from "./types.js";
 
-const REGISTRY = new Map<string, ModelProvider>();
-
-for (const provider of [new OpenAIProvider(), new OpenAICompatibleProvider(), new AnthropicProvider()]) {
-  REGISTRY.set(provider.id, provider);
-}
+let REGISTRY: Map<string, ModelProvider> = buildProvidersFromConfig(undefined);
 
 export function registerProvider(provider: ModelProvider): () => void {
   REGISTRY.set(provider.id, provider);
@@ -28,6 +25,10 @@ export function getProvider(id: string): ModelProvider | undefined {
 
 export function listProviderIds(): string[] {
   return [...REGISTRY.keys()];
+}
+
+export function reloadProviders(explicit?: Record<string, unknown>): void {
+  REGISTRY = buildProvidersFromConfig(explicit as Record<string, never> | undefined);
 }
 
 export type { ModelProvider, ModelCallInput, ModelCallResult } from "./types.js";

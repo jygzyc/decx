@@ -22,10 +22,10 @@ Business workflows are defined by `task.json`, prompts, roles, and workflow rule
 ```bash
 npm run build
 npm run smoke
-npm run pack:agent
+npm run pack
 ```
 
-`pack:agent` rebuilds the agent, writes the compressed npm tarball to `dist-packages/`, and emits `dist-packages/manifest.json` with package name, version, compressed size, unpacked size, and SHA-256.
+`pack` rebuilds the agent, writes the compressed npm tarball to `dist-packages/`, and emits `dist-packages/manifest.json` with package name, version, compressed size, unpacked size, and SHA-256.
 
 ## Session Workspace
 

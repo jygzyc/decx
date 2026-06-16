@@ -2,35 +2,29 @@ import type { DatabaseSync } from "node:sqlite";
 import type {
   AgentConfig,
   Fact,
-  Hint,
   Intent,
-  Review,
+  Link,
+  ProjectDetail,
+  ProjectRecord,
+  Run,
   TaskConfig,
   WorkerName,
-  WorkerRun,
   WorkflowEvent,
 } from "../core/types.js";
-import {
-  eventFromRow,
-  factFromRow,
-  hintFromRow,
-  intentFromRow,
-  projectFromRow,
-  reviewFromRow,
-  utcnow,
-  workerRunFromRow,
-} from "./repository-rows.js";
-import type { ProjectDetail, ProjectRecord } from "./repository-types.js";
-import { WorkflowGraphRepository } from "./workflow-graph.js";
+import { parseJson, utcnow } from "../core/utils.js";
 
-export { utcnow } from "./repository-rows.js";
-
+/**
+ * AgentRepository — the single source of truth for agent state.
+ *
+ * Design: the graph IS the storage. Facts are nodes. Intents are multi-source
+ * directed edges (via intent_sources). Links are directed reasoning dependencies.
+ * No dual-write, no audit shadow tables. Every table here is read by the
+ * dispatcher hot path or surfaced via the API.
+ */
 export class AgentRepository {
-  private readonly graph: WorkflowGraphRepository;
+  constructor(private readonly db: DatabaseSync) {}
 
-  constructor(private readonly db: DatabaseSync) {
-    this.graph = new WorkflowGraphRepository(db);
-  }
+  // ─── Project lifecycle ───
 
   createProject(input: {
     session: string;
@@ -52,22 +46,8 @@ export class AgentRepository {
         INSERT INTO projects (id, session, name, target, goal, status, worker, session_dir, config_path, config_json, created_at, updated_at)
         VALUES (?, ?, ?, ?, ?, 'active', ?, ?, ?, ?, ?, ?)
       `).run(id, input.session, input.name, input.target, input.goal, input.worker, input.sessionDir, input.configPath, JSON.stringify(input.taskConfig), now, now);
-      for (const [agentId, config] of Object.entries(input.taskConfig.agents ?? {})) {
-        this.db.prepare("INSERT INTO agents (id, project_id, config_json, created_at) VALUES (?, ?, ?, ?)")
-          .run(agentId, id, JSON.stringify(config), now);
-      }
-      this.graph.node(id, "project", id, input.name, { session: input.session });
-      this.addFact(id, { id: "origin", description: input.target, evidence: [], source: "system", createdAt: now });
-      this.addFact(id, { id: "goal", description: input.goal, evidence: [], source: "system", createdAt: now });
-      this.addEvents(id, [{
-        type: "project.created",
-        severity: "info",
-        category: "project",
-        source: "system",
-        worker: input.worker,
-        phase: "bootstrap",
-        data: { session: input.session },
-      }], now);
+      this.addFact(id, { id: "origin", description: input.target, evidence: [], source: "system", confidence: 1.0, createdAt: now });
+      this.addFact(id, { id: "goal", description: input.goal, evidence: [], source: "system", confidence: 1.0, createdAt: now });
     });
     return this.getProject(id);
   }
@@ -87,86 +67,71 @@ export class AgentRepository {
     const project = projectFromRow(row);
     return {
       project,
-      agents: this.agents(project.id),
       facts: this.facts(project.id),
       intents: this.intents(project.id),
-      hints: this.hints(project.id),
-      events: this.events(project.id),
-      reviews: this.reviews(project.id),
-      workerRuns: this.workerRuns(project.id),
-      workflowNodes: this.graph.nodes(project.id),
-      workflowEdges: this.graph.edges(project.id),
+      links: this.links(project.id),
+      runs: this.runs(project.id),
     };
   }
 
   updateProjectStatus(projectId: string, status: ProjectRecord["status"]): void {
     const now = utcnow();
-    this.transaction(() => {
-      const result = this.db.prepare("UPDATE projects SET status = ?, updated_at = ? WHERE id = ?").run(status, now, projectId);
-      if (Number(result.changes ?? 0) === 0) throw new Error(`project not found: ${projectId}`);
-      const projectNode = this.graph.node(projectId, "project", projectId, projectId);
-      const statusNode = this.graph.node(projectId, "status_change", `${status}:${Date.now()}`, status);
-      this.graph.edge(projectId, projectNode, statusNode, "changes_status");
-      this.addEvents(projectId, [{
-        type: "project.status_changed",
-        severity: status === "failed" ? "high" : "info",
-        category: "project",
-        source: "system",
-        worker: "system",
-        phase: "reason",
-        data: { status },
-      }], now);
-    });
+    const result = this.db.prepare("UPDATE projects SET status = ?, updated_at = ? WHERE id = ?").run(status, now, projectId);
+    if (Number(result.changes ?? 0) === 0) throw new Error(`project not found: ${projectId}`);
   }
 
   touchProject(projectId: string): void {
     this.db.prepare("UPDATE projects SET updated_at = ? WHERE id = ?").run(utcnow(), projectId);
   }
 
+  touchReview(projectId: string): void {
+    const now = utcnow();
+    this.db.prepare("UPDATE projects SET last_review_at = ?, updated_at = ? WHERE id = ?").run(now, now, projectId);
+  }
+
+  // ─── Facts (observation nodes) ───
+
   addFact(projectId: string, fact: Fact): void {
     this.db.prepare(`
-      INSERT OR REPLACE INTO facts (id, project_id, description, evidence_json, source, created_at)
-      VALUES (?, ?, ?, ?, ?, ?)
-    `).run(fact.id, projectId, fact.description, JSON.stringify(fact.evidence), fact.source, fact.createdAt);
-    this.graph.node(projectId, "fact", fact.id, fact.description, { source: fact.source });
+      INSERT OR REPLACE INTO facts (id, project_id, description, evidence_json, source, confidence, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `).run(fact.id, projectId, fact.description, JSON.stringify(fact.evidence), fact.source, fact.confidence, fact.createdAt);
   }
+
+  // ─── Intents (work units / directed edges) ───
 
   addIntent(projectId: string, input: {
     from: string[];
     description: string;
     creator: string;
-    agent?: string;
     role?: string;
     worker?: WorkerName;
+    priority?: number;
     promptText?: string;
-    fromEvents?: string[];
   }): Intent {
     const now = utcnow();
-    const agent = input.agent ?? input.role ?? "explorer";
     const intent: Intent = {
       id: this.nextId("intents", projectId, "i"),
-      from: input.from,
+      fromFacts: input.from,
       description: input.description,
       creator: input.creator,
-      agent,
-      role: agent,
+      role: input.role,
       worker: input.worker,
       promptText: input.promptText,
-      fromEvents: input.fromEvents,
       status: "open",
+      priority: input.priority ?? 0,
       createdAt: now,
     };
-    this.db.prepare(`
-      INSERT INTO intents (id, project_id, from_json, description, creator, agent, role, worker, status, prompt_text, from_events_json, created_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'open', ?, ?, ?)
-    `).run(intent.id, projectId, JSON.stringify(intent.from), intent.description, intent.creator, intent.agent, intent.role, intent.worker ?? null, intent.promptText ?? null, JSON.stringify(intent.fromEvents ?? []), now);
-    const intentNode = this.graph.node(projectId, "intent", intent.id, intent.description, { agent: intent.agent, creator: intent.creator });
-    for (const factId of intent.from) {
-      this.graph.edge(projectId, this.graph.node(projectId, "fact", factId, factId), intentNode, "originates_from");
-    }
-    for (const eventId of intent.fromEvents ?? []) {
-      this.graph.edge(projectId, this.graph.node(projectId, "event", eventId, eventId), intentNode, "creates");
-    }
+    this.transaction(() => {
+      this.db.prepare(`
+        INSERT INTO intents (id, project_id, description, creator, role, worker, prompt_text, status, priority, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, 'open', ?, ?)
+      `).run(intent.id, projectId, intent.description, intent.creator, intent.role ?? null, intent.worker ?? null, intent.promptText ?? null, intent.priority, now);
+      for (const factId of input.from) {
+        this.db.prepare("INSERT OR IGNORE INTO intent_sources (project_id, intent_id, fact_id) VALUES (?, ?, ?)")
+          .run(projectId, intent.id, factId);
+      }
+    });
     return intent;
   }
 
@@ -175,24 +140,12 @@ export class AgentRepository {
     if (!current) throw new Error(`intent not found: ${intentId}`);
     if (current.status !== "open") throw new Error(`intent is not open: ${intentId}`);
     const now = utcnow();
-    this.transaction(() => {
-      const result = this.db.prepare(`
-        UPDATE intents
-        SET status = 'working', worker = ?, claimed_by = ?, claimed_at = ?
-        WHERE project_id = ? AND id = ? AND status = 'open'
-      `).run(worker, worker, now, projectId, intentId);
-      if (Number(result.changes ?? 0) === 0) throw new Error(`intent is not open: ${intentId}`);
-      this.addEvents(projectId, [{
-        type: "intent.claimed",
-        severity: "info",
-        category: "intent",
-        source: worker,
-        worker,
-        phase: "explore",
-        intentId,
-        data: { claimedBy: worker },
-      }], now);
-    });
+    const result = this.db.prepare(`
+      UPDATE intents
+      SET status = 'working', worker = ?, claimed_by = ?, claimed_at = ?
+      WHERE project_id = ? AND id = ? AND status = 'open'
+    `).run(worker, worker, now, projectId, intentId);
+    if (Number(result.changes ?? 0) === 0) throw new Error(`intent is not open: ${intentId}`);
     return this.intent(projectId, intentId) ?? current;
   }
 
@@ -205,12 +158,12 @@ export class AgentRepository {
     return this.intents(projectId).find((item) => item.id === intentId) ?? current;
   }
 
-  concludeIntent(projectId: string, intentId: string, description: string, evidence: string[], source: string): Fact {
+  concludeIntent(projectId: string, intentId: string, description: string, evidence: string[], source: string, confidence = 1.0): Fact {
     const now = utcnow();
     const current = this.intent(projectId, intentId);
     if (!current) throw new Error(`intent not found: ${intentId}`);
     if (current.status === "done" || current.status === "failed") throw new Error(`intent is already closed: ${intentId}`);
-    const fact: Fact = { id: this.nextId("facts", projectId, "f"), description, evidence, source, createdAt: now };
+    const fact: Fact = { id: this.nextId("facts", projectId, "f"), description, evidence, source, confidence, createdAt: now };
     this.transaction(() => {
       this.addFact(projectId, fact);
       const result = this.db.prepare(`
@@ -219,17 +172,6 @@ export class AgentRepository {
         WHERE project_id = ? AND id = ? AND status != 'done' AND status != 'failed'
       `).run(fact.id, now, projectId, intentId);
       if (Number(result.changes ?? 0) === 0) throw new Error(`intent is already closed: ${intentId}`);
-      this.graph.edge(projectId, this.graph.node(projectId, "intent", intentId, intentId), this.graph.node(projectId, "fact", fact.id, fact.description), "concludes_to");
-      this.addEvents(projectId, [{
-        type: "intent.concluded",
-        severity: "info",
-        category: "intent",
-        source,
-        worker: current.worker ?? "system",
-        phase: "explore",
-        intentId,
-        data: { factId: fact.id },
-      }], now);
     });
     return fact;
   }
@@ -238,131 +180,187 @@ export class AgentRepository {
     const current = this.intent(projectId, intentId);
     if (!current) throw new Error(`intent not found: ${intentId}`);
     const now = utcnow();
-    this.transaction(() => {
-      const result = this.db.prepare(`
-        UPDATE intents
-        SET status = 'failed', concluded_at = ?, failure_reason = ?
-        WHERE project_id = ? AND id = ? AND status != 'done' AND status != 'failed'
-      `).run(now, reason, projectId, intentId);
-      if (Number(result.changes ?? 0) === 0) return;
-      this.addEvents(projectId, [{
-        type: "intent.failed",
-        severity: "medium",
-        category: "intent",
-        source: current.worker ?? "system",
-        worker: current.worker ?? "system",
-        phase: "explore",
-        intentId,
-        data: { reason },
-      }], now);
-    });
-  }
-
-  addHint(projectId: string, content: string, creator = "human"): Hint {
-    const now = utcnow();
-    const hint: Hint = { id: this.nextId("hints", projectId, "h"), content, creator, createdAt: now };
-    this.db.prepare("INSERT INTO hints (id, project_id, content, creator, created_at) VALUES (?, ?, ?, ?, ?)").run(hint.id, projectId, hint.content, hint.creator, now);
-    return hint;
-  }
-
-  addEvents(projectId: string, events: Array<Omit<WorkflowEvent, "id" | "createdAt">>, createdAt = utcnow()): WorkflowEvent[] {
-    const created: WorkflowEvent[] = [];
-    for (const event of events) {
-      const item: WorkflowEvent = { ...event, id: this.nextId("events", projectId, "e"), createdAt };
-      this.db.prepare(`
-        INSERT INTO events (id, project_id, type, severity, source, sink, category, data_json, worker, phase, intent_id, created_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `).run(item.id, projectId, item.type, item.severity ?? null, item.source ?? null, item.sink ?? null, item.category ?? null, item.data ? JSON.stringify(item.data) : null, item.worker, item.phase, item.intentId ?? null, item.createdAt);
-      const eventNode = this.graph.node(projectId, "event", item.id, item.type, { severity: item.severity, phase: item.phase });
-      if (item.intentId) this.graph.edge(projectId, this.graph.node(projectId, "intent", item.intentId, item.intentId), eventNode, "emits");
-      created.push(item);
-    }
-    return created;
-  }
-
-  addReview(projectId: string, review: Omit<Review, "id" | "projectId" | "createdAt">): Review {
-    const item: Review = { ...review, id: this.nextId("reviews", projectId, "rv"), projectId, createdAt: utcnow() };
-    this.db.prepare("INSERT INTO reviews (id, project_id, worker, summary, severity, events_json, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)")
-      .run(item.id, projectId, item.worker, item.summary, item.severity ?? null, JSON.stringify(item.events), item.createdAt);
-    const reviewNode = this.graph.node(projectId, "review", item.id, item.summary, { severity: item.severity });
-    for (const event of item.events) this.graph.edge(projectId, this.graph.node(projectId, "event", event.id, event.type), reviewNode, "reviews");
-    return item;
-  }
-
-  addWorkerRun(projectId: string, run: WorkerRun & { role: string }): void {
     this.db.prepare(`
-      INSERT INTO worker_runs (project_id, worker, role, agent, phase, intent_id, returncode, stdout_preview, stderr_preview, error_kind, worker_session, started_at, completed_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(projectId, run.worker, run.role, run.agent ?? run.role, run.phase, run.intentId ?? null, run.returncode, run.stdoutPreview, run.stderrPreview, run.errorKind ?? null, run.workerSession ?? null, run.startedAt, run.completedAt);
-    const runNode = this.graph.node(projectId, "worker_run", `${run.startedAt}:${run.worker}:${run.phase}`, `${run.phase}/${run.worker}`, { agent: run.agent ?? run.role, returncode: run.returncode, errorKind: run.errorKind });
-    if (run.intentId) this.graph.edge(projectId, this.graph.node(projectId, "intent", run.intentId, run.intentId), runNode, "dispatches");
+      UPDATE intents
+      SET status = 'failed', concluded_at = ?, failure_reason = ?
+      WHERE project_id = ? AND id = ? AND status != 'done' AND status != 'failed'
+    `).run(now, reason, projectId, intentId);
   }
 
-  hasWorkflowFire(projectId: string, ruleId: string, eventId: string): boolean {
-    return Boolean(this.db.prepare("SELECT 1 FROM workflow_fires WHERE project_id = ? AND rule_id = ? AND event_id = ?").get(projectId, ruleId, eventId));
-  }
+  // ─── Links (directed reasoning dependencies) ───
 
-  markWorkflowFire(projectId: string, ruleId: string, eventId: string): void {
+  addLink(projectId: string, input: {
+    fromFactId: string;
+    toFactId: string;
+    kind: string;
+    evidence?: string[];
+  }): Link {
+    this.assertAcyclicReasoningEdge(projectId, input.fromFactId, input.toFactId);
     const now = utcnow();
-    this.db.prepare("INSERT OR IGNORE INTO workflow_fires (project_id, rule_id, event_id, created_at) VALUES (?, ?, ?, ?)").run(projectId, ruleId, eventId, now);
-    this.graph.edge(projectId, this.graph.node(projectId, "event", eventId, eventId), this.graph.node(projectId, "workflow_rule", ruleId, ruleId), "fires_rule");
-    this.addEvents(projectId, [{
-      type: "workflow.rule_fired",
-      severity: "info",
-      category: "workflow",
-      source: ruleId,
-      worker: "workflow",
-      phase: "reason",
-      data: { ruleId, eventId },
-    }], now);
+    const link: Link = {
+      id: this.nextId("links", projectId, "l"),
+      projectId,
+      fromFactId: input.fromFactId,
+      toFactId: input.toFactId,
+      kind: input.kind,
+      evidence: input.evidence ?? [],
+      createdAt: now,
+    };
+    this.db.prepare(`
+      INSERT INTO links (id, project_id, from_fact_id, to_fact_id, kind, evidence_json, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `).run(link.id, projectId, link.fromFactId, link.toFactId, link.kind, JSON.stringify(link.evidence), now);
+    return link;
   }
 
-  private agents(projectId: string): Record<string, AgentConfig> {
-    const rows = this.db.prepare("SELECT * FROM agents WHERE project_id = ? ORDER BY id").all(projectId);
-    const agents: Record<string, AgentConfig> = {};
-    for (const row of rows) {
-      agents[String(row.id)] = parseJsonObject(row.config_json) as AgentConfig;
-    }
-    return agents;
+  links(projectId: string): Link[] {
+    return this.db.prepare("SELECT * FROM links WHERE project_id = ? ORDER BY created_at, id")
+      .all(projectId).map(linkFromRow);
   }
+
+  // ─── Runs (worker execution records) ───
+
+  addRun(projectId: string, run: Run & { id?: number }): void {
+    this.db.prepare(`
+      INSERT INTO runs (project_id, worker, role, phase, intent_id, returncode, stdout_preview, stderr_preview, started_at, completed_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(projectId, run.worker, run.role, run.phase, run.intentId ?? null, run.returncode, run.stdoutPreview, run.stderrPreview, run.startedAt, run.completedAt);
+  }
+
+  // ─── Graph traversal (recursive CTE) ───
+
+  /**
+   * Trace the proof chain backwards from a fact through intent_sources and links.
+   * Returns facts ordered by depth (deepest first). Max depth 30 to bound recursion.
+   */
+  proofChain(projectId: string, factId: string, maxDepth = 30): Array<{ fact: Fact; depth: number; path: string[] }> {
+    const rows = this.db.prepare(`
+      WITH RECURSIVE chain(fact_id, depth, path) AS (
+        SELECT ?, 0, ?
+        UNION ALL
+        SELECT s.fact_id, c.depth + 1, c.path || ',' || s.fact_id
+        FROM intent_sources s
+        JOIN intents i ON i.project_id = s.project_id AND i.id = s.intent_id
+        JOIN chain c ON c.fact_id = i.to_fact_id
+        WHERE i.project_id = ? AND i.status = 'done' AND c.depth < ?
+        UNION ALL
+        SELECT l.from_fact_id, c.depth + 1, c.path || ',' || l.from_fact_id
+        FROM links l
+        JOIN chain c ON c.fact_id = l.to_fact_id
+        WHERE l.project_id = ? AND c.depth < ?
+      )
+      SELECT f.id, f.project_id, f.description, f.evidence_json, f.source, f.confidence, f.created_at,
+             chain.depth, chain.path
+      FROM facts f
+      JOIN chain ON f.id = chain.fact_id
+      WHERE f.project_id = ?
+      GROUP BY f.id
+      ORDER BY chain.depth DESC
+    `).all(factId, factId, projectId, maxDepth, projectId, maxDepth, projectId);
+    return rows.map((row) => ({
+      fact: factFromRow(row),
+      depth: Number(row.depth),
+      path: String(row.path).split(","),
+    }));
+  }
+
+  /**
+   * All facts reachable downstream from a fact (forward direction).
+   */
+  descendants(projectId: string, factId: string, maxDepth = 30): Fact[] {
+    const rows = this.db.prepare(`
+      WITH RECURSIVE downstream(fact_id, depth) AS (
+        SELECT ?, 0
+        UNION ALL
+        SELECT i.to_fact_id, d.depth + 1
+        FROM intents i
+        JOIN intent_sources s ON s.project_id = i.project_id AND s.intent_id = i.id
+        JOIN downstream d ON d.fact_id = s.fact_id
+        WHERE i.project_id = ? AND i.status = 'done' AND i.to_fact_id IS NOT NULL AND d.depth < ?
+        UNION ALL
+        SELECT l.to_fact_id, d.depth + 1
+        FROM links l
+        JOIN downstream d ON d.fact_id = l.from_fact_id
+        WHERE l.project_id = ? AND d.depth < ?
+      )
+      SELECT DISTINCT f.* FROM facts f
+      JOIN downstream d ON f.id = d.fact_id
+      WHERE f.project_id = ? AND f.id != ?
+      ORDER BY d.depth
+    `).all(factId, projectId, maxDepth, projectId, maxDepth, projectId, factId);
+    return rows.map(factFromRow);
+  }
+
+  // ─── In-memory events (NOT persisted — for workflow rule matching only) ───
+
+  /**
+   * Build WorkflowEvent objects in memory. These are used by the dispatcher's
+   * rule matcher and then discarded. They are never written to the database.
+   */
+  emitEvents(projectId: string, events: Array<Omit<WorkflowEvent, "id" | "createdAt">>): WorkflowEvent[] {
+    const now = utcnow();
+    let counter = 0;
+    return events.map((event) => ({
+      ...event,
+      id: `evt_${projectId}_${now}_${counter++}`,
+      createdAt: now,
+    }));
+  }
+
+  // ─── Private read helpers ───
 
   private facts(projectId: string): Fact[] {
-    return this.db.prepare("SELECT * FROM facts WHERE project_id = ? ORDER BY created_at, id").all(projectId).map(factFromRow);
+    return this.db.prepare("SELECT * FROM facts WHERE project_id = ? ORDER BY created_at, id")
+      .all(projectId).map(factFromRow);
   }
 
   private intents(projectId: string): Intent[] {
-    return this.db.prepare("SELECT * FROM intents WHERE project_id = ? ORDER BY created_at, id").all(projectId).map(intentFromRow);
+    const rows = this.db.prepare("SELECT * FROM intents WHERE project_id = ? ORDER BY created_at, id").all(projectId);
+    return rows.map((row) => {
+      const intent = intentBaseFromRow(row);
+      intent.fromFacts = this.intentSources(projectId, intent.id);
+      return intent;
+    });
   }
 
   private intent(projectId: string, intentId: string): Intent | undefined {
     const row = this.db.prepare("SELECT * FROM intents WHERE project_id = ? AND id = ?").get(projectId, intentId);
-    return row ? intentFromRow(row) : undefined;
+    if (!row) return undefined;
+    const intent = intentBaseFromRow(row);
+    intent.fromFacts = this.intentSources(projectId, intent.id);
+    return intent;
   }
 
-  private hints(projectId: string): Hint[] {
-    return this.db.prepare("SELECT * FROM hints WHERE project_id = ? ORDER BY created_at, id").all(projectId).map(hintFromRow);
+  private intentSources(projectId: string, intentId: string): string[] {
+    const rows = this.db.prepare("SELECT fact_id FROM intent_sources WHERE project_id = ? AND intent_id = ? ORDER BY fact_id")
+      .all(projectId, intentId);
+    return rows.map((row) => String(row.fact_id));
   }
 
-  private events(projectId: string): WorkflowEvent[] {
-    return this.db.prepare("SELECT * FROM events WHERE project_id = ? ORDER BY created_at, id").all(projectId).map(eventFromRow);
+  private runs(projectId: string): Run[] {
+    return this.db.prepare("SELECT * FROM runs WHERE project_id = ? ORDER BY id").all(projectId).map(runFromRow);
   }
 
-  private reviews(projectId: string): Review[] {
-    return this.db.prepare("SELECT * FROM reviews WHERE project_id = ? ORDER BY created_at, id").all(projectId).map(reviewFromRow);
-  }
-
-  private workerRuns(projectId: string): WorkerRun[] {
-    return this.db.prepare("SELECT * FROM worker_runs WHERE project_id = ? ORDER BY id").all(projectId).map(workerRunFromRow);
-  }
-
-  lastReview(projectId: string): Review | undefined {
-    const row = this.db.prepare("SELECT * FROM reviews WHERE project_id = ? ORDER BY created_at DESC, id DESC LIMIT 1").get(projectId);
-    return row ? reviewFromRow(row) : undefined;
+  private agents(projectId: string): Record<string, AgentConfig> {
+    // Agents config lives in task.json now; read from projects.config_json.
+    const row = this.db.prepare("SELECT config_json FROM projects WHERE id = ?").get(projectId);
+    if (!row) return {};
+    const config = parseJson(row.config_json, {}) as TaskConfig;
+    return config.agents ?? {};
   }
 
   private nextId(table: string, projectId: string, prefix: string): string {
     const row = this.db.prepare(`SELECT COUNT(*) AS count FROM ${table} WHERE project_id = ? AND id LIKE ?`).get(projectId, `${prefix}%`);
     return `${prefix}${String(Number(row?.count ?? 0) + 1).padStart(3, "0")}`;
+  }
+
+  private assertAcyclicReasoningEdge(projectId: string, fromFactId: string, toFactId: string): void {
+    if (fromFactId === toFactId) {
+      throw new Error(`reasoning link would create a cycle: ${fromFactId} -> ${toFactId}`);
+    }
+    if (this.descendants(projectId, toFactId).some((fact) => fact.id === fromFactId)) {
+      throw new Error(`reasoning link would create a cycle: ${fromFactId} -> ${toFactId}`);
+    }
   }
 
   private transaction<T>(fn: () => T): T {
@@ -378,11 +376,79 @@ export class AgentRepository {
   }
 }
 
-function parseJsonObject(value: unknown): Record<string, unknown> {
-  try {
-    const parsed: unknown = JSON.parse(String(value ?? "{}"));
-    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed as Record<string, unknown> : {};
-  } catch {
-    return {};
-  }
+// ─── Row mappers (file-private) ───
+
+function projectFromRow(row: Record<string, unknown>): ProjectRecord {
+  return {
+    id: String(row.id),
+    session: String(row.session),
+    name: String(row.name),
+    target: String(row.target),
+    goal: String(row.goal),
+    status: String(row.status) as ProjectRecord["status"],
+    worker: String(row.worker) as WorkerName,
+    sessionDir: String(row.session_dir),
+    configPath: String(row.config_path),
+    taskConfig: parseJson(row.config_json, {}) as TaskConfig,
+    lastReviewAt: row.last_review_at ? String(row.last_review_at) : undefined,
+    createdAt: String(row.created_at),
+    updatedAt: String(row.updated_at),
+  };
+}
+
+function factFromRow(row: Record<string, unknown>): Fact {
+  return {
+    id: String(row.id),
+    description: String(row.description),
+    evidence: parseJson(row.evidence_json, []) as string[],
+    source: String(row.source),
+    confidence: Number(row.confidence ?? 1.0),
+    createdAt: String(row.created_at),
+  };
+}
+
+function intentBaseFromRow(row: Record<string, unknown>): Intent {
+  return {
+    id: String(row.id),
+    fromFacts: [], // populated by caller via intentSources()
+    to: row.to_fact_id ? String(row.to_fact_id) : undefined,
+    description: String(row.description),
+    creator: String(row.creator),
+    role: row.role ? String(row.role) : undefined,
+    worker: row.worker ? String(row.worker) as WorkerName : undefined,
+    promptText: row.prompt_text ? String(row.prompt_text) : undefined,
+    status: String(row.status) as Intent["status"],
+    priority: Number(row.priority ?? 0),
+    claimedBy: row.claimed_by ? String(row.claimed_by) : undefined,
+    claimedAt: row.claimed_at ? String(row.claimed_at) : undefined,
+    failureReason: row.failure_reason ? String(row.failure_reason) : undefined,
+    createdAt: String(row.created_at),
+    concludedAt: row.concluded_at ? String(row.concluded_at) : undefined,
+  };
+}
+
+function linkFromRow(row: Record<string, unknown>): Link {
+  return {
+    id: String(row.id),
+    projectId: String(row.project_id),
+    fromFactId: String(row.from_fact_id),
+    toFactId: String(row.to_fact_id),
+    kind: String(row.kind),
+    evidence: parseJson(row.evidence_json, []) as string[],
+    createdAt: String(row.created_at),
+  };
+}
+
+function runFromRow(row: Record<string, unknown>): Run {
+  return {
+    worker: String(row.worker) as WorkerName,
+    role: String(row.role),
+    phase: String(row.phase) as Run["phase"],
+    intentId: row.intent_id ? String(row.intent_id) : undefined,
+    returncode: Number(row.returncode),
+    stdoutPreview: String(row.stdout_preview),
+    stderrPreview: String(row.stderr_preview),
+    startedAt: String(row.started_at),
+    completedAt: String(row.completed_at),
+  };
 }

@@ -13,10 +13,6 @@
     "declaration": true,
     "declarationMap": false,
     "sourceMap": false,
-    "baseUrl": ".",
-    "paths": {
-      "commander": ["../decx-cli/node_modules/commander/typings/index.d.ts"]
-    },
     "noImplicitReturns": true,
     "noFallthroughCasesInSwitch": true,
     "types": ["node"]

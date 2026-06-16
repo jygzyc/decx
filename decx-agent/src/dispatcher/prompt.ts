@@ -1,5 +1,4 @@
-import type { AgentPhase, Fact, Hint, Intent, TaskConfig, WorkerRun, WorkflowEvent } from "../core/types.js";
-import type { ProjectDetail } from "../server/repository-types.js";
+import type { AgentPhase, Fact, Intent, Link, ProjectDetail, Run, TaskConfig } from "../core/types.js";
 import { defaultRoleForPhase, getRole, type RoleDefinition } from "./roles.js";
 import { resolveTools, type ToolDefinition } from "../tools/registry.js";
 
@@ -16,7 +15,7 @@ export interface PromptInput {
  */
 export function buildWorkerPrompt(input: PromptInput): string {
   const { detail, phase, intent } = input;
-  const roleId = input.role ?? intent?.agent ?? intent?.role ?? defaultRoleForPhase(phase);
+  const roleId = input.role ?? defaultRoleForPhase(phase);
   const role = getRole(detail.project.taskConfig, roleId);
   const tools = resolveTools(detail.project.taskConfig, role.tools);
 
@@ -48,16 +47,16 @@ export function buildWorkerPrompt(input: PromptInput): string {
     // Phase-specific instructions
     phaseInstruction(detail.project.taskConfig, phase),
 
-    // Current graph state
-    graphBlock(detail.facts, detail.intents, detail.hints),
+    // Current graph state (facts + intents + links)
+    graphBlock(detail.facts, detail.intents, detail.links),
 
     // Recent history
-    workerHistory(detail.workerRuns),
+    workerHistory(detail.runs),
 
     // Current intent
     intent ? [
       `Current intent: ${intent.id}`,
-      `Role: ${intent.role ?? "explorer"}`,
+      intent.role ? `Role: ${intent.role}` : "",
       `Description: ${intent.description}`,
       intent.promptText ? `Intent prompt:\n${intent.promptText}` : "",
     ].filter(Boolean).join("\n") : "",
@@ -91,22 +90,26 @@ function phaseInstruction(config: TaskConfig, phase: AgentPhase): string {
   return `Phase instruction: ${text}`;
 }
 
-function graphBlock(facts: Fact[], intents: Intent[], hints: Hint[]): string {
-  const fmtIntent = (i: Intent) =>
-    `- ${i.id} [${i.status}] agent=${i.agent ?? i.role ?? "explorer"} from=${i.from.join(",") || "origin"}: ${i.description}`;
+function graphBlock(facts: Fact[], intents: Intent[], links: Link[]): string {
+  const fmtIntent = (i: Intent) => {
+    const role = i.role ?? i.creator;
+    return `- ${i.id} [${i.status}] role=${role} from=${i.fromFacts.join(",") || "origin"}: ${i.description}`;
+  };
+  const fmtLink = (l: Link) =>
+    `- ${l.id}: ${l.fromFactId} --${l.kind}--> ${l.toFactId}`;
   return [
     "Facts:",
-    facts.map(f => `- ${f.id}: ${f.description}`).join("\n") || "- none",
+    facts.map(f => `- ${f.id}${f.confidence < 1.0 ? ` (${(f.confidence * 100).toFixed(0)}%)` : ""}: ${f.description}`).join("\n") || "- none",
     "",
     "Intents:",
     intents.map(fmtIntent).join("\n") || "- none",
     "",
-    "Hints:",
-    hints.map(h => `- ${h.id}: ${h.content}`).join("\n") || "- none",
+    "Links:",
+    links.map(fmtLink).join("\n") || "- none",
   ].join("\n");
 }
 
-function workerHistory(runs: WorkerRun[]): string {
+function workerHistory(runs: Run[]): string {
   const recent = runs.slice(-5);
   return [
     "Recent worker runs:",

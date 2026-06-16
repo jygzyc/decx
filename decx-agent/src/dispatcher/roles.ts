@@ -52,7 +52,7 @@ const BUILTIN_ROLES: Record<string, RoleDefinition> = {
 
 // Priority: task.json config → programmatic provider → builtin fallback
 export function getRole(config: TaskConfig | undefined, roleId: string): RoleDefinition {
-  const configured = config?.agents?.[roleId] ?? config?.roles?.[roleId];
+  const configured = config?.agents?.[roleId];
   if (configured) {
     const parentId = configured.extends ?? (BUILTIN_ROLES[roleId] ? roleId : "explorer");
     const parent = parentId === roleId && BUILTIN_ROLES[roleId] ? BUILTIN_ROLES[roleId] : getRole(config, parentId);

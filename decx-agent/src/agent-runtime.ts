@@ -1,10 +1,9 @@
 import type { DatabaseSync } from "node:sqlite";
 import { loadTaskConfigInput } from "./core/task-config.js";
-import type { WorkerConfig, WorkerName } from "./core/types.js";
+import type { ProjectDetail, WorkerConfig, WorkerName } from "./core/types.js";
 import { DispatcherLoop, type DispatcherOptions } from "./dispatcher/loop.js";
 import { openAgentDb } from "./server/db.js";
 import { AgentRepository } from "./server/repository.js";
-import type { ProjectDetail } from "./server/repository-types.js";
 import { knownWorkers, workerCapabilities } from "./workers/registry.js";
 
 export interface StartRunInput {

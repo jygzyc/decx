@@ -3,6 +3,13 @@ import { Command } from "commander";
 import { loadTaskConfigInput } from "./core/task-config.js";
 import { VERSION } from "./core/version.js";
 import { knownWorkers, workerCapabilities } from "./workers/registry.js";
+import {
+  defaultProvidersPath,
+  findProvider,
+  initProvidersFile,
+  listKnownProviders,
+  loadProvidersFile,
+} from "./core/providers-config.js";
 
 type Options = Record<string, unknown> & {
   db?: string;
@@ -12,6 +19,7 @@ type Options = Record<string, unknown> & {
   host?: string;
   port?: string;
   dispatch?: boolean;
+  path?: string;
 };
 
 try {
@@ -78,6 +86,58 @@ function program(): Command {
     .action((configPath: string | undefined) => {
       const configured = configPath ? loadTaskConfigInput(configPath).config.workers : undefined;
       printJson({ ...workerCapabilities(), workers: knownWorkers(configured) });
+    });
+
+  const providers = command
+    .command("providers")
+    .description("Manage model provider configurations (~/.decx/agent/providers.json).");
+
+  providers
+    .command("init")
+    .description("Create ~/.decx/agent/providers.json seeded with built-in presets if it does not exist.")
+    .option("--path <file>", "custom providers file path")
+    .action((options: Options) => {
+      const result = initProvidersFile(options.path);
+      console.log(result.created ? `Created ${result.path} with built-in presets.` : `${result.path} already exists.`);
+    });
+
+  providers
+    .command("list")
+    .description("List all known providers (user-defined + presets).")
+    .option("--path <file>", "custom providers file path")
+    .action((options: Options) => {
+      const entries = listKnownProviders(loadProvidersFile(options.path));
+      const rows = entries.map((e) => ({
+        id: e.id,
+        name: e.name,
+        source: e.source,
+        baseURL: e.baseURL,
+        apiKeyEnv: e.apiKeyEnv,
+        model: e.model,
+        apiKeySet: Boolean(process.env[e.apiKeyEnv]),
+      }));
+      printJson(rows);
+    });
+
+  providers
+    .command("show <id>")
+    .description("Show a single provider configuration.")
+    .option("--path <file>", "custom providers file path")
+    .action((id: string, options: Options) => {
+      const match = findProvider(id, loadProvidersFile(options.path));
+      if (!match) {
+        console.error(`Unknown provider: ${id}`);
+        process.exitCode = 1;
+        return;
+      }
+      printJson({ id, source: match.source, ...match.config, apiKeySet: Boolean(process.env[match.config.apiKeyEnv]) });
+    });
+
+  providers
+    .command("path")
+    .description("Print the providers file path in use.")
+    .action(() => {
+      console.log(defaultProvidersPath());
     });
 
   command

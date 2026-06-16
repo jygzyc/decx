@@ -6,10 +6,10 @@
 import { existsSync, readFileSync, statSync } from "fs";
 import * as path from "path";
 import { isRecord, positiveInt, safeSessionName, stringArray, stringValue } from "./utils.js";
-import type { AgentConfig, AgentPhase, ReviewerConfig, RoleAutonomy, TaskConfig, TaskDefinition, ToolConfig, ToolKind, WorkerConfig, WorkerKind, WorkerResponseMode, WorkerSessionStrategy, WorkflowConfig, WorkflowPhase } from "./types.js";
+import type { AgentConfig, AgentPhase, AgentTransport, ReviewerConfig, RoleAutonomy, TaskConfig, TaskDefinition, ToolConfig, ToolKind, WorkerConfig, WorkerKind, WorkflowConfig, WorkflowPhase } from "./types.js";
 
 const PHASE_KEYS: AgentPhase[] = ["bootstrap", "reason", "explore", "review"];
-const BUILTIN_WORKERS = ["noop", "codex", "claude-code", "opencode", "api"] as const;
+const BUILTIN_WORKERS = ["codex", "claude-code", "opencode", "api", "openai", "anthropic", "openai-compatible"] as const;
 
 export interface LoadedTaskConfig {
   config: TaskConfig;
@@ -44,12 +44,14 @@ function parseTaskConfig(value: Record<string, unknown>, baseDir: string): TaskC
   const roles = agentMap(value.roles, baseDir);
   const tools = toolMap(value.tools, baseDir);
   const workflow = workflowConfig(value.workflow, baseDir);
+  // Merge both `roles` and `agents` from task.json into the canonical `agents` field.
+  // `agents` overrides `roles` when the same key appears in both (agents is the newer name).
   const normalizedAgents = { ...(roles ?? {}), ...(agents ?? {}) };
   return {
     task,
     worker,
     agents: Object.keys(normalizedAgents).length > 0 ? normalizedAgents : undefined,
-    roles,
+    roles: undefined,
     tools,
     workers: workerMap(value.workers),
     workflow,
@@ -134,15 +136,15 @@ function workerMap(value: unknown): Record<string, WorkerConfig> {
     if (!kind) continue;
     result[worker] = {
       kind,
+      backend: stringValue(config.backend),
+      transport: agentTransport(config.transport),
       command: stringValue(config.command),
       args: stringArray(config.args),
-      sessionStrategy: workerSessionStrategy(config.sessionStrategy),
-      sessionPattern: stringValue(config.sessionPattern),
-      responseMode: workerResponseMode(config.responseMode),
       provider: stringValue(config.provider),
       baseUrl: stringValue(config.baseUrl),
       model: stringValue(config.model),
       apiKeyEnv: stringValue(config.apiKeyEnv),
+      password: stringValue(config.password),
       maxTokens: positiveInt(config.maxTokens),
       temperature: numberValue(config.temperature),
     };
@@ -206,7 +208,15 @@ function numberValue(value: unknown): number | undefined {
 
 function workerKind(value: unknown): WorkerKind | undefined {
   const kind = stringValue(value);
-  return kind === "noop" || kind === "command" || kind === "model" ? kind : undefined;
+  if (kind === "agent" || kind === "api") return kind;
+  if (kind === "command") return "agent";
+  if (kind === "model") return "api";
+  return undefined;
+}
+
+function agentTransport(value: unknown): AgentTransport | undefined {
+  const t = stringValue(value);
+  return t === "subprocess" || t === "http" ? t : undefined;
 }
 
 function toolKind(value: unknown): ToolKind | undefined {
@@ -214,18 +224,7 @@ function toolKind(value: unknown): ToolKind | undefined {
   return kind === "tool" || kind === "skill" ? kind : undefined;
 }
 
-function workerSessionStrategy(value: unknown): WorkerSessionStrategy | undefined {
-  const strategy = stringValue(value);
-  return strategy === "none" || strategy === "stable" || strategy === "uuid" || strategy === "regex" ? strategy : undefined;
-}
-
-function workerResponseMode(value: unknown): WorkerResponseMode | undefined {
-  const mode = stringValue(value);
-  return mode === "stdout" || mode === "jsonl-assistant-text" ? mode : undefined;
-}
-
 function defaultWorkerKind(worker: string): WorkerKind | undefined {
-  if (worker === "noop") return "noop";
-  if (worker === "api") return "model";
-  return BUILTIN_WORKERS.includes(worker as typeof BUILTIN_WORKERS[number]) ? "command" : undefined;
+  if (worker === "api" || worker === "openai" || worker === "anthropic" || worker === "openai-compatible") return "api";
+  return BUILTIN_WORKERS.includes(worker as typeof BUILTIN_WORKERS[number]) ? "agent" : undefined;
 }

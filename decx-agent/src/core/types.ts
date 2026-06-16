@@ -1,31 +1,46 @@
+/**
+ * Core type definitions for the agent framework.
+ *
+ * Design principle: schema constrains structure, not semantics.
+ * - `fact.description`, `intent.description`, `link.kind` carry all domain meaning.
+ * - No `fact_type` enum, no domain-specific primitives.
+ * - Same schema serves vuln-hunting, reverse engineering, research, any task.
+ *
+ * WorkflowEvent is the ONE exception: it's an in-memory protocol object for
+ * workflow rule matching, never persisted to the database.
+ */
+
 export type AgentPhase = "bootstrap" | "reason" | "explore" | "review";
 export type WorkerName = string;
-export type WorkerKind = "noop" | "command" | "model";
-export type WorkerSessionStrategy = "none" | "stable" | "uuid" | "regex";
-export type WorkerResponseMode = "stdout" | "jsonl-assistant-text";
+export type WorkerKind = "agent" | "api";
+export type AgentBackendId = "opencode" | "codex" | "claude-code" | string;
 export type ToolKind = "tool" | "skill";
 export type WorkflowSeverity = "info" | "low" | "medium" | "high" | "critical";
 
+// ─── Graph primitives (persisted) ───
+
+/** Immutable observation node. */
 export interface Fact {
   id: string;
   description: string;
   evidence: string[];
   source: string;
+  confidence: number; // 0.0–1.0; deterministic tools emit 1.0
   createdAt: string;
 }
 
+/** Work unit / directed edge (multi-source → single-sink) with lifecycle. */
 export interface Intent {
   id: string;
-  from: string[];
-  to?: string;
+  fromFacts: string[]; // populated from intent_sources edge table
+  to?: string; // produced fact id (or 'goal' sentinel)
   description: string;
   creator: string;
-  agent?: string;
-  role?: string;
+  role?: string; // which role should execute this intent (workflow rules use this)
   worker?: WorkerName;
-  fromEvents?: string[];
-  promptText?: string;
+  promptText?: string; // optional specific instruction for the worker
   status: "open" | "working" | "done" | "failed";
+  priority: number;
   claimedBy?: string;
   claimedAt?: string;
   failureReason?: string;
@@ -33,17 +48,88 @@ export interface Intent {
   concludedAt?: string;
 }
 
-export interface Hint {
+/** Directed reasoning dependency between two facts (no lifecycle, no worker dispatch). */
+export interface Link {
   id: string;
-  content: string;
-  creator: string;
+  projectId: string;
+  fromFactId: string;
+  toFactId: string;
+  kind: string; // arbitrary label: enables|bypasses|calls|flows_to|...
+  evidence: string[];
   createdAt: string;
 }
+
+/** Worker execution record. */
+export interface Run {
+  worker: WorkerName;
+  role: string;
+  phase: AgentPhase;
+  intentId?: string;
+  returncode: number;
+  stdoutPreview: string;
+  stderrPreview: string;
+  startedAt: string;
+  completedAt: string;
+}
+
+// ─── In-memory protocol objects (NOT persisted) ───
+
+/**
+ * WorkflowEvent is an in-memory signal passed from dispatcher actions to the
+ * workflow rule matcher. It is never written to the database — the events
+ * table was removed because dispatcher never read it for decisions.
+ */
+export interface WorkflowEvent {
+  id: string;
+  type: string;
+  severity?: WorkflowSeverity;
+  source?: string;
+  sink?: string;
+  category?: string;
+  data?: Record<string, unknown>;
+  createdAt: string;
+  worker: WorkerName;
+  phase: AgentPhase;
+  intentId?: string;
+}
+
+// ─── Project aggregates ───
+
+export interface ProjectRecord {
+  id: string;
+  session: string;
+  name: string;
+  target: string;
+  goal: string;
+  status: "active" | "stopped" | "completed" | "failed";
+  worker: WorkerName;
+  sessionDir: string;
+  configPath: string;
+  taskConfig: TaskConfig;
+  lastReviewAt?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ProjectDetail {
+  project: ProjectRecord;
+  facts: Fact[];
+  intents: Intent[];
+  links: Link[];
+  runs: Run[];
+}
+
+// ─── Task configuration (task.json schema) ───
 
 export interface TaskConfig {
   task: TaskDefinition;
   worker?: WorkerName;
+  /** Canonical agent/role definitions. At load time, both `agents` and `roles` from task.json are merged into this field. */
   agents?: Record<string, AgentConfig>;
+  /**
+   * Backward-compat alias parsed from task.json.
+   * Merged into `agents` at load time — runtime code should only look at `agents`.
+   */
   roles?: Record<string, RoleConfig>;
   tools?: Record<string, ToolConfig>;
   workers: Record<string, WorkerConfig>;
@@ -70,6 +156,7 @@ export interface AgentConfig {
   autonomy?: RoleAutonomy;
 }
 
+/** @deprecated Use `AgentConfig` instead. Kept for backward compatibility with task.json files that use `roles`. */
 export type RoleConfig = AgentConfig;
 
 export interface ToolConfig {
@@ -100,33 +187,21 @@ export interface ReviewerConfig {
   promptText?: string;
 }
 
+export type AgentTransport = "subprocess" | "http";
+
 export interface WorkerConfig {
   kind: WorkerKind;
+  backend?: AgentBackendId;
+  transport?: AgentTransport;
   command?: string;
   args?: string[];
-  sessionStrategy?: WorkerSessionStrategy;
-  sessionPattern?: string;
-  responseMode?: WorkerResponseMode;
-  provider?: string;
-  baseUrl?: string;
   model?: string;
+  baseUrl?: string;
   apiKeyEnv?: string;
+  password?: string;
+  provider?: string;
   maxTokens?: number;
   temperature?: number;
-}
-
-export interface WorkflowEvent {
-  id: string;
-  type: string;
-  severity?: WorkflowSeverity;
-  source?: string;
-  sink?: string;
-  category?: string;
-  data?: Record<string, unknown>;
-  createdAt: string;
-  worker: WorkerName;
-  phase: AgentPhase;
-  intentId?: string;
 }
 
 export interface WorkflowConfig {
@@ -171,49 +246,4 @@ export interface WorkflowCreateIntentAction {
   prompt?: string;
   promptText?: string;
   fromEvent?: boolean;
-}
-
-export interface WorkerRun {
-  worker: WorkerName;
-  agent?: string;
-  role: string;
-  phase: AgentPhase;
-  intentId?: string;
-  returncode: number;
-  stdoutPreview: string;
-  stderrPreview: string;
-  errorKind?: string;
-  workerSession?: string;
-  startedAt: string;
-  completedAt: string;
-}
-
-export interface Review {
-  id: string;
-  projectId: string;
-  worker: WorkerName;
-  summary: string;
-  severity?: WorkflowSeverity;
-  events: WorkflowEvent[];
-  createdAt: string;
-}
-
-export interface WorkflowNode {
-  id: string;
-  projectId: string;
-  kind: string;
-  refId: string;
-  label: string;
-  data?: Record<string, unknown>;
-  createdAt: string;
-}
-
-export interface WorkflowEdge {
-  id: string;
-  projectId: string;
-  fromNodeId: string;
-  toNodeId: string;
-  kind: string;
-  data?: Record<string, unknown>;
-  createdAt: string;
 }

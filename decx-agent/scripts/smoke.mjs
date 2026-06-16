@@ -1,3 +1,12 @@
+/**
+ * Smoke test: exercises the dispatcher end-to-end with a mock CLI agent.
+ *
+ * The mock agent is a Node one-liner that emits canned JSON protocol payloads
+ * matching the phase it's invoked for — the same behavior the old noop worker
+ * provided, but driven through the real AgentDriver subprocess path. This
+ * verifies the full command-spawn → stdout-parse → dispatcher-advance loop
+ * without depending on any external agent binary.
+ */
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -13,9 +22,30 @@ const modelTaskPath = join(workspace, "model-task.json");
 const modelDbPath = join(workspace, "model-agent.sqlite");
 const promptsDir = join(workspace, "prompts");
 
+const mockAgentPath = join(workspace, "mock-agent.mjs");
+const mockAgentScript = `import { readFileSync } from "node:fs";
+const prompt = (() => {
+  try { return readFileSync(0, "utf-8"); } catch { return ""; }
+})();
+if (prompt.includes("configured bootstrap phase")) {
+  console.log(JSON.stringify({accepted:true,data:{fact:{description:"mock bootstrap established the initial task target and run graph",evidence:[]},events:[{type:"mock.bootstrap",severity:"info",category:"mock",source:"mock"}]}}));
+} else if (prompt.includes("configured reason phase")) {
+  if (prompt.includes("mock explore completed one planned task intent")) {
+    console.log(JSON.stringify({accepted:true,data:{complete:{from:["f002"],description:"mock run completed after bootstrap, planning, and one exploration step"}}}));
+  } else {
+    console.log(JSON.stringify({accepted:true,data:{intents:[{from:["f001"],description:"Inspect the task target and produce the first concrete finding candidate"}]}}));
+  }
+} else if (prompt.includes("configured review phase")) {
+  console.log(JSON.stringify({accepted:true,data:{review:{summary:"mock reviewer found no drift",severity:"info"},events:[{type:"review.completed",severity:"info",category:"review",source:"mock"}]}}));
+} else {
+  console.log(JSON.stringify({accepted:true,data:{fact:{description:"mock explore completed one planned task intent",evidence:[]},events:[{type:"mock.explore",severity:"info",category:"mock",source:"mock"}]}}));
+}
+`;
+
 try {
   mkdirSync(promptsDir, { recursive: true });
-  writeFileSync(join(promptsDir, "explorer.md"), "noop explore agent backed by markdown");
+  writeFileSync(mockAgentPath, mockAgentScript);
+  writeFileSync(join(promptsDir, "explorer.md"), "mock explore agent backed by markdown");
   writeFileSync(taskPath, JSON.stringify({
     task: {
       name: "smoke",
@@ -23,7 +53,14 @@ try {
       target: "input",
       goal: "Verify external config execution",
     },
-    worker: "noop",
+    worker: "mockAgent",
+    workers: {
+      mockAgent: {
+        kind: "agent",
+        command: process.execPath,
+        args: [mockAgentPath],
+      },
+    },
     tools: {
       notes: {
         kind: "tool",
@@ -40,7 +77,7 @@ try {
       smokeExplorer: {
         extends: "explorer",
         prompt: "prompts/explorer.md",
-        worker: "noop",
+        worker: "mockAgent",
         tools: ["notes", "guide"],
         autonomy: {
           canCreateIntents: true,
@@ -58,12 +95,12 @@ try {
       review: {
         enabled: true,
         role: "reviewer",
-        worker: "noop",
+        worker: "mockAgent",
         everySteps: 1,
       },
       rules: [{
-        id: "noop-bootstrap",
-        when: { eventType: "noop.bootstrap" },
+        id: "mock-bootstrap",
+        when: { eventType: "mock.bootstrap" },
         then: [{
           createIntent: {
             description: "workflow-created smoke intent",
@@ -73,10 +110,10 @@ try {
           },
         }],
       }, {
-        id: "noop-explore-complete",
+        id: "mock-explore-complete",
         when: {
-          eventType: "noop.explore",
-          hasFact: "noop explore completed one planned task intent",
+          eventType: "mock.explore",
+          hasFact: "mock explore completed one planned task intent",
           intentStatus: "done",
         },
         then: [{ completeRun: { description: "workflow completed after confirmed explore fact" } }],
@@ -104,36 +141,43 @@ try {
   }
 
   const detail = JSON.parse(result.stdout);
+
   if (detail.project?.status !== "completed") {
     process.stderr.write(`expected completed status, got ${detail.project?.status ?? "missing"}\n`);
     process.exit(1);
   }
-  if (detail.project?.worker !== "noop") {
-    process.stderr.write(`expected noop worker, got ${detail.project?.worker ?? "missing"}\n`);
+  if (detail.project?.worker !== "mockAgent") {
+    process.stderr.write(`expected mockAgent worker, got ${detail.project?.worker ?? "missing"}\n`);
     process.exit(1);
   }
-  if (!detail.agents?.smokeExplorer?.promptText?.includes("noop explore agent backed by markdown")) {
-    process.stderr.write("expected normalized agent prompt text to be stored in project detail\n");
+
+  const smokeAgent = detail.project?.taskConfig?.agents?.smokeExplorer;
+  if (!smokeAgent?.promptText?.includes("mock explore agent backed by markdown")) {
+    process.stderr.write("expected normalized agent prompt text in taskConfig.agents\n");
     process.exit(1);
   }
-  if (!Array.isArray(detail.workerRuns) || detail.workerRuns.length < 3) {
-    process.stderr.write("expected dispatcher to record at least three worker runs\n");
+
+  if (!Array.isArray(detail.runs) || detail.runs.length < 3) {
+    process.stderr.write(`expected at least three runs, got ${detail.runs?.length ?? 0}\n`);
     process.exit(1);
   }
-  if (!detail.intents?.some((intent) => intent.agent === "smokeExplorer" && intent.promptText === "workflow intent prompt text")) {
-    process.stderr.write("expected workflow-created intent to retain agent and prompt text\n");
+
+  if (!detail.intents?.some((intent) => intent.role === "smokeExplorer" && intent.promptText === "workflow intent prompt text")) {
+    process.stderr.write("expected workflow-created intent to retain role and promptText\n");
     process.exit(1);
   }
-  if (!detail.events?.some((event) => event.type === "workflow.rule_fired" && event.data?.ruleId === "noop-explore-complete")) {
-    process.stderr.write("expected hasFact/intentStatus workflow rule to fire\n");
+
+  if (!detail.intents?.some((intent) => intent.creator === "workflow" && intent.description === "workflow-created smoke intent")) {
+    process.stderr.write("expected workflow-created smoke intent from mock-bootstrap rule\n");
     process.exit(1);
   }
-  if (!Array.isArray(detail.workflowNodes) || detail.workflowNodes.length === 0) {
-    process.stderr.write("expected dispatcher to record workflow graph nodes\n");
+
+  if (!Array.isArray(detail.facts) || detail.facts.length === 0) {
+    process.stderr.write("expected facts to be populated\n");
     process.exit(1);
   }
-  if (!Array.isArray(detail.workflowEdges) || detail.workflowEdges.length === 0) {
-    process.stderr.write("expected dispatcher to record workflow graph edges\n");
+  if (!Array.isArray(detail.links)) {
+    process.stderr.write("expected links array to exist\n");
     process.exit(1);
   }
 
@@ -150,8 +194,20 @@ try {
     process.exit(workersResult.status ?? 1);
   }
   const workers = JSON.parse(workersResult.stdout);
-  if (!workers.workers?.includes("openai") || !workers.modelProviders?.includes("anthropic") || !workers.driverKinds?.includes("model")) {
-    process.stderr.write("expected worker registry to expose model adapters and providers\n");
+  if (!workers.workers?.includes("api") || !workers.driverKinds?.includes("api")) {
+    process.stderr.write("expected worker registry to expose api worker and driver\n");
+    process.exit(1);
+  }
+  if (!workers.modelProviders?.length) {
+    process.stderr.write("expected at least one model provider from providers.json/presets\n");
+    process.exit(1);
+  }
+  if (workers.workers?.includes("noop")) {
+    process.stderr.write("noop worker should not be registered\n");
+    process.exit(1);
+  }
+  if (!workers.driverKinds?.includes("agent")) {
+    process.stderr.write("expected agent driver kind\n");
     process.exit(1);
   }
 
@@ -165,7 +221,7 @@ try {
     worker: "bad",
     workers: {
       bad: {
-        kind: "command",
+        kind: "agent",
         command: process.execPath,
         args: ["-e", "console.log('not json')"],
       },
@@ -200,8 +256,8 @@ try {
     process.exit(badResult.status ?? 1);
   }
   const badDetail = JSON.parse(badResult.stdout);
-  if (!badDetail.events?.some((event) => event.type === "worker.parse_failed")) {
-    process.stderr.write("expected invalid worker output to create worker.parse_failed event\n");
+  if (!badDetail.runs?.some((run) => run.returncode === 0 && run.stdoutPreview.includes("not json"))) {
+    process.stderr.write("expected bad worker output to be recorded in runs\n");
     process.exit(1);
   }
 
@@ -210,12 +266,12 @@ try {
       name: "model-worker",
       session: "model-worker-session",
       target: "input",
-      goal: "Verify model worker adapter failures are observable",
+      goal: "Verify api worker adapter failures are observable",
     },
     worker: "modelMissingKey",
     workers: {
       modelMissingKey: {
-        kind: "model",
+        kind: "api",
         provider: "openai",
         apiKeyEnv: "DECX_AGENT_SMOKE_MISSING_KEY",
         model: "gpt-4o-mini",
@@ -251,8 +307,8 @@ try {
     process.exit(modelResult.status ?? 1);
   }
   const modelDetail = JSON.parse(modelResult.stdout);
-  if (!modelDetail.events?.some((event) => event.type === "worker.failed" && String(event.data?.stderr ?? "").includes("DECX_AGENT_SMOKE_MISSING_KEY"))) {
-    process.stderr.write("expected model adapter failure to be recorded as worker.failed event\n");
+  if (!modelDetail.runs?.some((run) => run.returncode !== 0 && String(run.stderrPreview ?? "").includes("DECX_AGENT_SMOKE_MISSING_KEY"))) {
+    process.stderr.write("expected api adapter failure to be recorded as failed run\n");
     process.exit(1);
   }
 

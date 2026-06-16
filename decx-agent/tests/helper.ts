@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { DatabaseSync } from "node:sqlite";
 import { openAgentDb } from "../src/server/db.ts";
-import type { Fact, Hint, Intent, WorkflowEvent } from "../src/core/types.ts";
+import type { Fact, Intent, Link, WorkflowEvent } from "../src/core/types.ts";
 
 export interface TestDb {
   db: DatabaseSync;
@@ -31,6 +31,7 @@ export function makeFact(overrides: Partial<Fact> = {}): Fact {
     description: "test fact",
     evidence: [],
     source: "test",
+    confidence: 1.0,
     createdAt: new Date().toISOString(),
     ...overrides,
   };
@@ -39,26 +40,33 @@ export function makeFact(overrides: Partial<Fact> = {}): Fact {
 export function makeIntent(overrides: Partial<Intent> = {}): Intent {
   return {
     id: nextId("intent"),
-    from: [],
+    fromFacts: [],
     description: "test intent",
     creator: "tester",
-    role: "executor",
     status: "open",
+    priority: 0,
     createdAt: new Date().toISOString(),
     ...overrides,
   };
 }
 
-export function makeHint(overrides: Partial<Hint> = {}): Hint {
+export function makeLink(overrides: Partial<Link> = {}): Link {
   return {
-    id: nextId("hint"),
-    content: "test hint",
-    creator: "tester",
+    id: nextId("link"),
+    projectId: "proj_test",
+    fromFactId: "f001",
+    toFactId: "f002",
+    kind: "related",
+    evidence: [],
     createdAt: new Date().toISOString(),
     ...overrides,
   };
 }
 
+/**
+ * Build an in-memory WorkflowEvent for workflow rule matcher tests.
+ * These are NOT persisted — they exist only as in-memory protocol objects.
+ */
 export function makeEvent(overrides: Partial<WorkflowEvent> = {}): WorkflowEvent {
   return {
     id: nextId("event"),
