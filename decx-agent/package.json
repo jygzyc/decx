@@ -20,7 +20,7 @@
     "pack": "node scripts/pack.mjs"
   },
   "dependencies": {
-    "@ai-sdk/anthropic": "^3.0.84",
+    "@ai-sdk/anthropic": "^3.0.85",
     "@ai-sdk/openai": "^3.0.71",
     "ai": "^6.0.208",
     "commander": "^15.0.0"
