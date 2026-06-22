@@ -56,6 +56,7 @@ export function makeProcessCommand(): Command {
     .summary("Start a DECX server session for an APK, DEX, JAR, AAR, or framework jar")
     .description("Start decx-server.jar for a target file and record a reusable session. Unknown options after this command are forwarded to jadx-cli.")
     .option("-P, --port <port>", "DECX HTTP server port to bind")
+    .option("--mcp", "Also start MCP Streamable HTTP server on port + 1")
     .option("--force", "Start a new server even when a matching file/session already exists")
     .option("-n, --name <name>", "Session name used by -s/--session (default: input filename without extension)")
     .action(async (filePath: string, opts) => {
@@ -65,6 +66,7 @@ export function makeProcessCommand(): Command {
         port: opts.port,
         force: opts.force ?? false,
         name: opts.name,
+        mcp: opts.mcp ?? false,
         passthroughArgs: extractPassthroughArgs(),
       }));
       } catch (err) { handleCliError(err, fmt); }

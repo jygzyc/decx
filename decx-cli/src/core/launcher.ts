@@ -19,6 +19,7 @@ export interface OpenAnalysisTargetOptions {
   port?: string;
   force?: boolean;
   name?: string;
+  mcp?: boolean;
   passthroughArgs?: string[];
 }
 
@@ -31,16 +32,19 @@ export function buildDecxServerJavaArgs(
   filePath: string,
   port: number,
   jadxArgs: string[],
+  mcp?: boolean,
 ): string[] {
-  return [
+  const args = [
     `-Xmx${defaultJavaHeap()}`,
     "-jar",
     jarPath,
     filePath,
     "--port",
     String(port),
-    ...jadxArgs,
   ];
+  if (mcp) args.push("--mcp");
+  args.push(...jadxArgs);
+  return args;
 }
 
 export function normalizeJadxPassthroughArgs(args: string[] = []): string[] {
@@ -122,6 +126,7 @@ export async function openAnalysisTarget(
     resolvedFile,
     port,
     normalizeJadxPassthroughArgs(opts.passthroughArgs ?? []),
+    opts.mcp,
   );
   const logDir = decxPath("logs");
   mkdirSync(logDir, { recursive: true });
@@ -152,8 +157,8 @@ export async function openAnalysisTarget(
   const timeout = 300; // seconds
   const ready = await waitForServer(port, timeout, logPath, () => processExited);
   if (ready) {
-    logCliEvent({ command: "process", action: "open", session: session.name, pid: proc.pid, port, file: resolvedFile });
-    return { name: session.name, hash: session.hash, pid: proc.pid, port, file: resolvedFile, log: logPath, reused: false };
+    logCliEvent({ command: "process", action: "open", session: session.name, pid: proc.pid, port, file: resolvedFile, mcp: opts.mcp ?? false });
+    return { name: session.name, hash: session.hash, pid: proc.pid, port, file: resolvedFile, log: logPath, mcp: opts.mcp ?? false, mcpPort: opts.mcp ? port + 1 : undefined, reused: false };
   }
 
   mgr.removeSession(fileName);
@@ -292,7 +297,7 @@ export function extractPassthroughArgs(argv: readonly string[] = process.argv): 
 
   const raw = cmdArgs.slice(openIdx + 1);
   const decxFlagsWithValue = ["-P", "--port", "-n", "--name"];
-  const decxFlags = ["--force"];
+  const decxFlags = ["--force", "--mcp", "--no-mcp"];
 
   const result: string[] = [];
   let fileSkipped = false;

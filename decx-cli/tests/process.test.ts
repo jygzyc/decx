@@ -75,12 +75,13 @@ describe("process command structure", () => {
       expect(open.registeredArguments.length).toBeGreaterThanOrEqual(1);
     });
 
-    it("has --port, --force, and --name options", () => {
+    it("has --port, --force, --name, and --mcp options", () => {
       const open = findCommand(processCmd, ["open"])!;
       const flags = getOptionFlags(open);
       expect(flags.some(f => f.includes("--port"))).toBe(true);
       expect(flags.some(f => f.includes("--force"))).toBe(true);
       expect(flags.some(f => f.includes("--name"))).toBe(true);
+      expect(flags.some(f => f.includes("--mcp"))).toBe(true);
       expect(flags.some(f => f.includes("--heap"))).toBe(false);
     });
   });
@@ -188,6 +189,34 @@ describe("extractPassthroughArgs", () => {
 
     expect(extractPassthroughArgs()).toEqual(["--deobf"]);
   });
+
+  it("strips --mcp so it is not forwarded to jadx", () => {
+    process.argv = [
+      "node",
+      "decx",
+      "process",
+      "open",
+      "app.apk",
+      "--mcp",
+      "--deobf",
+    ];
+
+    expect(extractPassthroughArgs()).toEqual(["--deobf"]);
+  });
+
+  it("strips --no-mcp so it is not forwarded to jadx", () => {
+    process.argv = [
+      "node",
+      "decx",
+      "process",
+      "open",
+      "app.apk",
+      "--no-mcp",
+      "--deobf",
+    ];
+
+    expect(extractPassthroughArgs()).toEqual(["--deobf"]);
+  });
 });
 
 describe("buildDecxServerJavaArgs", () => {
@@ -199,6 +228,31 @@ describe("buildDecxServerJavaArgs", () => {
       "app.apk",
       "--port",
       "25419",
+      "--show-bad-code",
+    ]);
+  });
+
+  it("omits --mcp by default (MCP disabled unless explicitly enabled)", () => {
+    const args = buildDecxServerJavaArgs("server.jar", "app.apk", 25419, []);
+    expect(args).not.toContain("--mcp");
+  });
+
+  it("omits --mcp when mcp is false or undefined", () => {
+    expect(buildDecxServerJavaArgs("server.jar", "app.apk", 25419, [], false))
+      .not.toContain("--mcp");
+    expect(buildDecxServerJavaArgs("server.jar", "app.apk", 25419, [], undefined))
+      .not.toContain("--mcp");
+  });
+
+  it("includes --mcp between --port and jadx args when mcp is true", () => {
+    expect(buildDecxServerJavaArgs("server.jar", "app.apk", 25419, ["--show-bad-code"], true)).toEqual([
+      `-Xmx${defaultJavaHeap()}`,
+      "-jar",
+      "server.jar",
+      "app.apk",
+      "--port",
+      "25419",
+      "--mcp",
       "--show-bad-code",
     ]);
   });
