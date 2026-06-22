@@ -34,27 +34,57 @@ class DecxUIManager(
 
     private fun showSettingsDialog() {
         val panel = buildPanel()
-        val optionPane = JOptionPane(panel, JOptionPane.PLAIN_MESSAGE, JOptionPane.OK_CANCEL_OPTION)
 
-        // Refresh status every 1s while dialog is open
         val refreshTimer = Timer(1000) { refreshStatus() }
         refreshTimer.start()
 
-        val dialog = optionPane.createDialog(pluginContext.guiContext?.mainFrame, "DECX Settings")
-        dialog.isModal = true
+        val dialog = JDialog(pluginContext.guiContext?.mainFrame, "DECX Settings", true)
+        dialog.defaultCloseOperation = JDialog.DISPOSE_ON_CLOSE
 
-        // Measure the actual preferred size of the content, then add padding
-        panel.setSize(panel.preferredSize)
-        val contentPreferred = panel.preferredSize
-        val dialogWidth = contentPreferred.width.coerceAtLeast(420) + 40
-        val dialogHeight = contentPreferred.height.coerceAtLeast(300) + 60
-        dialog.setSize(dialogWidth, dialogHeight)
+        val okBtn = JButton("OK")
+        val cancelBtn = JButton("Cancel")
+        val buttonBar = JPanel(FlowLayout(FlowLayout.RIGHT))
+        buttonBar.add(okBtn)
+        buttonBar.add(cancelBtn)
+
+        // Wrap the settings panel in a scroll pane so it never gets clipped
+        val scrollPane = JScrollPane(panel)
+        scrollPane.border = BorderFactory.createEmptyBorder()
+        scrollPane.verticalScrollBarPolicy = JScrollPane.VERTICAL_SCROLLBAR_AS_NEEDED
+        scrollPane.horizontalScrollBarPolicy = JScrollPane.HORIZONTAL_SCROLLBAR_NEVER
+
+        val content = dialog.contentPane
+        content.layout = java.awt.BorderLayout()
+        content.add(scrollPane, java.awt.BorderLayout.CENTER)
+        content.add(buttonBar, java.awt.BorderLayout.SOUTH)
+
+        var saved = false
+        okBtn.addActionListener {
+            saved = true
+            dialog.dispose()
+        }
+        cancelBtn.addActionListener { dialog.dispose() }
+        dialog.rootPane.defaultButton = okBtn
+
+        dialog.pack()
+
+        // Clamp the dialog size: not too small (buttons visible), not absurdly tall
+        val screenBounds = pluginContext.guiContext?.mainFrame?.graphicsConfiguration?.bounds
+        val maxW = (screenBounds?.width ?: 600) - 100
+        val maxH = (screenBounds?.height ?: 800) - 100
+        val prefW = dialog.preferredSize.width.coerceIn(420, maxW)
+        val prefH = dialog.preferredSize.height.coerceIn(250, maxH)
+        dialog.preferredSize = java.awt.Dimension(prefW, prefH)
+        dialog.setSize(prefW, prefH)
+        dialog.minimumSize = java.awt.Dimension(420, 250)
+
+        dialog.isResizable = true
         dialog.setLocationRelativeTo(pluginContext.guiContext?.mainFrame)
         dialog.isVisible = true
 
         refreshTimer.stop()
 
-        if (optionPane.value == JOptionPane.OK_OPTION) {
+        if (saved) {
             saveSettings()
         }
     }
@@ -95,7 +125,7 @@ class DecxUIManager(
         panel.add(portTitle)
 
         portField = JTextField(PreferencesManager.getPort().toString(), 8)
-        panel.add(createRowWithComponent("New Port:", portField!!))
+        panel.add(constrainHeight(createRowWithComponent("New Port:", portField!!)))
 
         panel.add(Box.createVerticalStrut(10))
 
@@ -110,8 +140,6 @@ class DecxUIManager(
         mcpAutoStartCheckbox!!.alignmentX = java.awt.Component.LEFT_ALIGNMENT
         panel.add(mcpAutoStartCheckbox)
 
-        panel.add(createRow("Implementation:", "Kotlin SDK"))
-
         panel.add(Box.createVerticalStrut(10))
 
         // MCP Control Buttons
@@ -123,7 +151,7 @@ class DecxUIManager(
         stopMcpBtn!!.addActionListener { stopMcp() }
         buttonPanel.add(startMcpBtn)
         buttonPanel.add(stopMcpBtn)
-        panel.add(buttonPanel)
+        panel.add(constrainHeight(buttonPanel))
 
         refreshStatus()
         return panel
@@ -147,11 +175,10 @@ class DecxUIManager(
         }
     }
 
-    private fun createRow(label: String, value: String): JPanel {
-        val row = JPanel(FlowLayout(FlowLayout.LEFT))
-        row.alignmentX = java.awt.Component.LEFT_ALIGNMENT
-        row.add(JLabel("$label $value"))
-        return row
+    private fun constrainHeight(component: JComponent): JComponent {
+        val pref = component.preferredSize
+        component.maximumSize = java.awt.Dimension(Int.MAX_VALUE, pref.height)
+        return component
     }
 
     private fun createRowWithComponent(label: String, component: JComponent): JPanel {
