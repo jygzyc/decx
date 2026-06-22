@@ -12,45 +12,49 @@ decx-core (shared library, compile-only JADX dependency)
   → decx-server (standalone headless server, Shadow JAR with full JADX runtime)
 ```
 
-- `decx-core/`: Javalin HTTP server, API interface and implementation, service layer, data models, utilities
-- `decx-plugin/`: Plugin lifecycle management, Swing UI, MCP sidecar process management
+- `decx-core/`: API contract (`api/`), HTTP & MCP server transport (`server/`), service layer (`service/`), utilities (`utils/`), public facade (`Decx.kt`)
+- `decx-plugin/`: Plugin lifecycle management, Swing UI, MCP controls
 - `decx-server/`: `DecxServerApp` main class, fat JAR bundling
 
 ## Architecture Layers
 
-```
-HTTP Layer   (DecxServer, RouteHandler)
-  ↓
-API Layer    (DecxApi interface → DecxApiImpl with caching)
-  ↓
-Service     (CommonService, AndroidService, ContextService, UIService)
-  ↓
-JADX        (Decompiler API)
-```
+| Package    | Layer         | Key classes                              |
+|------------|---------------|------------------------------------------|
+| `api/`     | API contract  | DecxApi, DecxApiResult, DecxError        |
+| `server/`  | Transport     | DecxServer, DecxMcpServer, RouteHandler  |
+| `service/` | Business logic | CommonService, ContextService, ...      |
+| `utils/`   | Infra         | AnalysisResultUtils, CacheUtils, ...     |
 
 ## Key Patterns
 
 | Pattern | Where | Purpose |
 |---|---|---|
 | `DecxApi` interface + `DecxApiImpl` | `api/` | Define all operations as interface; implement with caching in impl |
+| `Decx` facade | root `Decx.kt` | Public embeddable entry point for API, HTTP server, MCP server, routes, and tools |
+| `DecxRouteGroup(name, routes)` | `api/DecxApiContract.kt` | Canonical service-extension format; groups route registration by service |
 | `DecxRoute(path, kind, invoke)` | `api/DecxApiContract.kt` | Type-safe route registration; no HTTP dependency |
-| `DecxApiResult(success, data)` | `api/` | Unified return type for all API methods |
+| `DecxApiResult(success, data)` | `api/DecxApiResult.kt` | Unified return envelope for all API methods |
 | `DecxRequestParams` | `api/` | Type-safe parameter extraction from request map |
 | `DecxFilter` | `api/` | Includes/excludes with regex, limit, literal matching |
-| `DecxError` enum | `model/` | Structured error codes with format string |
+| `DecxError` enum | `api/` | Structured error codes with format string |
 | `DecxConstants` object | Root | Global constants (port, paths) |
-| `DecxServiceInterface` | `model/` | Marker interface for service classes |
+| `DecxService` / `DecompilerBackedService` / `UiBackedService` | `service/DecxService.kt` | Uniform service contract and UI/decompiler capability marker |
 | `AnalysisResultUtils` | `utils/` | Response formatting helpers |
 | `DecompileGuard` | `utils/` | Centralized guarded access to `JavaClass.decompile()` for high-memory cases |
 
 ## Response Helpers
 
-All service methods return `DecxApiResult`. Use the helpers from `AnalysisResultUtils`:
+All service methods return `DecxApiResult`. For new service code prefer the unified helpers on `DecxApiResult`:
 
 ```kotlin
-success(kind, query, items, summary)
-error(kind, query, DecxError.METHOD_NOT_FOUND, "methodName")
+DecxApiResult.success(kind, query, items, summary)
+DecxApiResult.error(kind, query, DecxError.METHOD_NOT_FOUND, "methodName")
 ```
+
+The response body shape is stable across HTTP and MCP:
+
+- Success: `ok`, `kind`, `query`, `summary`, `items`, `page`
+- Failure: `ok`, `kind`, `query`, `error`
 
 ## Error Handling
 
@@ -88,13 +92,12 @@ High-memory decompiler operations must go through `DecompileGuard`.
 
 ## Add a New API Endpoint
 
-1. Add method signature to `DecxApi` interface (`api/DecxApi.kt`)
-2. Implement in `DecxApiImpl` (`api/DecxApiImpl.kt`)
-3. Add business logic in the relevant service under `service/`
-4. Register route in `DecxApiContract` (`api/DecxApiContract.kt`): `DecxRoute(path, kind, invoke)`
-5. Register HTTP endpoint in `DecxRoutes` (`http/DecxRoutes.kt`)
-6. Update CLI command in `decx-cli/src/commands/` — keep help text aligned
-7. Update MCP tool in `decx/decx-plugin/src/main/resources/mcp/decx_mcp_server.py`
+1. Add method signature to `DecxApi` interface (`api/DecxApi.kt`).
+2. Implement in `DecxApiImpl` (`api/DecxApiImpl.kt`) by delegating to a service.
+3. Add business logic in the relevant `service/*Service.kt`; service classes should implement `DecompilerBackedService` or `UiBackedService` as appropriate.
+4. Register routes in `DecxApiContract.kt` by adding a `DecxRouteGroup(name, routes)` and including it in `DecxRoutes.groups`.
+5. If the endpoint should be MCP-visible, add a matching `McpTool` in `mcp/McpToolRegistry.kt`; use `McpToolRegistry.toolOf()` / `toolsForRoute()` for lookups.
+6. Update CLI command in `decx-cli/src/commands/` — keep help text aligned.
 
 ## Build Commands
 
@@ -116,21 +119,25 @@ Version source: repository-root `version` file
 |---|---|
 | `decx/settings.gradle.kts` | Module inclusion |
 | `decx/build.gradle.kts` | Root versioning, repositories, dist task |
-| `decx/decx-core/.../http/DecxServer.kt` | Javalin server startup and route registration |
-| `decx/decx-core/.../http/RouteHandler.kt` | Endpoint-to-API dispatch |
+| `decx/decx-core/.../Decx.kt` | Public facade for embedders |
+| `decx/decx-core/.../server/DecxServer.kt` | Javalin server startup and route registration |
+| `decx/decx-core/.../server/RouteHandler.kt` | Endpoint-to-API dispatch |
 | `decx/decx-core/.../api/DecxApi.kt` | Public API interface |
+| `decx/decx-core/.../api/DecxApiResult.kt` | Unified API result envelope and response helpers |
 | `decx/decx-core/.../api/DecxApiImpl.kt` | API implementation with caching |
-| `decx/decx-core/.../api/DecxApiContract.kt` | Route contract table |
+| `decx/decx-core/.../api/DecxApiContract.kt` | Route groups and route contract table |
 | `decx/decx-core/.../api/DecxFilter.kt` | Filtering and pagination |
 | `decx/decx-core/.../api/DecxRequestParams.kt` | Request parameter parsing |
-| `decx/decx-core/.../model/DecxError.kt` | Error codes |
-| `decx/decx-core/.../model/DecxServiceInterface.kt` | Service marker interface |
+| `decx/decx-core/.../api/DecxError.kt` | Error codes |
+| `decx/decx-core/.../service/DecxService.kt` | Service extension contract |
 | `decx/decx-core/.../utils/LogUtils.kt` | Logging wrapper |
 | `decx/decx-core/.../utils/AnalysisResultUtils.kt` | Response formatting |
 | `decx/decx-core/.../utils/DecompileGuard.kt` | Guarded decompilation and high-memory skip logging |
 | `decx/decx-core/.../utils/WarmupUtils.kt` | Background decompiler warmup with guarded decompilation |
 | `decx/decx-plugin/.../DecxPlugin.kt` | Plugin entry point |
 | `decx/decx-plugin/.../lifecycle/PluginLifecycleManager.kt` | Plugin lifecycle |
-| `decx/decx-plugin/.../mcp/SidecarProcessManager.kt` | Sidecar management |
+| `decx/decx-core/.../server/DecxMcpServer.kt` | MCP server lifecycle |
+| `decx/decx-core/.../server/McpHttpServer.kt` | Official Kotlin SDK MCP Streamable HTTP transport |
+| `decx/decx-core/.../server/McpToolRegistry.kt` | MCP tool registry backed by DecxRoutes |
 | `decx/decx-plugin/.../ui/DecxUIManager.kt` | Plugin UI |
 | `decx/decx-server/.../server/DecxServerApp.kt` | Standalone server main |

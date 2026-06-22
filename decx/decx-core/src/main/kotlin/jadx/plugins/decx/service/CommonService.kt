@@ -3,8 +3,7 @@ package jadx.plugins.decx.service
 import jadx.api.JadxDecompiler
 import jadx.plugins.decx.api.DecxKind
 import jadx.plugins.decx.api.DecxFilter
-import jadx.plugins.decx.model.DecxError
-import jadx.plugins.decx.model.DecxServiceInterface
+import jadx.plugins.decx.api.DecxError
 import jadx.plugins.decx.api.DecxApiResult
 import jadx.plugins.decx.utils.AnalysisResultUtils
 import jadx.plugins.decx.utils.CodeUtils
@@ -12,7 +11,7 @@ import jadx.plugins.decx.utils.DecompileGuard
 import jadx.plugins.decx.utils.ItemKind
 import java.util.regex.PatternSyntaxException
 
-class CommonService(override val decompiler: JadxDecompiler) : DecxServiceInterface {
+class CommonService(override val decompiler: JadxDecompiler) : DecompilerBackedService {
 
     /** Returns the complete class inventory for the opened artifact. */
     fun handleGetClasses(filter: DecxFilter): DecxApiResult {
@@ -110,7 +109,14 @@ class CommonService(override val decompiler: JadxDecompiler) : DecxServiceInterf
                 )
             }
             val items = mutableListOf<Map<String, Any>>()
-            for (method in clazz.methods) {
+            val methods = try {
+                clazz.methods
+            } catch (e: Exception) {
+                return DecxApiResult.fail(
+                    AnalysisResultUtils.error(DecxKind.SEARCH_CLASS, query, DecxError.DECOMPILATION_SKIPPED, "failed to enumerate methods: ${e.message}")
+                )
+            }
+            for (method in methods) {
                 val signature = CodeUtils.methodSignature(method)
                 val lines = method.codeStr.lines()
                 for ((index, line) in lines.withIndex()) {

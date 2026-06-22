@@ -173,7 +173,11 @@ object CodeUtils {
                 ArgType.VOID.primitiveType -> "V"
                 else -> throw IllegalArgumentException("Unknown primitive type: ${type.primitiveType}")
             }
-            type.isArray -> "[${javaTypeToSmaliDescriptor(type.arrayElement!!)}"
+            type.isArray -> {
+                val arrayElement = type.arrayElement
+                    ?: throw IllegalArgumentException("Array type without element: $type")
+                "[${javaTypeToSmaliDescriptor(arrayElement)}"
+            }
             type.isObject -> "L${type.`object`.replace('.', '/')};"
             else -> throw IllegalArgumentException("Unknown ArgType: $type")
         }

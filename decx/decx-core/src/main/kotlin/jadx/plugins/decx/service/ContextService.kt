@@ -9,15 +9,14 @@ import jadx.core.dex.visitors.DotGraphVisitor
 import jadx.plugins.decx.api.DecxApiResult
 import jadx.plugins.decx.api.DecxFilter
 import jadx.plugins.decx.api.DecxKind
-import jadx.plugins.decx.model.DecxError
-import jadx.plugins.decx.model.DecxServiceInterface
+import jadx.plugins.decx.api.DecxError
 import jadx.plugins.decx.utils.AnalysisResultUtils
 import jadx.plugins.decx.utils.CodeUtils
 import jadx.plugins.decx.utils.DecompileGuard
 import jadx.plugins.decx.utils.ItemKind
 import java.nio.file.Files
 
-class ContextService(override val decompiler: JadxDecompiler) : DecxServiceInterface {
+class ContextService(override val decompiler: JadxDecompiler) : DecompilerBackedService {
 
     private data class CalleeSummary(
         val signature: String,
@@ -170,15 +169,37 @@ class ContextService(override val decompiler: JadxDecompiler) : DecxServiceInter
     fun handleGetClassSource(cls: String, smali: Boolean, filter: DecxFilter): DecxApiResult {
         val query = mapOf("target" to cls, "smali" to smali) + filter.toQuery()
         return try {
+            // Exact fullName match first; fall back to JADX's tolerant search for inner classes
+            // where the caller may have used '$' or '.' interchangeably.
             val clazz = decompiler.classesWithInners.find { it.fullName == cls }
+                ?: decompiler.searchJavaClassOrItsParentByOrigFullName(cls)
                 ?: return DecxApiResult.fail( AnalysisResultUtils.error(DecxKind.CLASS_SOURCE, query, DecxError.CLASS_NOT_FOUND, cls))
-            val decision = DecompileGuard.decompile(clazz, if (smali) DecompileGuard.Purpose.SMALI else DecompileGuard.Purpose.JAVA)
-            if (!decision.allowed) {
+
+            // Determine the source code: try the requested format first, fall back to smali
+            // when Java decompilation fails or produces empty output (e.g. for interfaces,
+            // abstract stubs, or classes with JADX-internal decompile errors).
+            val triedSmaliFallback: Boolean
+            val code: String?
+            if (smali) {
+                code = safeSource { clazz.smali }
+                triedSmaliFallback = false
+            } else {
+                val javaCode = safeSource { clazz.code }
+                if (!javaCode.isNullOrBlank()) {
+                    code = javaCode
+                    triedSmaliFallback = false
+                } else {
+                    val smaliCode = safeSource { clazz.smali }
+                    code = smaliCode
+                    triedSmaliFallback = !smaliCode.isNullOrBlank()
+                }
+            }
+            if (code.isNullOrBlank()) {
                 return DecxApiResult.fail(
-                    AnalysisResultUtils.error(DecxKind.CLASS_SOURCE, query, DecxError.DECOMPILATION_SKIPPED, decision.messageFor(cls))
+                    AnalysisResultUtils.error(DecxKind.CLASS_SOURCE, query, DecxError.DECOMPILATION_SKIPPED, "decompiled to empty source: $cls")
                 )
             }
-            val code = (if (smali) clazz.smali else clazz.code) ?: ""
+            val actualSmali = smali || triedSmaliFallback
             val lines = code.lines()
             val returnedLineCount = filter.limit?.coerceAtMost(lines.size) ?: lines.size
             val limitedCode = filter.limit?.let { limit ->
@@ -190,16 +211,26 @@ class ContextService(override val decompiler: JadxDecompiler) : DecxServiceInter
                     kind = ItemKind.CODE,
                     title = cls,
                     content = limitedCode,
-                    meta = mapOf(
-                        "language" to if (smali) "smali" else "java",
+                    meta = linkedMapOf(
+                        "language" to if (actualSmali) "smali" else "java",
                         "total_lines" to lines.size,
                         "returned_lines" to returnedLineCount
-                    )
+                    ).apply {
+                        if (triedSmaliFallback) put("smali_fallback", true)
+                    }
                 )
             )
             DecxApiResult.ok(AnalysisResultUtils.success(DecxKind.CLASS_SOURCE, query, items))
         } catch (e: Exception) {
             DecxApiResult.fail( AnalysisResultUtils.error(DecxKind.CLASS_SOURCE, query, DecxError.SERVER_INTERNAL_ERROR, e.message ?: "unknown"))
+        }
+    }
+
+    private fun safeSource(getter: () -> String?): String? {
+        return try {
+            getter().takeIf { it.isNullOrBlank().not() }
+        } catch (_: Exception) {
+            null
         }
     }
 

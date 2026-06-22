@@ -11,12 +11,17 @@ dependencies {
     implementation(libs.jadx.cli) {
         isChanging = false
     }
+    implementation(libs.kotlin.reflect)
     implementation(libs.gson)
     implementation(libs.slf4j.api)
     implementation(libs.logback.classic)
 }
 
 tasks {
+    named<Jar>("jar") {
+        archiveClassifier = "plain"
+    }
+
     named<com.github.jengelman.gradle.plugins.shadow.tasks.ShadowJar>("shadowJar") {
         archiveBaseName = "decx-server"
         archiveClassifier = ""

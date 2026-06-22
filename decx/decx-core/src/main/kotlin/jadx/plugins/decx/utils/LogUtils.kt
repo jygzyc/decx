@@ -1,7 +1,7 @@
 package jadx.plugins.decx.utils
 
 import org.slf4j.LoggerFactory
-import jadx.plugins.decx.model.DecxError
+import jadx.plugins.decx.api.DecxError
 
 object LogUtils {
 

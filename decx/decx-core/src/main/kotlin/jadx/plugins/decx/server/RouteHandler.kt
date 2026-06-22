@@ -1,4 +1,4 @@
-package jadx.plugins.decx.http
+package jadx.plugins.decx.server
 
 import jadx.plugins.decx.api.DecxApi
 import jadx.plugins.decx.api.DecxRequestParams

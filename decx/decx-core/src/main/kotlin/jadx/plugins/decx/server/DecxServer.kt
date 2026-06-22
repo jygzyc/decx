@@ -1,4 +1,4 @@
-package jadx.plugins.decx.http
+package jadx.plugins.decx.server
 
 import io.javalin.Javalin
 import io.javalin.http.Context
@@ -11,17 +11,13 @@ import jadx.plugins.decx.api.DecxApiImpl
 import jadx.plugins.decx.utils.CacheUtils
 import jadx.plugins.decx.utils.LogUtils
 import jadx.plugins.decx.utils.PluginUtils
-import jadx.plugins.decx.model.DecxError
+import jadx.plugins.decx.utils.ThreadPoolUtils
+import jadx.plugins.decx.api.DecxError
 import jadx.plugins.decx.utils.AnalysisResultUtils
-import java.util.concurrent.Executors
 import java.util.concurrent.ExecutionException
 import java.util.concurrent.Future
-import java.util.concurrent.ThreadFactory
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.TimeoutException
-import java.util.concurrent.atomic.AtomicInteger
-import kotlin.math.max
-import kotlin.math.min
 
 /**
  * HTTP server built on Javalin. Delegates all business logic to [DecxApi].
@@ -32,6 +28,9 @@ class DecxServer(
     private val api: DecxApi,
     private val port: Int = DecxConstants.DEFAULT_PORT
 ) {
+
+    /** If set, this MCP server is automatically stopped when the HTTP server stops. */
+    var mcpServer: DecxMcpServer? = null
 
     companion object {
         private const val RESTART_DELAY_MS = 2000L
@@ -49,7 +48,7 @@ class DecxServer(
 
     private var app: Javalin? = null
     private var routeHandler: RouteHandler? = null
-    private var routeExecutor = createRouteExecutor()
+    private var routeExecutor = ThreadPoolUtils.createNamedDaemonPool("DecxServer-Route", ROUTE_THREAD_CAP)
     private val requestTimeoutMs = java.lang.Long.getLong("decx.requestTimeoutMs", DEFAULT_REQUEST_TIMEOUT_MS)
 
     @Volatile
@@ -90,10 +89,11 @@ class DecxServer(
         started = false
 
         return try {
+            mcpServer?.stop()
             app?.stop()
             app = null
             routeExecutor.shutdownNow()
-            routeExecutor = createRouteExecutor()
+            routeExecutor = ThreadPoolUtils.createNamedDaemonPool("DecxServer-Route", ROUTE_THREAD_CAP)
             LogUtils.info("Server stopped")
             true
         } catch (e: Exception) {
@@ -254,16 +254,4 @@ class DecxServer(
         }
     }
 
-    private fun createRouteExecutor() =
-        Executors.newFixedThreadPool(
-            min(ROUTE_THREAD_CAP, max(2, Runtime.getRuntime().availableProcessors())),
-            object : ThreadFactory {
-                private val counter = AtomicInteger(0)
-                override fun newThread(r: Runnable): Thread {
-                    return Thread(r, "DecxServer-Route-${counter.incrementAndGet()}").apply {
-                        isDaemon = true
-                    }
-                }
-            }
-        )
 }

@@ -26,7 +26,7 @@ interface DecxApi {
     fun getImplementOfInterface(iface: String): DecxApiResult
     fun getSubclasses(cls: String): DecxApiResult
 
-    // ==================== Android App Service ====================
+    // ==================== Android Service ====================
 
     fun getAidlInterfaces(filter: DecxFilter): DecxApiResult
     fun getAppManifest(): DecxApiResult
@@ -43,17 +43,4 @@ interface DecxApi {
     // ==================== UI Service ====================
     fun getSelectedText(): DecxApiResult
     fun getSelectedClass(): DecxApiResult
-}
-
-/**
- * Unified result type for all API calls.
- */
-data class DecxApiResult(
-    val success: Boolean,
-    val data: Map<String, Any>
-) {
-    companion object {
-        fun ok(data: Map<String, Any>) = DecxApiResult(true, data)
-        fun fail(data: Map<String, Any>) = DecxApiResult(false, data)
-    }
 }

@@ -2,8 +2,8 @@ package jadx.plugins.decx.server
 
 import jadx.api.JadxDecompiler
 import jadx.cli.JadxCLIArgs
+import jadx.plugins.decx.Decx
 import jadx.plugins.decx.DecxConstants
-import jadx.plugins.decx.http.DecxServer
 import jadx.plugins.decx.utils.PluginUtils
 import jadx.plugins.decx.utils.WarmupUtils
 
@@ -14,7 +14,9 @@ import jadx.plugins.decx.utils.WarmupUtils
  *   java -jar decx-server.jar <file> [options]
  *
  * DECX Options:
- *   -p, --port <port>           Server port (default: 25419)
+ *   -p, --port <port>           HTTP server port (default: 25419)
+ *   --mcp                       Also start MCP Streamable HTTP server on port + 1
+ *   --no-mcp                    Disable MCP server (default)
  *
  * All standard jadx-cli options are also supported.
  * Run with --help for details.
@@ -23,7 +25,8 @@ object DecxServerApp {
 
 	@JvmStatic
 	fun main(args: Array<String>) {
-		val (port, jadxRawArgs) = extractPortAndFilterArgs(args)
+		val (options, jadxRawArgs) = extractDecxOptionsAndFilterArgs(args)
+		val port = options.port
 
 		if (jadxRawArgs.contains("--help") || jadxRawArgs.contains("-h")) {
 			printHelp()
@@ -90,7 +93,8 @@ object DecxServerApp {
 		val warmupElapsed = WarmupUtils.warmup(toWarmup, logProgress = { message -> println("[*] $message") })
 		println("[+] Warmup completed in ${warmupElapsed}ms")
 
-		val server = DecxServer.create(decompiler, port)
+		val api = Decx.api(decompiler)
+		val server = Decx.httpServer(api, port)
 		val started = server.start(port)
 		if (!started) {
 			System.err.println("Error: Failed to start server on port $port")
@@ -98,11 +102,30 @@ object DecxServerApp {
 			return
 		}
 
+		val mcpServer = if (options.mcpEnabled) {
+			Decx.mcpServer(api, port).also { mcp ->
+				server.mcpServer = mcp
+				if (!mcp.start()) {
+					server.stop()
+					System.err.println("Error: Failed to start MCP server on port ${mcp.mcpPort}")
+					System.exit(1)
+					return
+				}
+			}
+		} else {
+			null
+		}
+
 		val serverUrl = PluginUtils.buildServerUrl(port = port, running = true)
 		println()
 		println("[+] DECX Server running at $serverUrl")
 		println("[+] API: POST ${serverUrl}/api/decx/<endpoint>")
 		println("[+] Health: GET ${serverUrl}/health")
+		if (mcpServer != null) {
+			println("[+] MCP: ${mcpServer.mcpUrl()}")
+		} else {
+			println("[-] MCP: disabled (enable with --mcp)")
+		}
 		println()
 		println("Press Ctrl+C to stop.")
 
@@ -114,8 +137,14 @@ object DecxServerApp {
 		}
 	}
 
-	private fun extractPortAndFilterArgs(args: Array<String>): Pair<Int, Array<String>> {
+	private data class DecxCliOptions(
+		val port: Int = DecxConstants.DEFAULT_PORT,
+		val mcpEnabled: Boolean = false
+	)
+
+	private fun extractDecxOptionsAndFilterArgs(args: Array<String>): Pair<DecxCliOptions, Array<String>> {
 		var port = DecxConstants.DEFAULT_PORT
+		var mcpEnabled = false
 		val result = mutableListOf<String>()
 		var i = 0
 		while (i < args.size) {
@@ -132,11 +161,13 @@ object DecxServerApp {
 						port
 					}
 				}
+				"--mcp" -> mcpEnabled = true
+				"--no-mcp" -> mcpEnabled = false
 				else -> result.add(args[i])
 			}
 			i++
 		}
-		return Pair(port, result.toTypedArray())
+		return DecxCliOptions(port = port, mcpEnabled = mcpEnabled) to result.toTypedArray()
 	}
 
 	private fun printHelp() {
@@ -150,7 +181,9 @@ Arguments:
   <file>                   Path to APK, DEX, JAR, AAR, or class file
 
 DECX Options:
-  -p, --port <port>           Server port (default: ${DecxConstants.DEFAULT_PORT})
+  -p, --port <port>           HTTP server port (default: ${DecxConstants.DEFAULT_PORT})
+  --mcp                       Also start MCP Streamable HTTP server at http://127.0.0.1:<port+1>/mcp
+  --no-mcp                    Disable MCP server (default)
 
 JADX Options:
   All standard jadx-cli options are supported. Common ones:
@@ -169,8 +202,12 @@ JADX Options:
 Examples:
   java -jar decx-server.jar app.apk
   java -jar decx-server.jar classes.dex --port 9000
+  java -jar decx-server.jar app.apk --mcp
   java -jar decx-server.jar library.jar -j 8 --no-res --show-bad-code
   java -jar decx-server.jar app.apk --deobf --no-imports
+
+MCP:
+  Enable with --mcp. MCP listens on HTTP port + 1, e.g. --port 9000 exposes http://127.0.0.1:9001/mcp
 
 API Endpoints:
   POST /api/decx/get_classes        Get classes (params: filter)

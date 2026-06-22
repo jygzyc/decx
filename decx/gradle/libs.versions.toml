@@ -1,8 +1,12 @@
 [versions]
 kotlin = "2.4.0"
 jadx = "1.5.5"
-gson = "2.14.0"
+gson = "2.13.2"
 javalin = "6.7.0"
+ktor = "3.4.3"
+mcpKotlinSdk = "0.13.0"
+kotlinxCoroutines = "1.11.0"
+kotlinxSerialization = "1.11.0"
 jackson = "2.22.0"
 slf4j = "2.0.18"
 logback = "1.5.34"
@@ -20,8 +24,13 @@ jadx-core = { group = "io.github.skylot", name = "jadx-core", version.ref = "jad
 jadx-gui = { group = "io.github.skylot", name = "jadx-gui", version.ref = "jadx" }
 jadx-cli = { group = "io.github.skylot", name = "jadx-cli", version.ref = "jadx" }
 jadx-smali-input = { group = "io.github.skylot", name = "jadx-smali-input", version.ref = "jadx" }
+kotlin-reflect = { group = "org.jetbrains.kotlin", name = "kotlin-reflect", version.ref = "kotlin" }
+kotlinx-coroutines-bom = { group = "org.jetbrains.kotlinx", name = "kotlinx-coroutines-bom", version.ref = "kotlinxCoroutines" }
+kotlinx-serialization-bom = { group = "org.jetbrains.kotlinx", name = "kotlinx-serialization-bom", version.ref = "kotlinxSerialization" }
 gson = { group = "com.google.code.gson", name = "gson", version.ref = "gson" }
 javalin = { group = "io.javalin", name = "javalin", version.ref = "javalin" }
+ktor-server-cio = { group = "io.ktor", name = "ktor-server-cio", version.ref = "ktor" }
+mcp-kotlin-sdk-server = { group = "io.modelcontextprotocol", name = "kotlin-sdk-server", version.ref = "mcpKotlinSdk" }
 jackson-databind = { group = "com.fasterxml.jackson.core", name = "jackson-databind", version.ref = "jackson" }
 slf4j-api = { group = "org.slf4j", name = "slf4j-api", version.ref = "slf4j" }
 logback-classic = { group = "ch.qos.logback", name = "logback-classic", version.ref = "logback" }

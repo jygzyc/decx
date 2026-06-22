@@ -7,8 +7,7 @@ import jadx.core.utils.android.AndroidManifestParser
 import jadx.core.utils.android.AppAttribute
 import jadx.plugins.decx.api.DecxKind
 import jadx.plugins.decx.api.DecxFilter
-import jadx.plugins.decx.model.DecxError
-import jadx.plugins.decx.model.DecxServiceInterface
+import jadx.plugins.decx.api.DecxError
 import jadx.plugins.decx.api.DecxApiResult
 import jadx.plugins.decx.utils.AnalysisResultUtils
 import jadx.plugins.decx.utils.CodeUtils
@@ -20,7 +19,7 @@ import java.io.ByteArrayInputStream
 import java.util.*
 import javax.xml.parsers.DocumentBuilderFactory
 
-class AndroidService(override val decompiler: JadxDecompiler) : DecxServiceInterface {
+class AndroidService(override val decompiler: JadxDecompiler) : DecompilerBackedService {
 
     private fun getAppManifest(): ResourceFile? {
         return decompiler.resources
@@ -419,6 +418,7 @@ class AndroidService(override val decompiler: JadxDecompiler) : DecxServiceInter
             }
             val filteredFileNames = fileNames
                 .filter { name -> compiled.matches(name) }
+                .let { names -> filter.limit(names) }
             val items = filteredFileNames.map { name ->
                 AnalysisResultUtils.item(
                     id = name,

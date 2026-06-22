@@ -1,7 +1,7 @@
 package jadx.plugins.decx.utils
 
 import com.google.gson.Gson
-import jadx.plugins.decx.model.DecxError
+import jadx.plugins.decx.api.DecxError
 import kotlin.math.max
 
 object ItemKind {

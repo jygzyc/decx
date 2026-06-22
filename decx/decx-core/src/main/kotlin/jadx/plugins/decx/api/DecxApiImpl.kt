@@ -4,8 +4,8 @@ import jadx.api.JadxDecompiler
 import jadx.plugins.decx.service.AndroidService
 import jadx.plugins.decx.service.ContextService
 import jadx.plugins.decx.service.CommonService
-import jadx.plugins.decx.service.UIService
-import jadx.plugins.decx.model.DecxError
+import jadx.plugins.decx.service.DecxService
+import jadx.plugins.decx.service.UiBackedService
 import jadx.plugins.decx.utils.AnalysisResultUtils
 import jadx.plugins.decx.utils.CacheUtils
 
@@ -16,12 +16,13 @@ import jadx.plugins.decx.utils.CacheUtils
 class DecxApiImpl(
     decompiler: JadxDecompiler,
     private val cacheEnabled: Boolean = true,
-    private val uiService: UIService? = null
+    uiService: UiBackedService? = null
 ) : DecxApi {
 
     private val commonService = CommonService(decompiler)
     private val contextService = ContextService(decompiler)
     private val androidService = AndroidService(decompiler)
+    private val services: List<DecxService> = listOfNotNull(commonService, contextService, androidService, uiService)
 
     // ==================== Common Service ====================
 
@@ -153,13 +154,17 @@ class DecxApiImpl(
     // ==================== UI Service ====================
 
     override fun getSelectedText(): DecxApiResult {
-        return uiService?.handleGetSelectedText()
+        return findUiService()?.handleGetSelectedText()
             ?: DecxApiResult.fail(AnalysisResultUtils.error(DecxKind.SELECTED_TEXT, emptyMap(), DecxError.NOT_GUI_MODE))
     }
 
     override fun getSelectedClass(): DecxApiResult {
-        return uiService?.handleGetSelectedClass()
+        return findUiService()?.handleGetSelectedClass()
             ?: DecxApiResult.fail(AnalysisResultUtils.error(DecxKind.SELECTED_CLASS, emptyMap(), DecxError.NOT_GUI_MODE))
+    }
+
+    private fun findUiService(): UiBackedService? {
+        return services.firstOrNull { it.isUi } as? UiBackedService
     }
 
     // ==================== Cache ====================
@@ -175,7 +180,6 @@ class DecxApiImpl(
 
     private fun DecxFilter.forResourceNames(): DecxFilter {
         return copy(
-            limit = null,
             excludes = emptyList(),
             caseSensitive = false
         )

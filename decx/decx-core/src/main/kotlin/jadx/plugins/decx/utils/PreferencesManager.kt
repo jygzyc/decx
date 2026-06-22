@@ -4,7 +4,7 @@ import com.google.gson.GsonBuilder
 import jadx.api.JadxDecompiler
 import jadx.api.impl.InMemoryCodeCache
 import jadx.plugins.decx.DecxConstants
-import jadx.plugins.decx.model.DecxError
+import jadx.plugins.decx.api.DecxError
 import java.io.File
 import java.util.concurrent.locks.ReentrantReadWriteLock
 import kotlin.concurrent.read
@@ -14,6 +14,7 @@ object PreferencesManager {
 
     private const val CONFIG_DIR_NAME = ".decx"
     private const val CONFIG_FILE_NAME = "config.json"
+    private const val LEGACY_MCP_CONFIG_FILE_NAME = "mcp.json"
 
     private val configLock = ReentrantReadWriteLock()
 
@@ -23,7 +24,12 @@ object PreferencesManager {
 
     private data class DecxConfig(
         var port: Int = DecxConstants.DEFAULT_PORT,
-        var cache: String = DecxConstants.DEFAULT_CACHE_MODE
+        var cache: String = DecxConstants.DEFAULT_CACHE_MODE,
+        var mcpAutoStart: Boolean = false
+    )
+
+    private data class LegacyMcpConfig(
+        var autoStart: Boolean = false
     )
 
     @Volatile
@@ -41,14 +47,6 @@ object PreferencesManager {
     fun initialize(decompiler: JadxDecompiler) {
         ensureConfigLoaded()
         setupCodeCache(decompiler)
-    }
-
-    /**
-     * Initialize in standalone mode (no plugin context).
-     * Only loads config file.
-     */
-    fun initializeStandalone() {
-        ensureConfigLoaded()
     }
 
     private fun setupCodeCache(decompiler: JadxDecompiler) {
@@ -90,9 +88,16 @@ object PreferencesManager {
 
     fun getPort(): Int = configLock.read { config.port }
 
-    // ========== Cache ==========
+    // ========== MCP ==========
 
-    fun getCache(): String = configLock.read { config.cache }
+    fun setMcpAutoStart(enabled: Boolean) {
+        configLock.write { config.mcpAutoStart = enabled }
+        saveConfig()
+    }
+
+    fun getMcpAutoStart(): Boolean = configLock.read { config.mcpAutoStart }
+
+    // ========== Cache ==========
 
     private fun getCacheDir(): File {
         return File(System.getProperty("user.home"), ".decx/cache/").apply { mkdirs() }
@@ -126,15 +131,29 @@ object PreferencesManager {
             if (configFile.exists()) {
                 val json = configFile.readText()
                 config = gson.fromJson(json, DecxConfig::class.java) ?: DecxConfig()
+                migrateLegacyMcpConfigIfNeeded()
                 LogUtils.debug("Loaded config from $configFile")
             } else {
                 config = DecxConfig()
+                migrateLegacyMcpConfigIfNeeded()
                 saveConfig()
                 LogUtils.debug("Created default config at $configFile")
             }
         } catch (e: Exception) {
             LogUtils.error(DecxError.SERVICE_ERROR, "Failed to load config: ${e.message}")
             config = DecxConfig()
+        }
+    }
+
+    private fun migrateLegacyMcpConfigIfNeeded() {
+        val legacyFile = File(configDir, LEGACY_MCP_CONFIG_FILE_NAME)
+        if (!legacyFile.exists() || config.mcpAutoStart) return
+
+        try {
+            val legacy = gson.fromJson(legacyFile.readText(), LegacyMcpConfig::class.java)
+            config.mcpAutoStart = legacy?.autoStart == true
+        } catch (e: Exception) {
+            LogUtils.debug("Failed to migrate legacy MCP config: ${e.message}")
         }
     }
 

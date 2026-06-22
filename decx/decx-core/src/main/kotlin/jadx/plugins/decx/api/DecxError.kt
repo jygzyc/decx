@@ -1,4 +1,4 @@
-package jadx.plugins.decx.model
+package jadx.plugins.decx.api
 
 enum class DecxError(val code: String, val status: Int, val message: String) {
     SERVER_INTERNAL_ERROR("INTERNAL_ERROR", 500, "Internal error: %s"),

@@ -5,8 +5,12 @@ plugins {
 val generatedVersionResourcesDir = layout.buildDirectory.dir("generated/resources/version")
 
 dependencies {
+    implementation(platform(libs.kotlinx.coroutines.bom))
+    implementation(platform(libs.kotlinx.serialization.bom))
     implementation(libs.gson)
     implementation(libs.javalin)
+    implementation(libs.mcp.kotlin.sdk.server)
+    implementation(libs.ktor.server.cio)
     implementation(libs.jackson.databind)
     compileOnly(libs.jadx.core) {
         isChanging = false

@@ -42,8 +42,13 @@ object DecompileGuard {
     fun check(clazz: JavaClass, purpose: Purpose = Purpose.JAVA): Decision {
         val methodCount = try {
             clazz.methods.size
-        } catch (_: Exception) {
-            0
+        } catch (e: Exception) {
+            LogUtils.warn("check failed class={}, error={}", clazz.fullName, e.message ?: "unknown")
+            return Decision(
+                allowed = false,
+                reason = "class introspection failed: ${e.message}",
+                availableHeapBytes = availableHeapBytes()
+            )
         }
         val availableHeapBytes = availableHeapBytes()
 
@@ -107,7 +112,22 @@ object DecompileGuard {
                     decision.methodCount,
                     decision.availableHeapBytes
                 )
-                clazz.decompile()
+                try {
+                    clazz.decompile()
+                } catch (e: Exception) {
+                    LogUtils.warn(
+                        "Decompile failed class={}, purpose={}, error={}",
+                        clazz.fullName,
+                        purpose,
+                        e.message ?: "unknown"
+                    )
+                    return Decision(
+                        allowed = false,
+                        reason = "decompilation failed: ${e.message}",
+                        methodCount = decision.methodCount,
+                        availableHeapBytes = decision.availableHeapBytes
+                    )
+                }
             }
         } else {
             LogUtils.warn(
