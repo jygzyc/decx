@@ -1,18 +1,27 @@
-/**
- * DecxClient unit tests.
- *
- * Tests constructor configuration and error handling.
- * Does NOT make real HTTP requests — server is expected to be down.
- */
-
+import { jest } from "@jest/globals";
 import { DecxClient } from "../src/core/client.js";
 import { DecxError } from "../src/utils/errors.js";
 
+function jsonResponse(body: unknown, status = 200): Response {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { "Content-Type": "application/json" },
+  });
+}
+
+function errorResponse(code: string, message: string, status = 404): Response {
+  return jsonResponse({ error: { code, message } }, status);
+}
+
 describe("DecxClient", () => {
+  let fetchMock: ReturnType<typeof jest.fn<typeof fetch>>;
   let client: DecxClient;
 
   beforeEach(() => {
-    client = new DecxClient("127.0.0.1", 25419, 1); // 1s timeout
+    fetchMock = jest.fn<typeof fetch>(async () => {
+      throw new Error("ECONNREFUSED");
+    });
+    client = new DecxClient("127.0.0.1", 25419, 1, fetchMock);
   });
 
   describe("constructor", () => {
@@ -32,15 +41,54 @@ describe("DecxClient", () => {
   });
 
   describe("isHealthy", () => {
-    it("returns false when server is not running", async () => {
+    it("returns false when server is not reachable", async () => {
+      const result = await client.isHealthy();
+      expect(result).toBe(false);
+    });
+
+    it("returns true when server reports status running", async () => {
+      fetchMock.mockResolvedValue(jsonResponse({ status: "running" }));
+      const result = await client.isHealthy();
+      expect(result).toBe(true);
+    });
+
+    it("returns false when server reports a non-running status", async () => {
+      fetchMock.mockResolvedValue(jsonResponse({ status: "starting" }));
       const result = await client.isHealthy();
       expect(result).toBe(false);
     });
   });
 
   describe("healthCheck", () => {
-    it("throws DecxError when server is not running", async () => {
-      await expect(client.healthCheck()).rejects.toThrow();
+    it("throws DecxError when server is not reachable", async () => {
+      await expect(client.healthCheck()).rejects.toThrow(DecxError);
+      await expect(client.healthCheck()).rejects.toThrow(/Connection failed/);
+    });
+
+    it("returns body on 200", async () => {
+      fetchMock.mockResolvedValue(jsonResponse({ status: "running", version: "3.4.0" }));
+      const result = await client.healthCheck();
+      expect(result.status).toBe("running");
+      expect(result.version).toBe("3.4.0");
+    });
+
+    it("throws DecxError on error status with structured body", async () => {
+      fetchMock.mockResolvedValue(errorResponse("CLASS_NOT_FOUND", "Class not found: com.example.Foo"));
+      await expect(client.healthCheck()).rejects.toThrow(/Class not found: com.example.Foo/);
+    });
+  });
+
+  describe("request", () => {
+    it("sends POST with JSON body and page parameter", async () => {
+      fetchMock.mockResolvedValue(jsonResponse({ ok: true }));
+      await client.getClasses({ filter: { includes: [], excludes: [] } }, 2);
+      const call = fetchMock.mock.calls[0];
+      expect(call[0]).toBe("http://127.0.0.1:25419/api/decx/get_classes");
+      const init = call[1] as RequestInit;
+      expect(init.method).toBe("POST");
+      const body = JSON.parse(init.body as string);
+      expect(body.page).toBe(2);
+      expect(body.filter).toEqual({ includes: [], excludes: [] });
     });
   });
 

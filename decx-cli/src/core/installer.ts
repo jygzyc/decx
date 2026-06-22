@@ -111,6 +111,7 @@ export async function checkForServerUpdate(
 
   const res = await fetch(endpoint, {
     headers: { "Accept": "application/vnd.github+json" },
+    signal: AbortSignal.timeout(5_000),
   });
   if (!res.ok) return { available: false, latestVersion: currentVersion };
 
