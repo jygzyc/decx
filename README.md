@@ -22,10 +22,9 @@ DECX (Decompiler + X) is a smart code analysis platform built on the JADX decomp
 
 ### Prerequisites
 
-- **Java**: JDK 11+
+- **Java**: JDK 17+
 - **Node.js**: 22.5+ for the CLI
 - **JADX**: v1.5.2+ with plugin support if you use the GUI plugin
-- **Python**: 3.10+ or `uv` for the plugin MCP sidecar; without `uv`, ensure `requests`, `fastmcp`, and `pydantic` are available
 
 ### CLI And AI Skills
 
@@ -117,19 +116,20 @@ Notes:
 
 ### Plugin + MCP
 
-Use the plugin when you want the AI assistant to work against the project already opened in JADX GUI:
+Use the plugin when you want the AI assistant to work against the project already opened in JADX GUI. The MCP server is an in-process Kotlin SDK Streamable HTTP endpoint; it is disabled by default and can be auto-started with the plugin:
 
 1. Open the target APK/JAR in JADX.
 2. Enable the DECX plugin and confirm the server is available at `http://127.0.0.1:25419`.
-3. Connect your MCP client to DECX and call `health_check()`.
-4. Use MCP tools for code search/source/xrefs, Android manifest/resources/components, framework service lookup, and JADX GUI selections.
+3. (Optional) Toggle *Auto-start MCP with DECX* in the DECX panel to start the MCP server at `http://127.0.0.1:25420/mcp` (HTTP port + 1) whenever DECX starts.
+4. Connect your MCP client to DECX and call `health_check()`.
+5. Use MCP tools for code search/source/xrefs, Android manifest/resources/components, framework service lookup, and JADX GUI selections.
 
 All MCP tools support pagination with `page` where the returned content is large.
 
-Plugin options you may need:
+Plugin options (stored in `~/.decx/config.json`):
 
 - `decx.port`: DECX HTTP server port, default `25419`
-- `decx.mcp_path`: custom MCP script path when you do not want the bundled script
+- `decx.mcpAutoStart`: `true`/`false`, default `false` — auto-start the MCP server with DECX
 - `decx.cache`: `disk` or `memory`, default `disk`
 
 ---
@@ -142,6 +142,7 @@ DECX returns the same structured error format from plugin and standalone server 
 |------|-------------|-------------|
 | **INTERNAL_ERROR** | Internal server error | 500 |
 | **SERVICE_ERROR** | Service error | 503 |
+| **REQUEST_TIMEOUT** | Request timed out | 504 |
 | **HEALTH_CHECK_FAILED** | Health check failed | 500 |
 | **UNKNOWN_ENDPOINT** | Unknown endpoint | 404 |
 | **INVALID_PARAMETER** | Invalid parameter | 400 |
@@ -156,6 +157,7 @@ DECX returns the same structured error format from plugin and standalone server 
 | **NO_MAIN_ACTIVITY** | No MAIN/LAUNCHER Activity found | 404 |
 | **NO_APPLICATION** | Application class not found | 404 |
 | **EMPTY_SEARCH_KEY** | Search key cannot be empty | 400 |
+| **DECOMPILATION_SKIPPED** | Decompilation skipped (size guard) | 503 |
 | **NOT_GUI_MODE** | Not in GUI mode | 503 |
 
 **Error Response Format:**
@@ -177,8 +179,8 @@ DECX returns the same structured error format from plugin and standalone server 
 
 | Path | Role |
 |---|---|
-| `decx/decx-core/` | Shared Kotlin API, HTTP transport, models, services, and utilities |
-| `decx/decx-plugin/` | JADX GUI plugin and bundled MCP resources |
+| `decx/decx-core/` | Shared Kotlin API, HTTP + MCP transport, services, models, and utilities |
+| `decx/decx-plugin/` | JADX GUI plugin: lifecycle, UI, and in-process MCP server wiring |
 | `decx/decx-server/` | Standalone headless server entry point and fat JAR packaging |
 | `decx-cli/` | TypeScript CLI for sessions, code analysis, Android helpers, framework processing, and self-management |
 | `skills/` | AI agent skills for DECX analysis, app/framework vulnerability hunting, reporting, and PoC construction |
@@ -224,8 +226,9 @@ This project is licensed under [GNU License](LICENSE) - see the [LICENSE](LICENS
 
 - **[skylot/jadx](https://github.com/skylot/jadx)** - The foundation of this project, a powerful JADX decompiler with plugin support
 - **[zinja-coder/jadx-ai-mcp](https://github.com/zinja-coder/jadx-ai-mcp)** - Provided many ideas and inspiration, excellent practices for JADX MCP integration
-- **[FastMCP](https://github.com/modelcontextprotocol/servers)**: MCP protocol implementation
-- **[Javalin](https://javalin.io/)**: Lightweight web framework
+- **[Kotlin MCP SDK](https://github.com/modelcontextprotocol/kotlin-sdk)**: In-process MCP server implementation
+- **[Ktor](https://ktor.io/)**: Streamable HTTP transport for the MCP server
+- **[Javalin](https://javalin.io/)**: Lightweight web framework for the HTTP API
 
 ---
 

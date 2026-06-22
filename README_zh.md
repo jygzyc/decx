@@ -22,10 +22,9 @@ DECX (Decompiler + X) 是一个基于 JADX 反编译器的智能代码分析平�
 
 ### 环境要求
 
-- **Java**: JDK 11+
+- **Java**: JDK 17+
 - **Node.js**: 22.5+，用于 CLI
 - **JADX**: v1.5.2+，使用 GUI 插件时需要
-- **Python**: 3.10+ 或 `uv`，用于插件 MCP 伴生进程；不使用 `uv` 时需准备 `requests`、`fastmcp`、`pydantic`
 
 ### CLI 和 AI 技能
 
@@ -117,19 +116,20 @@ decx process close --port 25419
 
 ### 插件 + MCP
 
-当你希望 AI 直接分析 JADX GUI 中已打开的项目时，使用插件模式：
+当你希望 AI 直接分析 JADX GUI 中已打开的项目时，使用插件模式。MCP 服务为进程内 Kotlin SDK Streamable HTTP 端点，默认关闭，可在插件中开启自动启动：
 
 1. 在 JADX 中打开目标 APK/JAR。
 2. 启用 DECX 插件，确认服务可通过 `http://127.0.0.1:25419` 访问。
-3. 在 AI/MCP 客户端中连接 DECX，并调用 `health_check()`。
-4. 使用 MCP 工具进行代码搜索、源码查看、交叉引用、Android Manifest/资源/组件分析、framework 服务查找和 JADX GUI 选中内容读取。
+3. （可选）在 DECX 面板勾选 *Auto-start MCP with DECX*，DECX 启动时自动启动 MCP 服务于 `http://127.0.0.1:25420/mcp`（HTTP 端口 + 1）。
+4. 在 AI/MCP 客户端中连接 DECX，并调用 `health_check()`。
+5. 使用 MCP 工具进行代码搜索、源码查看、交叉引用、Android Manifest/资源/组件分析、framework 服务查找和 JADX GUI 选中内容读取。
 
 返回内容较大时，MCP 工具均可通过 `page` 参数分页。
 
-可能需要的插件选项：
+插件选项（保存在 `~/.decx/config.json`）：
 
 - `decx.port`：DECX HTTP 服务端口，默认 `25419`
-- `decx.mcp_path`：不使用内置脚本时指定自定义 MCP 脚本路径
+- `decx.mcpAutoStart`：`true`/`false`，默认 `false` —— DECX 启动时是否自动启动 MCP 服务
 - `decx.cache`：`disk` 或 `memory`，默认 `disk`
 
 ---
@@ -142,6 +142,7 @@ decx process close --port 25419
 |--------|------|-------------|
 | **INTERNAL_ERROR** | 内部服务器错误 | 500 |
 | **SERVICE_ERROR** | 服务错误 | 503 |
+| **REQUEST_TIMEOUT** | 请求超时 | 504 |
 | **HEALTH_CHECK_FAILED** | 健康检查失败 | 500 |
 | **UNKNOWN_ENDPOINT** | 未知端点 | 404 |
 | **INVALID_PARAMETER** | 参数无效 | 400 |
@@ -156,6 +157,7 @@ decx process close --port 25419
 | **NO_MAIN_ACTIVITY** | 未找到 MAIN/LAUNCHER Activity | 404 |
 | **NO_APPLICATION** | 未找到 Application 类 | 404 |
 | **EMPTY_SEARCH_KEY** | 搜索关键字不能为空 | 400 |
+| **DECOMPILATION_SKIPPED** | 反编译被跳过（体积保护） | 503 |
 | **NOT_GUI_MODE** | 非 GUI 模式 | 503 |
 
 **错误响应格式：**
@@ -177,8 +179,8 @@ decx process close --port 25419
 
 | 路径 | 作用 |
 |---|---|
-| `decx/decx-core/` | 共享 Kotlin API、HTTP 传输、模型、服务和工具 |
-| `decx/decx-plugin/` | JADX GUI 插件和内置 MCP 资源 |
+| `decx/decx-core/` | 共享 Kotlin API、HTTP + MCP 传输、服务、模型与工具 |
+| `decx/decx-plugin/` | JADX GUI 插件：生命周期、UI 与进程内 MCP 服务装配 |
 | `decx/decx-server/` | 独立 headless server 入口和 fat JAR 打包 |
 | `decx-cli/` | TypeScript CLI，负责会话、代码分析、Android 辅助、framework 处理和自管理 |
 | `skills/` | 面向 AI Agent 的 DECX 分析、App/Framework 漏洞挖掘、报告生成和 PoC 构造技能 |
@@ -224,8 +226,9 @@ npm test
 
 - **[skylot/jadx](https://github.com/skylot/jadx)** - 本项目的基础，强大的 JADX 反编译器，提供插件支持
 - **[zinja-coder/jadx-ai-mcp](https://github.com/zinja-coder/jadx-ai-mcp)** - 为本项目提供了很多思路和灵感，关于 JADX MCP 集成的优秀实践
-- **[FastMCP](https://github.com/modelcontextprotocol/servers)**: MCP协议实现
-- **[Javalin](https://javalin.io/)**: 轻量级Web框架
+- **[Kotlin MCP SDK](https://github.com/modelcontextprotocol/kotlin-sdk)**: 进程内 MCP 服务实现
+- **[Ktor](https://ktor.io/)**: MCP 服务的 Streamable HTTP 传输
+- **[Javalin](https://javalin.io/)**: HTTP API 的轻量级 Web 框架
 
 ---
 

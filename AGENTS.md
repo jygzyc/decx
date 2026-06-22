@@ -8,7 +8,7 @@ DECX (`Decompiler + X`) is an AI-oriented analysis layer built on top of JADX.
 The repository contains:
 
 - A Kotlin HTTP analysis server shared by plugin mode and standalone mode
-- A JADX GUI plugin that starts the DECX server and manages a Python MCP sidecar
+- A JADX GUI plugin that starts the DECX server and an in-process Kotlin MCP server
 - A standalone `decx-server` fat JAR for headless analysis
 - A TypeScript CLI that starts and talks to `decx-server`
 - AI skill definitions under `skills/` for DECX-driven analysis workflows
@@ -27,10 +27,9 @@ AI Assistant / CLI
 
 | Path | Stack | Role |
 |---|---|---|
-| `decx/decx-core/` | Kotlin, JVM 11 | Shared API, HTTP transport, services, models, utilities |
-| `decx/decx-plugin/` | Kotlin, Shadow JAR | JADX GUI plugin, lifecycle, UI, MCP sidecar management |
+| `decx/decx-core/` | Kotlin, JVM 17 | Shared API, HTTP transport, services, models, utilities |
+| `decx/decx-plugin/` | Kotlin, Shadow JAR | JADX GUI plugin, lifecycle, UI, in-process MCP server management |
 | `decx/decx-server/` | Kotlin, Shadow JAR | Standalone headless server with `DecxServerApp` main class |
-| `decx/decx-plugin/src/main/resources/mcp/` | Python 3.10+ | Bundled MCP server resources extracted to `~/.decx/mcp/` |
 | `decx-cli/` | TypeScript, Node.js 22.5+ | User CLI for session management and analysis commands |
 | `decx-agent/src/server/` | TypeScript, Node.js 22.5+ | SQLite state, local API, and Web audit UI for the standalone agent |
 | `decx-agent/src/dispatcher/` | TypeScript, Node.js 22.5+ | Cairn-style bootstrap/reason/explore/review loop and workflow routing |
@@ -70,8 +69,7 @@ The JADX plugin does more than just expose the server:
 - Waits until the decompiler is ready before creating DECX services
 - Initializes preferences and server port
 - Starts the embedded DECX HTTP server
-- Extracts bundled MCP resources to `~/.decx/mcp/`
-- Starts and stops the Python sidecar on `serverPort + 1`
+- Starts and stops the in-process Kotlin MCP HTTP server on `serverPort + 1`
 - Provides UI and restart hooks through `DecxUIManager`
 - Performs decompiler warmup in the background for faster later queries
 
@@ -179,7 +177,7 @@ Do not document or rely on `npm run typecheck` unless you add that script first.
 
 ### Kotlin
 
-- JVM toolchain: 11
+- JVM toolchain: 17
 - Main libraries: JADX, Javalin, Gson, Jackson, SLF4J/Logback
 - Logging goes through `LogUtils`
 - Error responses use `DecxError`
@@ -201,11 +199,17 @@ Current error codes defined in `DecxError.kt`:
 - Jest-based tests
 - Node.js requirement: `>=18`
 
-### Python MCP resources
+### MCP server
 
-- Bundled with the plugin under `decx-plugin/src/main/resources/mcp/`
-- Sidecar executor detection prefers `uv`, then `python3`, then `python`
-- Non-`uv` startup checks for `requests`, `fastmcp`, and `pydantic`
+- DECX exposes an in-process Kotlin MCP server (official `io.modelcontextprotocol:kotlin-sdk-server`) over Ktor CIO Streamable HTTP on `serverPort + 1` at `/mcp`.
+- The MCP tool surface, transport, lifecycle, and registry live in `decx-core/.../server/`: `DecxMcpServer.kt`, `McpHttpServer.kt`, `McpToolRegistry.kt`.
+- `McpToolRegistry` is backed by `DecxRoutes`; tools delegate to existing API routes, so MCP exposure stays in sync with HTTP exposure.
+- MCP is **disabled by default**:
+  - Standalone server: opt-in via `--mcp` (parsed in `DecxServerApp`)
+  - CLI: `decx process open <file> --mcp` forwards the flag to `decx-server`
+  - Plugin: auto-start driven by the `mcpAutoStart` preference (`PreferencesManager`)
+- A `DecxApiResult` envelope is shared across HTTP and MCP responses; MCP tool responses are derived from the same `DecxApiResult` the HTTP layer returns.
+- The Python MCP sidecar (`decx-plugin/src/main/resources/mcp/`) and its `SidecarProcessManager` / `McpPreferences` were removed in v3.4.0.
 
 ## Architecture Pointers
 
@@ -225,7 +229,7 @@ Use this rule of thumb:
 - New analysis capability usually starts in `DecxApi` and `DecxApiImpl`
 - HTTP exposure is registered in `DecxRoutes`
 - CLI exposure is added in `decx-cli/src/commands/`
-- MCP exposure is added in `decx_mcp_server.py`
+- MCP exposure is added in `decx-core/.../server/McpToolRegistry.kt`
 
 ### Plugin path
 
@@ -233,8 +237,8 @@ For plugin-only behavior, check:
 
 - `DecxPlugin.kt`
 - `lifecycle/PluginLifecycleManager.kt`
-- `mcp/SidecarProcessManager.kt`
 - `ui/DecxUIManager.kt`
+- `utils/PreferencesManager.kt` (for `mcpAutoStart`)
 
 ### Standalone server path
 
@@ -245,6 +249,7 @@ For headless operation, check:
 This binary:
 
 - parses `--port`
+- parses `--mcp` (opt-in MCP server on `port + 1`)
 - forwards remaining args to JADX CLI parsing
 - validates an input file exists
 - warms up the decompiler
@@ -268,8 +273,8 @@ This binary:
 
 ### Add an MCP tool
 
-1. Update `decx/decx-plugin/src/main/resources/mcp/decx_mcp_server.py`
-2. Point the tool at an existing DECX HTTP endpoint when possible
+1. Update `decx/decx-core/src/main/kotlin/jadx/plugins/decx/server/McpToolRegistry.kt`
+2. Point the tool at an existing `DecxRoutes` endpoint when possible
 3. Only add new server APIs if the capability does not already exist
 
 ### Change plugin lifecycle or MCP startup
@@ -277,14 +282,14 @@ This binary:
 Validate interactions across:
 
 - `PluginLifecycleManager`
-- `SidecarProcessManager`
+- `DecxMcpServer` (in-process MCP server lifecycle)
 - `PreferencesManager`
 - `DecxUIManager`
 
 Port coordination matters:
 
 - DECX HTTP server uses the configured port
-- MCP sidecar uses `port + 1`
+- Kotlin MCP server uses `port + 1`
 
 ## Key Files
 
@@ -294,16 +299,20 @@ Port coordination matters:
 | `README.md` / `README_zh.md` | User-facing product and usage docs |
 | `decx/settings.gradle.kts` | Gradle module inclusion |
 | `decx/build.gradle.kts` | Root versioning, repositories, `dist` aggregation task |
-| `decx/decx-core/src/main/kotlin/jadx/plugins/decx/http/DecxServer.kt` | Javalin server and route registration |
-| `decx/decx-core/src/main/kotlin/jadx/plugins/decx/http/RouteHandler.kt` | Endpoint-to-API dispatch |
+| `decx/decx-core/src/main/kotlin/jadx/plugins/decx/Decx.kt` | Public facade for API, server, MCP, routes, tools |
+| `decx/decx-core/src/main/kotlin/jadx/plugins/decx/server/DecxServer.kt` | Javalin HTTP server and route registration |
+| `decx/decx-core/src/main/kotlin/jadx/plugins/decx/server/RouteHandler.kt` | Endpoint-to-API dispatch |
 | `decx/decx-core/src/main/kotlin/jadx/plugins/decx/api/DecxApi.kt` | Shared API contract |
 | `decx/decx-core/src/main/kotlin/jadx/plugins/decx/api/DecxApiImpl.kt` | Core API implementation |
-| `decx/decx-core/src/main/kotlin/jadx/plugins/decx/model/DecxError.kt` | Structured error codes |
+| `decx/decx-core/src/main/kotlin/jadx/plugins/decx/api/DecxApiResult.kt` | Unified success/error envelope (HTTP + MCP) |
+| `decx/decx-core/src/main/kotlin/jadx/plugins/decx/api/DecxError.kt` | Structured error codes |
+| `decx/decx-core/src/main/kotlin/jadx/plugins/decx/server/DecxMcpServer.kt` | In-process Kotlin MCP server lifecycle |
+| `decx/decx-core/src/main/kotlin/jadx/plugins/decx/server/McpHttpServer.kt` | Ktor CIO Streamable HTTP transport for MCP |
+| `decx/decx-core/src/main/kotlin/jadx/plugins/decx/server/McpToolRegistry.kt` | MCP tool surface, backed by DecxRoutes |
+| `decx/decx-core/src/main/kotlin/jadx/plugins/decx/utils/DecompileGuard.kt` | Guarded decompilation and high-memory skip logging |
 | `decx/decx-plugin/src/main/kotlin/jadx/plugins/decx/DecxPlugin.kt` | JADX plugin entry point |
 | `decx/decx-plugin/src/main/kotlin/jadx/plugins/decx/lifecycle/PluginLifecycleManager.kt` | Startup sequencing and warmup |
-| `decx/decx-plugin/src/main/kotlin/jadx/plugins/decx/mcp/SidecarProcessManager.kt` | Sidecar extraction, startup, shutdown |
 | `decx/decx-plugin/src/main/kotlin/jadx/plugins/decx/ui/DecxUIManager.kt` | Plugin UI and restart actions |
-| `decx/decx-plugin/src/main/resources/mcp/decx_mcp_server.py` | MCP tool surface |
 | `decx/decx-server/src/main/kotlin/jadx/plugins/decx/server/DecxServerApp.kt` | Headless entry point |
 | `decx-cli/src/index.ts` | CLI command registration |
 | `decx-cli/src/commands/process.ts` | Session lifecycle and server spawning |

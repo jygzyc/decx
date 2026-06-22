@@ -81,7 +81,7 @@ High-memory decompiler operations must go through `DecompileGuard`.
 
 ## Coding Conventions
 
-- JVM toolchain: 11
+- JVM toolchain: 17
 - Base package: `jadx.plugins.decx`
 - Use `data class` for models, `object` for singletons
 - All public API methods defined in `DecxApi` interface
