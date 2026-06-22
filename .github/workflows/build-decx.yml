@@ -119,11 +119,11 @@ jobs:
       if: steps.changes.outputs.has_changes == 'true'
       id: version
       run: |
-        LATEST_TAG=$(git describe --tags --abbrev=0 --match 'v*' 2>/dev/null | sed 's/^v//')
-        LATEST_TAG="${LATEST_TAG:-0.0.0}"
+        VERSION_BASE=$(cat version 2>/dev/null | tr -d '[:space:]')
+        VERSION_BASE="${VERSION_BASE:-0.0.0}"
         TIMESTAMP=$(date +%s)
-        echo "version=${LATEST_TAG}-${TIMESTAMP}" >> $GITHUB_OUTPUT
-        echo "Prerelease version: ${LATEST_TAG}-${TIMESTAMP}"
+        echo "version=${VERSION_BASE}-${TIMESTAMP}" >> $GITHUB_OUTPUT
+        echo "Prerelease version: ${VERSION_BASE}-${TIMESTAMP}"
 
     - name: Set up JDK 17
       if: steps.changes.outputs.has_changes == 'true'
