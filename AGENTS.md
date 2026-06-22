@@ -183,13 +183,14 @@ Do not document or rely on `npm run typecheck` unless you add that script first.
 - Error responses use `DecxError`
 - Shared transport and routing live in `decx-core`; avoid duplicating server logic in plugin/server modules
 
-Current error codes defined in `DecxError.kt`:
+Current error codes defined in `DecxError.kt` (see `decx/decx-core/src/main/kotlin/jadx/plugins/decx/api/DecxError.kt`):
 
-- `E001` internal server error
-- `E002` service error
-- `E003` health check failed
-- `E004` method not found
-- `E005` invalid parameter
+- `INTERNAL_ERROR` (500), `SERVICE_ERROR` (503), `REQUEST_TIMEOUT` (504), `HEALTH_CHECK_FAILED` (500)
+- `UNKNOWN_ENDPOINT` (404), `INVALID_PARAMETER` (400), `METHOD_NOT_FOUND` (404)
+- `CLASS_NOT_FOUND` (404), `RESOURCE_NOT_FOUND` (404), `MANIFEST_NOT_FOUND` (404)
+- `FIELD_NOT_FOUND` (404), `INTERFACE_NOT_FOUND` (404), `SERVICE_IMPL_NOT_FOUND` (404)
+- `NO_STRINGS_FOUND` (404), `NO_MAIN_ACTIVITY` (404), `NO_APPLICATION` (404)
+- `EMPTY_SEARCH_KEY` (400), `DECOMPILATION_SKIPPED` (503), `NOT_GUI_MODE` (503)
 
 ### TypeScript
 
@@ -197,7 +198,7 @@ Current error codes defined in `DecxError.kt`:
 - Commander-based command tree
 - esbuild-based bundle
 - Jest-based tests
-- Node.js requirement: `>=18`
+- Node.js requirement: `>=22.5`
 
 ### MCP server
 

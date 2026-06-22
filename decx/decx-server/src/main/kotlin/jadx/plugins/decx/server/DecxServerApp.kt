@@ -228,7 +228,7 @@ API Endpoints:
 		println("License: GNU General Public License v3.0")
 		println("Source:      https://github.com/jygzyc/decx")
 		println()
-		print("CLI tool connects to this server using: decxcli -P <port>\n")
+		print("CLI tool connects to this server using: decx -P <port>\n")
 		println()
 	}
 }
