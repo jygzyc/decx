@@ -3,17 +3,17 @@ kotlin = "2.4.0"
 jadx = "1.5.5"
 gson = "2.14.0"
 javalin = "6.7.0"
-jackson = "2.21.1"
+jackson = "2.22.0"
 slf4j = "2.0.18"
 logback = "1.5.34"
-assertj = "3.27.3"
+assertj = "3.27.7"
 junit = "5.12.1"
 
 [plugins]
 kotlin-jvm = { id = "org.jetbrains.kotlin.jvm", version.ref = "kotlin" }
 shadow = { id = "com.gradleup.shadow", version = "9.0.0-beta10" }
 use-latest-versions = { id = "se.patrikerdes.use-latest-versions", version = "0.2.19" }
-ben-manes-versions = { id = "com.github.ben-manes.versions", version = "0.51.0" }
+ben-manes-versions = { id = "com.github.ben-manes.versions", version = "0.54.0" }
 
 [libraries]
 jadx-core = { group = "io.github.skylot", name = "jadx-core", version.ref = "jadx" }
