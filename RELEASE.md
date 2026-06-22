@@ -1,18 +1,16 @@
-# DECX v3.3.0
+# DECX v3.4.0
 
-DECX v3.3.0 restructures and unifies the skill system: renames skills to follow consistent naming, simplifies reference architecture by consolidating casebooks and overviews into a single `patterns/` tree per skill, eliminates cross-skill redundancy, and standardizes pattern documentation.
+DECX v3.4.0 replaces the Python MCP sidecar with an in-process Kotlin SDK server, eliminating the separate runtime and file-based IPC. The MCP Streamable HTTP endpoint is now opt-in via `--mcp` on both the standalone server and the CLI.
 
 ### Changes
 
-- Skills: renamed `decxcli` to `decx-cli`, `decxcli-app-vulnhunt` to `decx-app-vulnhunt`, `decxcli-framework-vulnhunt` to `decx-framework-vulnhunt`, `decxcli-poc` to `decx-poc`.
-- Skills: renamed `decx-subagent-analysis` to `decx-subagent`.
-- Skills: unified `flowSig` definition across all skills — "current analyzed component signature for the analysis chain".
-- Skills: unified banned-claim lists across `decx-app-vulnhunt` and `decx-framework-vulnhunt`.
-- Skills: established single-source-of-truth principles — chain pivots only in `index.md`, rating authority in `risk-rating.md`, false-positive rules in SKILL.md + `index.md`.
-- Skills: removed the `casebooks/` and `overviews/` reference trees from `decx-app-vulnhunt` and `decx-framework-vulnhunt`; surviving knowledge is folded into a leaner `patterns/` set.
-- Skills: consolidated to 25 unified pattern files (15 app + 10 framework) with topic-style names — consistent headings, bold Sources/Sinks, combined Guards & Rejection, Example Shapes, and report guidance.
-- Skills: added new patterns `archive-extraction`, `cross-app-channels` (app) and `native-surface`, `validation-gap` (framework).
-- Skills: added `skills/AGENTS.md` documenting skill authoring rules and reference architecture.
-- Added `decx/decx/AGENTS.md` documenting Kotlin module architecture and coding conventions.
-- Updated root `AGENTS.md` — fixed path typo, added `skills/AGENTS.md` cross-reference.
-- Updated `hooks/session-start` with correct skill name references.
+- Server: replaced the Python MCP sidecar (`decx_mcp_server.py` + `SidecarProcessManager`) with the official Kotlin MCP SDK (`io.modelcontextprotocol:kotlin-sdk-server` 0.13.0) over Ktor CIO Streamable HTTP, running in-process on `serverPort + 1`.
+- Server: package consolidation — `http/` merged into `server/` (DecxServer, RouteHandler, new DecxMcpServer / McpHttpServer / McpToolRegistry); `model/` dissolved (DecxError → `api/`, DecxServiceInterface → `service/DecxService`).
+- Server: new public `Decx` facade (`decx-core/.../Decx.kt`) as the embeddable entry point for API, HTTP server, MCP server, routes, and tools.
+- Server: new unified `DecxApiResult` envelope shared across HTTP and MCP responses.
+- Server: MCP is disabled by default; enable with `--mcp` on `decx-server` or `decx process open`.
+- Plugin: in-process MCP server with auto-start driven by preferences; removed `SidecarProcessManager` and `McpPreferences`.
+- Plugin: removed bundled `resources/mcp/` Python files (`.python-version`, `decx_mcp_server.py`, `pyproject.toml`, `requirements.txt`).
+- CLI: added `--mcp` flag to `decx process open` — forwards `--mcp` to `decx-server` and reports `mcpPort` (HTTP port + 1) in the session result.
+- CLI: `extractPassthroughArgs` now strips `--mcp` / `--no-mcp` so they are not forwarded to jadx-cli.
+- Docs: updated `decx/AGENTS.md` with the new server/MCP architecture, package layout, and port contract.
