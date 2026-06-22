@@ -6,7 +6,7 @@ javalin = "6.7.0"
 jackson = "2.21.1"
 slf4j = "2.0.18"
 logback = "1.5.18"
-assertj = "3.27.3"
+assertj = "3.27.7"
 junit = "5.12.1"
 
 [plugins]
