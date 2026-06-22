@@ -30,7 +30,7 @@ subprojects {
 
     pluginManager.withPlugin("org.jetbrains.kotlin.jvm") {
         configure<org.jetbrains.kotlin.gradle.dsl.KotlinProjectExtension> {
-            jvmToolchain(11)
+            jvmToolchain(17)
         }
     }
 
