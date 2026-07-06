@@ -99,7 +99,7 @@ describe("process", () => {
     ]);
   });
 
-  it("open has <file> argument and -P/--port option", () => {
+  it("open has a target argument and -P/--port option", () => {
     const open = findCommand(cmd, ["open"])!;
     expect(open.registeredArguments.length).toBeGreaterThanOrEqual(1);
     expect(hasFlag(open, "--port")).toBe(true);
@@ -116,6 +116,7 @@ describe("process", () => {
     expect(help).toContain("record a reusable session");
     expect(help).toContain("forwarded to jadx-cli");
     expect(help).toContain("Session name used by -s/--session");
+    expect(help).toContain("Also start MCP Streamable HTTP server on port + 1");
   });
 
   it("close has optional [name] argument", () => {
@@ -163,6 +164,9 @@ describe("code", () => {
   it("search-global has <keyword> argument", () => {
     const sg = findCommand(cmd, ["search-global"])!;
     expect(sg.registeredArguments.length).toBeGreaterThanOrEqual(1);
+    const help = sg.helpInformation();
+    expect(help).toContain("Search class names");
+    expect(help).toContain("decompiled class bodies");
   });
 
   it("method-context has <signature> argument", () => {

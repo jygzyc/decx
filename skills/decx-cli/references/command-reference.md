@@ -20,6 +20,7 @@
 - `-s, --session <name>` selects a session by name as an alternative to `-P <port>`.
 - `process list` does not take `-P <port>`.
 - `process close` can close by name, by `--port <port>`, or all sessions with `--all`.
+- `process status` checks a named session, a specific `--port`, or the configured default port. Do not pass both a name and `--port`.
 - `ard framework collect/process/run/open` expose common framework options. For `open`, adb options are only used when resolving the generated jar path without an explicit `[jar]`.
 - Supported framework OEM values are `vivo`, `oppo`, `xiaomi`, `honor`, `google`, and `samsung`.
 - If command name, flags, arguments, or port behavior are uncertain, run the nearest `--help` command first. Do not guess DECX syntax.
@@ -30,8 +31,10 @@
 | Command | Purpose |
 |--------|---------|
 | `decx process check [-P <port>]` | Check DECX environment and runtime readiness |
-| `decx process open "<file>" [-P <port>]` | Open a target for analysis |
-| `decx process status "[name]" [-P <port>]` | Check active server or session status |
+| `decx process open "<file-or-url>" [-P <port>]` | Open a target for analysis |
+| `decx process status` | Check the configured default server port |
+| `decx process status "<name>"` | Check one named session |
+| `decx process status -P <port>` | Check one server port |
 | `decx process list` | List active sessions |
 | `decx process close "[name]"` | Close one session |
 | `decx process close --port <port>` | Close the session on one port |
@@ -40,12 +43,15 @@
 Open options:
 
 ```text
--P, --port <port>     server port (optional, auto-selects if one session alive)
+-P, --port <port>     preferred server port; if unavailable, DECX chooses a random available port
 -n, --name <name>     explicit session name
+--mcp                 also start MCP Streamable HTTP server on port + 1
 --force               reopen despite a conflicting session
 ```
 
 `process open` always starts `decx-server.jar` with JVM `-Xmx` set to two thirds of machine memory, rounded down. There is no CLI heap override.
+It accepts local paths and `http(s)://` URLs. URLs are downloaded into DECX tmp storage before the server starts.
+Standard JADX args after `process open` are forwarded with DECX defaults: `--deobf` is removed, and `--show-bad-code`, `--no-imports`, and `-Pdex-input.verify-checksum=no` are added when absent.
 
 Conflict behavior:
 
@@ -70,7 +76,7 @@ All `code` commands support `-s, --session <name>` as an alternative to `-P <por
 | `decx code xref-field "<field>" -P <port>` | Show field reads and writes |
 | `decx code implement "<interface>" -P <port>` | List interface implementations |
 | `decx code subclass "<class>" -P <port>` | List subclasses |
-| `decx code search-global "<keyword>" -P <port>` | Search all class bodies (`--limit`, `--case-sensitive`, `--no-regex`) |
+| `decx code search-global "<keyword>" -P <port>` | Search class names and decompiled class bodies (`--limit`, `--include-package`, `--exclude-package`, `--case-sensitive`, `--no-regex`) |
 | `decx code search-class "<class>" "<keyword>" -P <port>` | Grep one class (`--limit` required, `--case-sensitive`, `--no-regex`) |
 | `decx code search-method "<name>" -P <port>` | Search method names |
 
@@ -150,13 +156,14 @@ Class name:
 Method signature:
 
 ```text
-"package.Class.methodName(paramType1,paramType2):returnType"
+Use the exact signature returned by `decx code search-method`, `class-context`, `method-context`, or `search-class`.
 ```
 
 Example:
 
 ```text
-"com.example.MainActivity.onCreate(android.os.Bundle):void"
+decx code search-method "onCreate" -P <port>
+decx code method-source "<exact returned signature>" -P <port>
 ```
 
 Field identifier:

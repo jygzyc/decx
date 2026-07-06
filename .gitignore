@@ -74,3 +74,4 @@ CLAUDE.md
 .sisyphus/
 .codegraph/
 .omo
+.env

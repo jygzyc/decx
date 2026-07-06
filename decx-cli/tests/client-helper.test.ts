@@ -28,6 +28,11 @@ describe("resolveClient", () => {
     expect((client as any).baseUrl).toBe("http://127.0.0.1:3000");
   });
 
+  it("rejects invalid --port values", () => {
+    expect(() => resolveClient({ port: "3000abc" })).toThrow("Invalid port: 3000abc");
+    expect(() => resolveClient({ port: "1000" })).toThrow("Invalid port: 1000");
+  });
+
   it("creates formatter in json mode when --json is set", () => {
     const { fmt } = resolveClient({ json: true });
     // Formatter in json mode — just verify it doesn't throw

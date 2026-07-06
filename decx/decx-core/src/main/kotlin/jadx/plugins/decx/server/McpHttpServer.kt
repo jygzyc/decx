@@ -6,7 +6,7 @@ import io.ktor.server.engine.EmbeddedServer
 import io.ktor.server.engine.embeddedServer
 import io.modelcontextprotocol.kotlin.sdk.server.Server
 import io.modelcontextprotocol.kotlin.sdk.server.ServerOptions
-import io.modelcontextprotocol.kotlin.sdk.server.mcpStreamableHttp
+import io.modelcontextprotocol.kotlin.sdk.server.mcpStatelessStreamableHttp
 import io.modelcontextprotocol.kotlin.sdk.types.CallToolResult
 import io.modelcontextprotocol.kotlin.sdk.types.Implementation
 import io.modelcontextprotocol.kotlin.sdk.types.ServerCapabilities
@@ -27,10 +27,10 @@ import kotlinx.serialization.json.JsonPrimitive as KxJsonPrimitive
  * MCP server backed by the Kotlin SDK.
  *
  * This is the single MCP transport implementation for DECX. It exposes the
- * route-backed tools from [McpToolRegistry] over Streamable HTTP at /mcp.
+ * route-backed tools from [McpToolRegistry] over stateless Streamable HTTP at /mcp.
  *
  * Uses Ktor CIO (`embeddedServer`) because the MCP Kotlin SDK
- * (`mcpStreamableHttp`) is a Ktor plugin — it must be installed into a Ktor
+ * (`mcpStatelessStreamableHttp`) is a Ktor plugin — it must be installed into a Ktor
  * server engine to accept HTTP connections. No other transport or server
  * framework is used here.
  */
@@ -47,7 +47,7 @@ class McpHttpServer(
         return try {
             val mcpServer = buildServer()
             engine = embeddedServer(CIO, host = "127.0.0.1", port = mcpPort) {
-                mcpStreamableHttp(path = "/mcp") { mcpServer }
+                mcpStatelessStreamableHttp(path = "/mcp") { mcpServer }
             }.start(wait = false)
             LogUtils.info("[MCP] Kotlin SDK MCP server started on port $mcpPort")
             true

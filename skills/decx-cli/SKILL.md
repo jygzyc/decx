@@ -33,7 +33,8 @@ Reuse an active session when it matches the target. Keep one session per target.
 ```bash
 decx process list
 decx process open "<file-or-url>" --name "<target-name>" -P <port>
-decx process status "<target-name>" -P <port>
+decx process status "<target-name>"
+decx process status -P <port>
 decx process close --all
 ```
 
@@ -42,7 +43,7 @@ decx process close --all
 - Session-backed `decx code` and `decx ard` accept `-P <port>` or `-s <name>`. When exactly one session is alive, omit both for auto-select; with multiple sessions, pass one explicitly.
 - adb-backed `decx ard system-services` and `decx ard perm-info` never take `-P`; use `--serial` for device selection.
 - Quote all identifiers: class names, method signatures, field identifiers, resource paths, package names, interface names.
-- Method signatures: full form only — `"package.Class.method(paramType1,paramType2):returnType"`. Never use shortened signatures, partial class names, placeholders, or `...`.
+- Method signatures: use the exact signature returned by `decx code search-method` or context/search results. Never use shortened signatures, partial class names, placeholders, or `...`.
 
 If command syntax or flags are uncertain, run the nearest `--help` before retrying.
 
@@ -83,7 +84,7 @@ Keep notes under `.decx-analysis/<target-name>/` for work that may continue late
 Concrete failure modes from real sessions. These are not generic CLI tips; they are conditions where the wrong call silently corrupts analysis or returns plausible-but-wrong output.
 
 - **Multiple sessions + omitted `-P`/`-s`**: `decx code` and `decx ard` auto-select only when one session is alive. Once more than one session exists, always pass `-P <port>` or `-s <name>`.
-- **Shortened method signature**: `"Class.method"` or `"Class.method():void"` returns wrong method, an empty body, or a stale cached match. Use the full form `"package.Class.method(paramType1,paramType2):returnType"`. Never substitute `...` or drop parameter types.
+- **Shortened method signature**: `"Class.method"` or `"Class.method():void"` returns wrong method, an empty body, or a stale cached match. First run `decx code search-method "<name>"`, then copy the exact returned signature into `method-source`, `method-context`, `method-cfg`, or `xref-method`. Never substitute `...` or drop parameter types.
 - **`-P` on adb-backed commands**: `decx ard system-services` and `decx ard perm-info` talk to adb, not the DECX HTTP server. Adding `-P <port>` causes the command to fail with an unrelated error and may mask the real adb connectivity issue.
 - **`decx code search-global` without `--limit`**: returns up to the server default (often hundreds of matches), burns context, and frequently hides the actual hit. Always set `--limit` to a small working set (start at 20–50) and refine.
 - **`process open` reuses file but fails on name conflict**: a previous session with the same `--name` is still bound. Either pick a fresh `--name`, pass `--force` to rebind, or close the old session first with `decx process close`.

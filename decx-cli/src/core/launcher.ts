@@ -5,6 +5,7 @@
 import { spawn, execSync } from "child_process";
 import * as path from "path";
 import { totalmem } from "os";
+import { createServer } from "net";
 import { existsSync, mkdirSync, openSync, closeSync, readFileSync } from "fs";
 import { hashFile } from "../utils/hash.js";
 import { FileError, ProcessError, ServerError } from "../utils/errors.js";
@@ -14,6 +15,7 @@ import { logCliEvent } from "../utils/logger.js";
 import { decxPath } from "./paths.js";
 import { Manager } from "./config.js";
 import { resolveFileInput } from "./file-input.js";
+import { MAX_SERVER_PORT, MIN_SERVER_PORT, parseServerPort } from "./ports.js";
 
 export interface OpenAnalysisTargetOptions {
   port?: string;
@@ -61,29 +63,73 @@ export function normalizeJadxPassthroughArgs(args: string[] = []): string[] {
   return result;
 }
 
+async function canBindPort(port: number): Promise<boolean> {
+  return new Promise((resolve) => {
+    const server = createServer();
+
+    server.once("error", () => resolve(false));
+    server.listen({ port, host: "127.0.0.1", exclusive: true }, () => {
+      server.close(() => resolve(true));
+    });
+  });
+}
+
+async function reserveRandomPort(): Promise<number> {
+  return new Promise((resolve, reject) => {
+    const server = createServer();
+
+    server.once("error", reject);
+    server.listen({ port: 0, host: "127.0.0.1", exclusive: true }, () => {
+      const address = server.address();
+      server.close(() => {
+        if (address && typeof address === "object") {
+          resolve(address.port);
+        } else {
+          reject(new ProcessError("Failed to allocate a random port"));
+        }
+      });
+    });
+  });
+}
+
+export async function selectAvailableServerPort(
+  preferredPort: number,
+  mcp: boolean = false,
+): Promise<number> {
+  preferredPort = parseServerPort(preferredPort);
+
+  if (await isServerPortAvailable(preferredPort, mcp)) {
+    return preferredPort;
+  }
+
+  for (let i = 0; i < 20; i++) {
+    const port = await reserveRandomPort();
+    if (port < MIN_SERVER_PORT) continue;
+    if (await isServerPortAvailable(port, mcp)) {
+      return port;
+    }
+  }
+
+  throw new ProcessError("Failed to find an available random port");
+}
+
+export async function isServerPortAvailable(
+  port: number,
+  mcp: boolean = false,
+): Promise<boolean> {
+  port = parseServerPort(port);
+  if (mcp && port >= MAX_SERVER_PORT) return false;
+  if (!await canBindPort(port)) return false;
+  if (mcp && !await canBindPort(port + 1)) return false;
+  return true;
+}
+
 export async function openAnalysisTarget(
   filePath: string,
   opts: OpenAnalysisTargetOptions = {},
 ): Promise<Record<string, unknown>> {
   const mgr = Manager.get();
-  const port = opts.port ? parseInt(opts.port) : mgr.server.defaultPort;
-
-  const [portInUse] = await checkServer(port, 1);
-  if (portInUse) {
-    const aliveSessions = mgr.listAliveSessions();
-    const portSession = aliveSessions.find((s) => s.port === port);
-    if (portSession) {
-      throw new ProcessError(
-        `Port ${port} is already in use by session '${portSession.name}' (${portSession.path}). ` +
-        `Use --port to specify a different port, or close that session first.`,
-        port,
-      );
-    }
-    throw new ProcessError(
-      `Port ${port} is already in use by an unknown process. Use --port to specify a different port.`,
-      port,
-    );
-  }
+  const requestedPort = parseServerPort(opts.port ?? mgr.server.defaultPort);
 
   const jarPath = findDecxServerJar();
   if (!jarPath) {
@@ -121,6 +167,7 @@ export async function openAnalysisTarget(
     }
   }
 
+  const port = await selectAvailableServerPort(requestedPort, opts.mcp ?? false);
   const javaArgs = buildDecxServerJavaArgs(
     jarPath,
     resolvedFile,

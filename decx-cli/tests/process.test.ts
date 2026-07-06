@@ -6,13 +6,16 @@
  */
 
 import { Command } from "commander";
+import { createServer, type Server } from "net";
 import { makeProcessCommand } from "../src/commands/process.js";
 import {
   buildDecxServerJavaArgs,
   defaultJavaHeap,
   extractPassthroughArgs,
   normalizeJadxPassthroughArgs,
+  selectAvailableServerPort,
 } from "../src/core/launcher.js";
+import { parseServerPort } from "../src/core/ports.js";
 
 function createProgram(): Command {
   const program = new Command();
@@ -70,7 +73,7 @@ describe("process command structure", () => {
   // ── open ─────────────────────────────────────────────────────────────────
 
   describe("open", () => {
-    it("has <file> argument", () => {
+    it("has a target argument", () => {
       const open = findCommand(processCmd, ["open"])!;
       expect(open.registeredArguments.length).toBeGreaterThanOrEqual(1);
     });
@@ -255,5 +258,78 @@ describe("buildDecxServerJavaArgs", () => {
       "--mcp",
       "--show-bad-code",
     ]);
+  });
+});
+
+describe("parseServerPort", () => {
+  it("accepts numeric ports greater than 1000", () => {
+    expect(parseServerPort("1001")).toBe(1001);
+    expect(parseServerPort(65535)).toBe(65535);
+  });
+
+  it("rejects partial, non-numeric, and out-of-range ports", () => {
+    expect(() => parseServerPort("1001abc")).toThrow("Invalid port: 1001abc");
+    expect(() => parseServerPort("abc")).toThrow("Invalid port: abc");
+    expect(() => parseServerPort("1000")).toThrow("Invalid port: 1000");
+    expect(() => parseServerPort("65536")).toThrow("Invalid port: 65536");
+  });
+});
+
+describe("selectAvailableServerPort", () => {
+  async function listen(port: number): Promise<{ server: Server; port: number }> {
+    return new Promise((resolve, reject) => {
+      const server = createServer();
+      server.once("error", reject);
+      server.listen({ port, host: "127.0.0.1" }, () => {
+        const address = server.address();
+        if (!address || typeof address === "string") {
+          reject(new Error("Failed to read test server port"));
+          return;
+        }
+        resolve({ server, port: address.port });
+      });
+    });
+  }
+
+  async function close(server: Server): Promise<void> {
+    return new Promise((resolve, reject) => {
+      server.close((err) => err ? reject(err) : resolve());
+    });
+  }
+
+  it("keeps the preferred port when it is available", async () => {
+    const { server, port } = await listen(0);
+    await close(server);
+
+    const selected = await selectAvailableServerPort(port);
+    expect(selected).toBe(port);
+  });
+
+  it("falls back to a random port when the preferred port is occupied", async () => {
+    const { server, port } = await listen(0);
+    try {
+      const selected = await selectAvailableServerPort(port);
+      expect(selected).not.toBe(port);
+      expect(selected).toBeGreaterThan(1000);
+      expect(selected).toBeLessThanOrEqual(65535);
+    } finally {
+      await close(server);
+    }
+  });
+
+  it("chooses a random base port whose MCP companion port is also available", async () => {
+    const { server, port } = await listen(0);
+    try {
+      const selected = await selectAvailableServerPort(port - 1, true);
+      expect(selected).not.toBe(port - 1);
+      expect(selected).toBeGreaterThan(1000);
+      expect(selected).toBeLessThan(65535);
+    } finally {
+      await close(server);
+    }
+  });
+
+  it("rejects ports at or below 1000", async () => {
+    await expect(selectAvailableServerPort(1000)).rejects.toThrow("Invalid port: 1000");
   });
 });

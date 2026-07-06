@@ -65,8 +65,8 @@ export function makeCodeCommand(): Command {
     }));
 
   addGlobalSearchOptions(cmd.command("search-global <keyword>"))
-    .summary("Search globally across class names, method names, and source/resource text")
-    .description("Search the whole analysis target for a keyword or regex. Returns matched classes, methods, and resources for broad discovery.")
+    .summary("Search globally across class names and decompiled class source")
+    .description("Search class names and decompiled class bodies for a keyword or regex. Returns matched classes for broad discovery.")
     .option("--page <n>", "Result page number to fetch", String)
     .action(withErrorHandler(async (keyword: string, opts, command) => {
       const { fmt, client } = resolveCommandClient(opts, command);

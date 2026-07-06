@@ -7,6 +7,7 @@ import { DecxClient } from "./client.js";
 import { Formatter } from "../utils/formatter.js";
 import { Manager } from "./config.js";
 import { DecxError } from "../utils/errors.js";
+import { parseServerPort } from "./ports.js";
 
 export function resolveClient(
   opts: Record<string, unknown>
@@ -21,7 +22,7 @@ export function resolveClient(
   let port: number;
   let sessionName: string | undefined;
   if (opts.port) {
-    port = parseInt(opts.port as string);
+    port = parseServerPort(opts.port as string);
   } else if (opts.session) {
     const s = mgr.getSession(opts.session as string);
     if (!s) {
@@ -36,7 +37,7 @@ export function resolveClient(
       port = auto.port;
       sessionName = auto.name;
     } else {
-      port = mgr.server.defaultPort;
+      port = parseServerPort(mgr.server.defaultPort);
     }
   }
 

@@ -4,9 +4,11 @@ import { Formatter } from "../utils/formatter.js";
 import { Manager } from "../core/config.js";
 import { DecxError, ProcessError, handleCliError } from "../utils/errors.js";
 import { findDecxServerJar } from "../core/installer.js";
+import { parseServerPort } from "../core/ports.js";
 import {
   openAnalysisTarget,
   checkServer,
+  isServerPortAvailable,
   killProcessGroup,
   extractPassthroughArgs,
 } from "../core/launcher.js";
@@ -24,28 +26,30 @@ export function makeProcessCommand(): Command {
     .option("-P, --port <port>", "DECX HTTP server port to check", String)
     .action(async (opts) => {
       const fmt = new Formatter();
-      const mgr = Manager.get();
-      const port = opts.port ? parseInt(opts.port) : mgr.server.defaultPort;
+      try {
+        const mgr = Manager.get();
+        const port = parseServerPort(opts.port ?? mgr.server.defaultPort);
 
-      // Check decx-server.jar
-      const jarPath = findDecxServerJar();
-      const jarOk = jarPath !== null;
-      const jarInfo = jarOk ? jarPath! : "Not found. Use 'decx self install' to install.";
+        // Check decx-server.jar
+        const jarPath = findDecxServerJar();
+        const jarOk = jarPath !== null;
+        const jarInfo = jarOk ? jarPath! : "Not found. Use 'decx self install' to install.";
 
-      // Check running server
-      const [serverOk, serverInfo] = await checkServer(port);
+        // Check running server
+        const [serverOk, serverInfo] = await checkServer(port);
 
-      // Check port availability
-      const [portInUse] = await checkServer(port, 1);
+        // Check port availability
+        const portAvailable = await isServerPortAvailable(port);
 
-      const results = {
-        server: { ok: serverOk, info: serverInfo },
-        jar: { ok: jarOk, info: jarInfo },
-        port: { ok: !portInUse, info: portInUse ? `Port ${port} is already in use` : `Port ${port} is available` },
-      };
+        const results = {
+          server: { ok: serverOk, info: serverInfo },
+          jar: { ok: jarOk, info: jarInfo },
+          port: { ok: portAvailable, info: portAvailable ? `Port ${port} is available` : `Port ${port} is already in use` },
+        };
 
-      logCliEvent({ command: "process", action: "check", serverPort: port, ...results });
-      fmt.output(results);
+        logCliEvent({ command: "process", action: "check", serverPort: port, ...results });
+        fmt.output(results);
+      } catch (err) { handleCliError(err, fmt); }
     });
 
   // open
@@ -109,10 +113,7 @@ export function makeProcessCommand(): Command {
 
       if (!name) {
         if (opts.port) {
-          const port = parseInt(opts.port);
-          if (Number.isNaN(port)) {
-            throw new ProcessError(`Invalid port: ${opts.port}`);
-          }
+          const port = parseServerPort(opts.port);
           const session = mgr.listAliveSessions().find((s) => s.port === port);
           if (!session) {
             throw new ProcessError(`Session not found on port: ${port}`);
@@ -178,9 +179,9 @@ export function makeProcessCommand(): Command {
         if (!session) throw new ProcessError(`Session not found: ${name}`);
         port = session.port;
       } else if (opts.port) {
-        port = parseInt(opts.port);
+        port = parseServerPort(opts.port);
       } else {
-        port = mgr.server.defaultPort;
+        port = parseServerPort(mgr.server.defaultPort);
       }
 
       const client = new DecxClient("127.0.0.1", port);
