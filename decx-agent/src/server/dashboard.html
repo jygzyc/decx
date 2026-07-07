@@ -1,0 +1,413 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>decx-agent Dashboard</title>
+  <style>
+    :root {
+      --bg: #0d1117;
+      --bg-card: #161b22;
+      --bg-hover: #1c2128;
+      --border: #30363d;
+      --text: #c9d1d9;
+      --text-dim: #8b949e;
+      --text-faint: #6e7681;
+      --accent: #1f6feb;
+      --green: #238636;
+      --green-hover: #2ea043;
+      --red: #da3633;
+      --yellow: #d29922;
+      --purple: #8957e5;
+      --blue: #79c0ff;
+    }
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      display: flex;
+      height: 100vh;
+      overflow: hidden;
+      font-size: 14px;
+      line-height: 1.5;
+    }
+
+    /* ─── Sidebar ─── */
+    #sidebar {
+      width: 260px;
+      min-width: 260px;
+      border-right: 1px solid var(--border);
+      padding: 16px 12px;
+      overflow-y: auto;
+    }
+    #sidebar h2 {
+      font-size: 11px;
+      font-weight: 600;
+      color: var(--text-dim);
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      margin-bottom: 12px;
+      padding: 0 4px;
+    }
+    .project-item {
+      padding: 10px 12px;
+      border-radius: 8px;
+      cursor: pointer;
+      margin-bottom: 4px;
+      font-size: 13px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      transition: background 0.1s;
+    }
+    .project-item:hover { background: var(--bg-card); }
+    .project-item.active { background: var(--accent); color: #fff; }
+    .project-item.active .badge { background: rgba(255,255,255,0.2); color: #fff; }
+
+    .badge {
+      font-size: 10px;
+      font-weight: 600;
+      padding: 2px 8px;
+      border-radius: 20px;
+      text-transform: uppercase;
+      letter-spacing: 0.3px;
+      flex-shrink: 0;
+    }
+    .badge.active { background: var(--green); color: #fff; }
+    .badge.completed { background: var(--accent); color: #fff; }
+    .badge.failed, .badge.stopped { background: var(--red); color: #fff; }
+    .badge.paused { background: var(--yellow); color: #fff; }
+
+    /* ─── Main ─── */
+    #main { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
+    #header {
+      padding: 16px 24px;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      gap: 16px;
+    }
+    #header h1 { font-size: 18px; font-weight: 600; }
+    #content { flex: 1; display: flex; overflow: hidden; }
+    #left-panel { flex: 1; overflow-y: auto; padding: 20px 24px; }
+    #right-panel {
+      width: 420px;
+      min-width: 420px;
+      border-left: 1px solid var(--border);
+      display: flex;
+      flex-direction: column;
+    }
+
+    /* ─── Progress bar ─── */
+    .progress-bar {
+      display: flex;
+      gap: 8px;
+      margin-bottom: 20px;
+      flex-wrap: wrap;
+    }
+    .progress-item {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      padding: 6px 14px;
+      border-radius: 6px;
+      font-size: 12px;
+      font-family: 'SF Mono', 'Fira Code', monospace;
+    }
+    .progress-item span { color: var(--text-dim); }
+    .progress-item strong { color: var(--text); margin-left: 4px; }
+
+    /* ─── Section titles ─── */
+    .section-title {
+      font-size: 11px;
+      font-weight: 600;
+      color: var(--text-dim);
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      margin: 20px 0 10px;
+    }
+    .section-title:first-child { margin-top: 0; }
+
+    /* ─── Fact cards ─── */
+    .fact-card {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 14px 16px;
+      margin-bottom: 8px;
+      transition: border-color 0.1s;
+    }
+    .fact-card:hover { border-color: var(--text-faint); }
+    .fact-card.accepted { border-left: 3px solid var(--green); }
+    .fact-card.candidate { border-left: 3px solid var(--yellow); }
+    .fact-card.rejected { border-left: 3px solid var(--red); opacity: 0.6; }
+    .fact-header { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+    .fact-id {
+      font-family: 'SF Mono', 'Fira Code', monospace;
+      font-size: 12px;
+      color: var(--blue);
+      font-weight: 600;
+    }
+    .fact-meta { font-size: 11px; color: var(--text-dim); }
+    .fact-desc { font-size: 14px; word-break: break-word; }
+    .fact-evidence {
+      margin-top: 6px;
+      font-size: 12px;
+      color: var(--text-dim);
+      padding-left: 12px;
+    }
+
+    /* ─── Intent cards ─── */
+    .intent-card {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 12px 14px;
+      margin-bottom: 6px;
+    }
+    .intent-card.open { border-left: 3px solid var(--accent); }
+    .intent-card.claimed { border-left: 3px solid var(--yellow); }
+    .intent-card.chained { border-left: 3px solid var(--purple); }
+    .intent-card.done { border-left: 3px solid var(--green); }
+    .intent-card.failed { border-left: 3px solid var(--red); opacity: 0.7; }
+
+    /* ─── Hint cards ─── */
+    .hint-card {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 10px 14px;
+      margin-bottom: 6px;
+      font-size: 13px;
+    }
+    .hint-kind {
+      font-size: 10px;
+      font-weight: 600;
+      color: var(--yellow);
+      text-transform: uppercase;
+      letter-spacing: 0.3px;
+    }
+
+    /* ─── Directive form ─── */
+    #directive-form {
+      padding: 16px;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      gap: 8px;
+    }
+    #directive-form select,
+    #directive-form input {
+      background: var(--bg);
+      color: var(--text);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 8px 10px;
+      font-size: 13px;
+      font-family: inherit;
+    }
+    #directive-form select { width: 120px; flex-shrink: 0; }
+    #directive-form input { flex: 1; }
+    #directive-form button {
+      background: var(--green);
+      color: #fff;
+      border: none;
+      border-radius: 6px;
+      padding: 8px 16px;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+      flex-shrink: 0;
+      transition: background 0.1s;
+    }
+    #directive-form button:hover { background: var(--green-hover); }
+
+    /* ─── Event stream ─── */
+    #events {
+      flex: 1;
+      overflow-y: auto;
+      padding: 12px 16px;
+      font-family: 'SF Mono', 'Fira Code', monospace;
+      font-size: 12px;
+    }
+    .event-line {
+      padding: 4px 0;
+      border-bottom: 1px solid rgba(48, 54, 61, 0.5);
+      word-break: break-all;
+      line-height: 1.6;
+    }
+    .event-seq { color: var(--text-faint); margin-right: 8px; }
+    .event-type { color: var(--blue); font-weight: 600; }
+
+    .empty {
+      color: var(--text-faint);
+      font-style: italic;
+      text-align: center;
+      padding: 40px;
+      font-size: 13px;
+    }
+
+    /* ─── Scrollbar ─── */
+    ::-webkit-scrollbar { width: 8px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
+    ::-webkit-scrollbar-thumb:hover { background: var(--text-faint); }
+  </style>
+</head>
+<body>
+  <div id="sidebar">
+    <h2>Projects</h2>
+    <div id="project-list"></div>
+  </div>
+  <div id="main">
+    <div id="header">
+      <h1 id="project-title">Select a project</h1>
+      <div id="project-status"></div>
+    </div>
+    <div id="content">
+      <div id="left-panel">
+        <div class="progress-bar" id="progress-bar"></div>
+        <div class="section-title">Facts</div>
+        <div id="fact-list"></div>
+        <div class="section-title">Intents</div>
+        <div id="intent-list"></div>
+        <div class="section-title">Unconsumed Hints</div>
+        <div id="hint-list"></div>
+      </div>
+      <div id="right-panel">
+        <div id="directive-form">
+          <select id="dir-kind">
+            <option value="hint">hint</option>
+            <option value="stop">stop</option>
+            <option value="pause">pause</option>
+            <option value="resume">resume</option>
+            <option value="kill-intent">kill-intent</option>
+            <option value="spawn-intent">spawn-intent</option>
+          </select>
+          <input type="text" id="dir-payload" placeholder="hint text / intent id / description">
+          <button onclick="sendDirective()">Send</button>
+        </div>
+        <div class="section-title" style="padding: 12px 16px 0;">Event Stream</div>
+        <div id="events"></div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    let currentProject = null;
+    let evtSource = null;
+
+    async function loadProjects() {
+      const resp = await fetch('/api/projects');
+      const projects = await resp.json();
+      const list = document.getElementById('project-list');
+      list.innerHTML = '';
+      for (const p of projects) {
+        const div = document.createElement('div');
+        div.className = 'project-item' + (currentProject === p.id ? ' active' : '');
+        div.innerHTML = '<span>' + esc(p.name || p.session) + '</span><span class="badge ' + p.status + '">' + p.status + '</span>';
+        div.onclick = () => selectProject(p.id);
+        list.appendChild(div);
+      }
+    }
+
+    async function selectProject(id) {
+      currentProject = id;
+      if (evtSource) evtSource.close();
+      await loadProjects();
+      await loadProjectDetail(id);
+      connectSSE(id);
+    }
+
+    async function loadProjectDetail(id) {
+      const resp = await fetch('/api/projects/' + encodeURIComponent(id));
+      if (!resp.ok) return;
+      const data = await resp.json();
+      document.getElementById('project-title').textContent = data.project.name || data.project.session;
+      document.getElementById('project-status').innerHTML = '<span class="badge ' + data.project.status + '">' + data.project.status + '</span>';
+
+      var pr = data.progress;
+      document.getElementById('progress-bar').innerHTML =
+        '<span class="progress-item"><span>steps</span><strong>' + pr.stepsExecuted + '</strong></span>' +
+        '<span class="progress-item"><span>accepted</span><strong>' + pr.acceptedFacts + '</strong></span>' +
+        '<span class="progress-item"><span>candidate</span><strong>' + pr.candidateFacts + '</strong></span>' +
+        '<span class="progress-item"><span>rejected</span><strong>' + pr.rejectedFacts + '</strong></span>' +
+        '<span class="progress-item"><span>open</span><strong>' + pr.openIntents + '</strong></span>' +
+        '<span class="progress-item"><span>stagnation</span><strong>' + pr.stagnationLevel + '</strong></span>';
+
+      var factList = document.getElementById('fact-list');
+      factList.innerHTML = data.facts.length === 0 ? '<div class="empty">No facts yet</div>' : '';
+      for (var f of data.facts) {
+        var conf = f.confidence < 1 ? ' (' + Math.round(f.confidence * 100) + '%)' : '';
+        var card = document.createElement('div');
+        card.className = 'fact-card ' + f.status;
+        card.innerHTML =
+          '<div class="fact-header"><span class="fact-id">' + f.id + '</span><span class="fact-meta">' + f.source + conf + '</span></div>' +
+          '<div class="fact-desc">' + esc(f.description) + '</div>' +
+          (f.reviewerReason ? '<div class="fact-evidence">review: ' + esc(f.reviewerReason) + '</div>' : '') +
+          (f.evidence && f.evidence.length ? '<div class="fact-evidence">' + f.evidence.map(esc).join('<br>') + '</div>' : '');
+        factList.appendChild(card);
+      }
+
+      var intentList = document.getElementById('intent-list');
+      intentList.innerHTML = data.intents.length === 0 ? '<div class="empty">No intents yet</div>' : '';
+      for (var i of data.intents) {
+        var card = document.createElement('div');
+        card.className = 'intent-card ' + i.status;
+        card.innerHTML =
+          '<div class="fact-header"><span class="fact-id">' + i.id + '</span><span class="fact-meta">[' + i.status + '] ' + i.creator + '</span></div>' +
+          '<div class="fact-desc">' + esc(i.description) + '</div>' +
+          (i.failureReason ? '<div class="fact-evidence">fail: ' + esc(i.failureReason) + '</div>' : '') +
+          (i.killedBy ? '<div class="fact-evidence">killed by: ' + i.killedBy + '</div>' : '');
+        intentList.appendChild(card);
+      }
+
+      var hintList = document.getElementById('hint-list');
+      hintList.innerHTML = data.hints.length === 0 ? '<div class="empty">No hints</div>' : '';
+      for (var h of data.hints) {
+        var card = document.createElement('div');
+        card.className = 'hint-card';
+        card.innerHTML = '<span class="hint-kind">[' + h.kind + ']</span> (' + h.creator + ') ' + esc(h.content);
+        hintList.appendChild(card);
+      }
+    }
+
+    function connectSSE(id) {
+      var eventsDiv = document.getElementById('events');
+      eventsDiv.innerHTML = '<div class="empty">Connecting...</div>';
+      evtSource = new EventSource('/api/projects/' + encodeURIComponent(id) + '/stream');
+      evtSource.onopen = function() { eventsDiv.innerHTML = ''; };
+      evtSource.onmessage = function(e) {
+        if (eventsDiv.querySelector('.empty')) eventsDiv.innerHTML = '';
+        var ev = JSON.parse(e.data);
+        var line = document.createElement('div');
+        line.className = 'event-line';
+        line.innerHTML = '<span class="event-seq">#' + ev.seq + '</span><span class="event-type">' + ev.type + '</span> ' + esc(JSON.stringify(ev.payload).slice(0, 120));
+        eventsDiv.insertBefore(line, eventsDiv.firstChild);
+        if (eventsDiv.children.length > 200) eventsDiv.removeChild(eventsDiv.lastChild);
+      };
+    }
+
+    async function sendDirective() {
+      if (!currentProject) return;
+      var kind = document.getElementById('dir-kind').value;
+      var payload = document.getElementById('dir-payload').value;
+      if (!payload) return;
+      await fetch('/api/projects/' + encodeURIComponent(currentProject) + '/directives', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ kind: kind, payload: payload }),
+      });
+      document.getElementById('dir-payload').value = '';
+    }
+
+    function esc(s) {
+      var d = document.createElement('div');
+      d.textContent = s == null ? '' : String(s);
+      return d.innerHTML;
+    }
+
+    loadProjects();
+    setInterval(loadProjects, 5000);
+  </script>
+</body>
+</html>

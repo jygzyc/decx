@@ -62,9 +62,9 @@ The default SQLite database is:
   "workflow": {
     "phases": [
       { "id": "bootstrap", "role": "planner" },
-      { "id": "reason", "role": "dispatcher" },
-      { "id": "explore", "role": "explorer" },
-      { "id": "review", "role": "reviewer" }
+      { "id": "reason", "role": "evaluator" },
+      { "id": "explore", "role": "generator" },
+      { "id": "review", "role": "evaluator" }
     ],
     "rules": []
   }
@@ -77,7 +77,7 @@ Roles can be defined with prompt files:
 {
   "roles": {
     "cloudTracer": {
-      "extends": "explorer",
+      "extends": "generator",
       "prompt": "prompts/cloud-control-trace.md",
       "instructions": "Focus on cloud-control parameter propagation.",
       "worker": "codex",
@@ -112,7 +112,7 @@ Roles can be defined with prompt files:
     }
   },
   "roles": {
-    "reviewer": {
+    "evaluator": {
       "tools": ["repoSearch", "reviewGuide"]
     }
   }
@@ -128,10 +128,10 @@ Reviewer can run asynchronously from workflow config:
   "workflow": {
     "review": {
       "enabled": true,
-      "role": "reviewer",
+      "role": "evaluator",
       "worker": "api",
       "everySteps": 5,
-      "prompt": "prompts/reviewer.md"
+      "prompt": "prompts/evaluator.md"
     }
   }
 }

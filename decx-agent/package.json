@@ -9,11 +9,12 @@
     "AGENTS.md"
   ],
   "bin": {
-    "decx-agent": "dist/index.js"
+    "decx-agent": "dist/cli.js"
   },
   "scripts": {
     "clean": "rm -rf dist dist-packages",
-    "build": "npm run clean && tsc",
+    "build": "npm run clean && tsc && npm run copy-assets",
+    "copy-assets": "cp src/server/dashboard.html dist/server/dashboard.html",
     "typecheck": "tsc --noEmit",
     "test": "npm run build && node --test tests/*.test.ts",
     "smoke": "node scripts/smoke.mjs",

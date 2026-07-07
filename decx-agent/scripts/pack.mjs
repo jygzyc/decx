@@ -21,6 +21,7 @@ import { build } from "esbuild";
 import { createHash } from "node:crypto";
 import {
   chmodSync,
+  copyFileSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
@@ -34,7 +35,7 @@ import { join } from "node:path";
 import { spawnSync } from "node:child_process";
 
 const root = join(new URL("..", import.meta.url).pathname);
-const srcEntry = join(root, "src", "index.ts");
+const srcEntry = join(root, "src", "cli.ts");
 const distDir = join(root, "dist");
 const distEntry = join(distDir, "index.js");
 const outDir = join(root, "dist-packages");
@@ -62,6 +63,10 @@ try {
   await step("clean dist", () => {
     rmSync(distDir, { recursive: true, force: true });
     mkdirSync(distDir, { recursive: true });
+  });
+
+  await step("copy dashboard.html", () => {
+    copyFileSync(join(root, "src", "server", "dashboard.html"), join(distDir, "dashboard.html"));
   });
 
   await step("esbuild bundle", async () => {
