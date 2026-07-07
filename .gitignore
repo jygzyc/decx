@@ -6,7 +6,7 @@
 # FileDump
 Source/
 Output/
-docs/
+/docs/
 
 # Python
 __pycache__/
