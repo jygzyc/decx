@@ -1,15 +1,6 @@
-import path from "node:path";
-import { fileURLToPath } from "node:url";
+import { createDecxGraphPlugin } from "./lib/base-plugin.js";
+import { decxAnalysisProfiles } from "./profiles/index.js";
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const skillsDir = path.resolve(__dirname, "../../skills");
+export const DecxPlugin = (input = {}) => createDecxGraphPlugin(decxAnalysisProfiles, input);
 
-export const DecxPlugin = async () => ({
-  config: async (config) => {
-    config.skills ??= {};
-    config.skills.paths ??= [];
-    if (!config.skills.paths.includes(skillsDir)) {
-      config.skills.paths.push(skillsDir);
-    }
-  },
-});
+export default DecxPlugin;

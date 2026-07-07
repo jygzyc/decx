@@ -32,13 +32,13 @@ AI Assistant / CLI
 | `decx/decx-server/` | Kotlin, Shadow JAR | Standalone headless server with `DecxServerApp` main class |
 | `decx-cli/` | TypeScript, Node.js 22.5+ | User CLI for session management and analysis commands |
 | `decx-agent/src/server/` | TypeScript, Node.js 22.5+ | SQLite state, local API, and Web audit UI for the standalone agent |
-| `decx-agent/src/dispatcher/` | TypeScript, Node.js 22.5+ | Cairn-style bootstrap/reason/explore/review loop and workflow routing |
+| `decx-agent/src/dispatcher/` | TypeScript, Node.js 22.5+ | Cairn-inspired bootstrap/reason/explore/metacog/review loop and workflow routing |
 | `decx-agent/src/roles/` | TypeScript, Node.js 22.5+ | Built-in and configured role prompt registry |
 | `decx-agent/src/workers/` | TypeScript, Node.js 22.5+ | Bottom adapters for command and model workers |
 | `skills/decx-cli/` | Skill `decx-cli` | DECX CLI usage, general analysis, and workflow routing |
 | `skills/decx-app-vulnhunt/` | Skill `decx-app-vulnhunt` | Android app vulnerability hunting workflow |
 | `skills/decx-framework-vulnhunt/` | Skill `decx-framework-vulnhunt` | Android framework vulnerability hunting workflow |
-| `skills/decx-report/` | Skill `decx-report` | Report generation from finalized blackboard findings |
+| `skills/decx-report/` | Skill `decx-report` | Report generation from finalized DECX analysis graph findings |
 | `skills/decx-poc/` | Skill `decx-poc` | PoC app construction workflow |
 | `skills/decx-poc/assets/poc-template-app/` | Android template | Source-of-truth minimal Android PoC app scaffold |
 | `skills/decx-poc/assets/poc-template-server/` | Node template | Source-of-truth PoC HTML server scaffold |
@@ -117,10 +117,10 @@ Notable details:
 ### Skill workflow details
 
 - Skill architecture and authoring rules are defined in `skills/AGENTS.md`.
-- Vulnerability hunting skills use a SQLite blackboard architecture. Each target gets one `decx-analysis.db` under `.decx-analysis/<target>/`. App hunts initialize with `--kind android_app`; framework hunts initialize with `--kind android_framework`. The blackboard is driven by Facts (immutable observations whose descriptions carry the observation type), Intents (exploration goals), Events (audit trail), and links/chains. Chains emerge from the fact→intent→fact graph when evidence proves a complete path. The blackboard CLI is `scripts/decx-analysis-db.mjs`.
-- `skills/decx-report/` (`decx-report`) owns report templates and consumes finalized blackboard findings; app/framework vuln-hunt skills should not duplicate report templates.
+- DECX analysis skills share `skills/decx-analysis-core/`, a minimal SQLite Fact/Intent/Hint DAG protocol. Each analysis session gets one `decx-analysis.db` under `.decx-analysis/<session>/`. App hunts initialize with `--kind android_app`; framework hunts initialize with `--kind android_framework`. Facts are accepted evidence, Intents are concrete analysis tasks, and Hints are human-authored guidance. Chains are derived from the Fact→Intent→Fact DAG. Intent execution uses `start --by <generator-id>` with a renewable lease for parallel work. The shared graph CLI is `skills/decx-analysis-core/scripts/decx-graph.mjs`.
+- `skills/decx-report/` (`decx-report`) owns report templates and consumes finalized DECX analysis graph findings; app/framework vuln-hunt skills should not duplicate report templates.
 - `skills/decx-poc/scripts/setup-poc.mjs` copies `skills/decx-poc/assets/poc-template-app/` into `poc-<target>/app/` and `skills/decx-poc/assets/poc-template-server/` into `poc-<target>/server/`
-- The PoC app template keeps a dynamic button registry in `ExploitRegistry` and also accepts browser-driven `poc-<target>://run/trigger?exploit=<id>` launches through `PoCActivity`
+- The PoC app template keeps a dynamic button registry in `ExploitRegistry` and also accepts browser-driven `poc-<target>://run/trigger?exploit=<id>` launches through `PoCActivity`.
 
 ### Agent framework
 
@@ -131,11 +131,22 @@ The agent is a generic, configured TypeScript framework intentionally separate f
 - There are no fixed business task subcommands; vulnerability hunting, cloud-control analysis, attribution, parameter reversal, and other tasks are expressed by `task.json`, prompt files, roles, and workflow rules.
 - Runtime state is stored in SQLite at `.decx/agent_tasks/agent.sqlite` by default.
 - Session directories under `.decx/agent_tasks/<session>/` hold `task.json`, prompt files, and task-local artifacts.
-- The dispatcher loop has `bootstrap`, `reason`, `explore`, and asynchronous `review` phases.
-- Built-in roles are `planner`, `dispatcher`, `executor`, `explorer`, and `reviewer`; task configs can extend them with prompt-defined roles.
+- The dispatcher loop has `bootstrap`, `reason`, `explore`, `metacog`, and asynchronous `review` phases. Data flows: **planner** (bootstrap) creates root facts + intents from hints → **generator** (explore) executes intents and produces pending facts → **evaluator** (reason/review) reviews pending facts and promotes accepted ones into facts → **metacog** (metacog) analyzes facts and produces hints for the planner. All phases are configurable via `workflow.phases` in `task.json`.
+- Built-in roles are `planner`, `generator`, `evaluator`, and `metacog`.
+- **planner** creates root facts (accepted, no review) and converts hints into intents. Does not produce analysis facts.
+- **generator** executes intents and produces facts with `status: "pending"`.
+- **evaluator** is the only role that can transition a fact from `pending` to `accepted` or `rejected`.
+- **metacog** produces hints only (no facts, no intents).
+- Facts have a three-state lifecycle: `pending` (generator output) → `accepted` or `rejected` (evaluator decision). Only `accepted` facts flow into proof chains and downstream reasoning.
+- **Dead-end deduplication**: failed intents record a `dead_end` entry keyed by `route_hash` (djb2 of normalized description). Open intents matching a known dead-end are auto-skipped before dispatch, preventing workers from re-attempting proven-futile routes.
+- **Concurrent multi-project scheduling**: `runActiveOnce` dispatches all active projects concurrently via `Promise.allSettled`. SQLite WAL + `busy_timeout` handles concurrent writes.
+- **Event bus**: `DispatcherEventBus` (in-memory ring + optional JSONL persistence) emits typed events (`fact.pending`, `fact.accepted`, `fact.rejected`, `project.completed`, `project.failed`) consumed by SSE subscribers for real-time UI updates.
+- **SSE streaming**: `GET /api/projects/:id/stream` pushes real-time state changes to the Web UI. Falls back to polling if SSE is unavailable.
+- **Worker file isolation**: each worker execution gets a unique `workers/<worker>-<intent>-<ts>/` subdirectory as cwd, with a `shared` symlink to the session root. Successful worker dirs are cleaned up; failed ones retained for debugging.
+- Three optional workflow knobs live under `workflow.{qualityGate,metacog,stopGate}` in `task.json`. All default to undefined (current behavior preserved); set them to enable deterministic fact quality gating (accept/demote/reject by lowering `confidence` or dropping), trigger-based divergence (everyExploreCount/consecutiveLowConfFacts/consecutiveReasonIdle), and completion discipline (requireNoOpenIntents/minFactConfidence).
 - Worker backends are bottom adapters. They receive prompts and return JSON; they do not own agent state. CLI runners (`codex`, `claude-code`, `opencode`, plus any custom command) use `kind: "command"`. Model runners (`api`, `openai`, `anthropic`, `openai-compatible`, plus any custom `ModelProvider`) use `kind: "model"` and are matched by id through `src/workers/providers/registry.ts`, which wraps the official `openai` and `@anthropic-ai/sdk` SDKs. New model providers are added with `registerProvider(...)` — no source edit required. The legacy `api` `WorkerKind` is gone; the `api` worker name still resolves to `model`.
 - Command workers are split into a driver registry plus command adapter/base helpers under `decx-agent/src/workers/`; configured command workers support prompt/session/path placeholders, optional `sessionStrategy` (`none`, `stable`, `uuid`, `regex`), optional `sessionPattern`, and `responseMode: "jsonl-assistant-text"` for JSONL agent output.
-- `.opencode/plugins/decx.js` only registers the repository `skills/` directory with OpenCode's `skills.paths`; do not add unfinished `decx-agent` tool shims there.
+- `.opencode/plugins/decx.js` is the OpenCode DECX workflow control plane. It must not register `skills.paths`; graph writes go through fixed function-level plugin tools backed by `.opencode/plugins/lib/graph-api.js` and the embedded `.opencode/plugins/lib/decx-graph.js`; Planner/MainAgent orchestrates Explorer/Evaluator/Metacog subagents, and open hints must be explicitly answered before ordinary planner work continues; cross-session analysis is read-only federation over isolated `.decx-analysis/<session>/decx-analysis.db` files, not shared writes.
 - Validate agent changes with `cd decx-agent && npm run build && npm run smoke`, plus `cd decx-cli && npm run build && npm test`.
 
 ## Build And Test Commands
