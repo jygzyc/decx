@@ -53,6 +53,69 @@ export function buildCliUpdateArgs(packageName: string, tag: string = "latest"):
   return ["install", "-g", `${packageName}@${tag}`];
 }
 
+interface NpmCommandDeps {
+  env?: NodeJS.ProcessEnv;
+  execPath?: string;
+  platform?: NodeJS.Platform;
+  exists?: (p: string) => boolean;
+}
+
+export interface NpmUpdateCommand {
+  command: string;
+  args: string[];
+  display: string;
+  env: NodeJS.ProcessEnv;
+}
+
+function withPathPrefix(env: NodeJS.ProcessEnv, dirs: string[], platform: NodeJS.Platform): NodeJS.ProcessEnv {
+  const pathKey = platform === "win32" ? "Path" : "PATH";
+  const currentPath = env.PATH ?? env.Path ?? "";
+  const prefix = dirs.filter(Boolean).join(path.delimiter);
+  return {
+    ...env,
+    [pathKey]: prefix ? `${prefix}${path.delimiter}${currentPath}` : currentPath,
+  };
+}
+
+export function resolveNpmUpdateCommand(
+  packageName: string,
+  deps: NpmCommandDeps = {},
+): NpmUpdateCommand {
+  const env = deps.env ?? process.env;
+  const execPath = deps.execPath ?? process.execPath;
+  const platform = deps.platform ?? process.platform;
+  const exists = deps.exists ?? existsSync;
+  const updateArgs = buildCliUpdateArgs(packageName);
+  const nodeDir = path.dirname(execPath);
+
+  if (env.npm_execpath && exists(env.npm_execpath)) {
+    const args = [env.npm_execpath, ...updateArgs];
+    return {
+      command: execPath,
+      args,
+      display: `${path.basename(execPath)} ${args.join(" ")}`,
+      env: withPathPrefix(env, [nodeDir], platform),
+    };
+  }
+
+  const npmBinName = platform === "win32" ? "npm.cmd" : "npm";
+  const candidates = [
+    path.join(nodeDir, npmBinName),
+    platform === "win32" ? path.join(nodeDir, "npm") : undefined,
+    "/opt/homebrew/bin/npm",
+    "/usr/local/bin/npm",
+    "/usr/bin/npm",
+  ].filter((candidate): candidate is string => Boolean(candidate));
+
+  const command = candidates.find((candidate) => exists(candidate)) ?? npmBinName;
+  return {
+    command,
+    args: updateArgs,
+    display: `${command} ${updateArgs.join(" ")}`,
+    env: withPathPrefix(env, [nodeDir, "/opt/homebrew/bin", "/usr/local/bin", "/usr/bin"], platform),
+  };
+}
+
 type ServerVersionManager = Pick<Manager, "updateServerVersion">;
 
 export async function executeSelfInstall(
@@ -126,15 +189,20 @@ export function makeSelfCommand(): Command {
         throw new DecxError("Unable to determine CLI package name from package.json", "UPDATE_ERROR");
       }
       console.error(`  Updating ${cliPackage.name} (current: v${cliPackage.version})...`);
-      console.error(`  Running: npm ${buildCliUpdateArgs(cliPackage.name).join(" ")} ...`);
+      const npmCommand = resolveNpmUpdateCommand(cliPackage.name);
+      console.error(`  Running: ${npmCommand.display} ...`);
 
-      const result = spawnSync("npm", buildCliUpdateArgs(cliPackage.name), {
+      const result = spawnSync(npmCommand.command, npmCommand.args, {
         stdio: "inherit",
         timeout: 120_000,
+        env: npmCommand.env,
       });
 
       if (result.error) {
-        throw new DecxError(`CLI update failed: ${result.error.message}`, "UPDATE_ERROR");
+        const hint = result.error.message.includes("ENOENT")
+          ? ` (npm was not found; checked ${path.dirname(process.execPath)}, PATH, and common install locations)`
+          : "";
+        throw new DecxError(`CLI update failed: ${result.error.message}${hint}`, "UPDATE_ERROR");
       }
       if (result.signal) {
         throw new DecxError(`CLI update failed: npm exited with signal ${result.signal}`, "UPDATE_ERROR");

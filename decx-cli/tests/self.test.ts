@@ -1,7 +1,12 @@
 import { jest } from "@jest/globals";
 import { mkdirSync, writeFileSync } from "fs";
 import * as path from "path";
-import { buildCliUpdateArgs, executeSelfInstall, getCliPackageMetadata } from "../src/commands/self.js";
+import {
+  buildCliUpdateArgs,
+  executeSelfInstall,
+  getCliPackageMetadata,
+  resolveNpmUpdateCommand,
+} from "../src/commands/self.js";
 import { VERSION } from "../src/core/version.js";
 import { resetTestDir, testPath } from "./test-paths.js";
 
@@ -43,6 +48,40 @@ describe("self command metadata", () => {
       "-g",
       "@custom/decx-cli@latest",
     ]);
+  });
+
+  it("runs npm through npm_execpath when npm provides one", () => {
+    const cmd = resolveNpmUpdateCommand("@custom/decx-cli", {
+      env: { npm_execpath: "/tmp/npm-cli.js", PATH: "" },
+      execPath: "/node/bin/node",
+      platform: "darwin",
+      exists: (p) => p === "/tmp/npm-cli.js",
+    });
+
+    expect(cmd.command).toBe("/node/bin/node");
+    expect(cmd.args).toEqual([
+      "/tmp/npm-cli.js",
+      "install",
+      "-g",
+      "@custom/decx-cli@latest",
+    ]);
+  });
+
+  it("falls back to npm next to the current node binary when PATH may not contain npm", () => {
+    const cmd = resolveNpmUpdateCommand("@custom/decx-cli", {
+      env: { PATH: "" },
+      execPath: "/node/bin/node",
+      platform: "darwin",
+      exists: (p) => p === "/node/bin/npm",
+    });
+
+    expect(cmd.command).toBe("/node/bin/npm");
+    expect(cmd.args).toEqual([
+      "install",
+      "-g",
+      "@custom/decx-cli@latest",
+    ]);
+    expect(cmd.env.PATH?.split(path.delimiter)[0]).toBe("/node/bin");
   });
 
   it("updates stored server version and returns a real install path on self install", async () => {
