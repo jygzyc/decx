@@ -1,269 +1,213 @@
-/**
- * Characterization tests for graphBlock() in src/dispatcher/prompt.ts.
- *
- * Exercises the prompt builder and asserts on substrings of the resulting prompt.
- * Tests describe current behavior with the new Fact/Intent/Link graph model.
- */
 import { test } from "node:test";
 import { strict as assert } from "node:assert";
-// Import from compiled dist/ output because src/ uses NodeNext .js imports
-// which Node's --experimental-strip-types cannot resolve at runtime.
-// Build (tsc) must have been run before this test executes.
-import { buildWorkerPrompt } from "../dist/dispatcher/prompt.js";
-import type { ProjectDetail } from "../dist/core/types.js";
-import { makeFact, makeIntent, makeLink } from "./helper.ts";
+import { InMemoryGraph } from "../dist/graph/in-memory-graph.js";
+import { createProject } from "./helper.ts";
 
-/**
- * Build a minimal ProjectDetail fixture. The graphBlock() section is what
- * we care about, but buildWorkerPrompt also walks project.taskConfig and
- * several other arrays, so we keep the fixture valid end-to-end.
- */
-function makeDetail(overrides: {
-  facts?: ProjectDetail["facts"];
-  intents?: ProjectDetail["intents"];
-  links?: ProjectDetail["links"];
-} = {}): ProjectDetail {
-  const taskConfig = {
-    task: { name: "graph-test", target: "t", goal: "g" },
-    workers: { noop: { kind: "noop" as const } },
-    workflow: {
-      phases: [
-        { id: "explore" as const, role: "explorer" },
-      ],
-      rules: [],
-    },
-  };
-  return {
-    project: {
-      id: "proj_graph_test",
-      session: "sess_graph_test",
-      name: "graph-test",
-      target: "t",
-      goal: "g",
-      status: "active" as const,
-      worker: "noop",
-      sessionDir: "/tmp/sess",
-      configPath: "/tmp/cfg.json",
-      taskConfig,
-      createdAt: "2026-01-01T00:00:00.000Z",
-      updatedAt: "2026-01-01T00:00:00.000Z",
-    },
-    facts: overrides.facts ?? [],
-    intents: overrides.intents ?? [],
-    links: overrides.links ?? [],
-    runs: [],
-  };
-}
-
-/**
- * Extract the graphBlock() slice from the full prompt. The slice starts
- * at "Facts:" and ends at the next blank-line section (i.e. before the
- * "Recent worker runs:" header that follows it).
- */
-function graphSection(prompt: string): string {
-  const start = prompt.indexOf("Facts:");
-  assert.notEqual(start, -1, "expected 'Facts:' section in prompt");
-  const end = prompt.indexOf("Recent worker runs:", start);
-  if (end === -1) return prompt.slice(start);
-  return prompt.slice(start, end);
-}
-
-test("graphBlock: empty graph shows '- none' for facts, intents, and links", () => {
-  const detail = makeDetail();
-  const prompt = buildWorkerPrompt({ detail, phase: "explore" });
-  const section = graphSection(prompt);
-  assert.ok(section.startsWith("Facts:"), "section should start with 'Facts:'");
-  assert.ok(section.includes("- none"), "empty sections should show '- none'");
-  assert.match(section, /Facts:\n- none/);
-  assert.match(section, /Intents:\n- none/);
-  assert.match(section, /Links:\n- none/);
+test("createProject starts with zero facts", () => {
+  const g = new InMemoryGraph();
+  const p = createProject(g);
+  assert.equal(g.facts(p.id).length, 0);
 });
 
-test("graphBlock: single fact renders as '- <id>: <description>'", () => {
-  const detail = makeDetail({
-    facts: [makeFact({ id: "f001", description: "test fact" })],
-  });
-  const prompt = buildWorkerPrompt({ detail, phase: "explore" });
-  const section = graphSection(prompt);
-  assert.ok(section.includes("- f001: test fact"));
-  assert.match(section, /Intents:\n- none/);
-  assert.match(section, /Links:\n- none/);
+test("addIntent starts as open", () => {
+  const g = new InMemoryGraph();
+  const p = createProject(g);
+  const i = g.addIntent(p.id, { description: "do x", creator: "planner" });
+  assert.equal(i.id, "i001");
+  assert.equal(i.status, "open");
 });
 
-test("graphBlock: fact with confidence < 1.0 renders percentage", () => {
-  const detail = makeDetail({
-    facts: [makeFact({ id: "f001", description: "uncertain fact", confidence: 0.7 })],
-  });
-  const prompt = buildWorkerPrompt({ detail, phase: "explore" });
-  const section = graphSection(prompt);
-  assert.ok(section.includes("- f001 (70%): uncertain fact"), `got: ${section}`);
+test("claimIntent transitions open → claimed", () => {
+  const g = new InMemoryGraph();
+  const p = createProject(g);
+  const intent = g.addIntent(p.id, { description: "x", creator: "planner" });
+  const claimed = g.claimIntent(p.id, intent.id, "w1", 1000);
+  assert.equal(claimed.status, "claimed");
 });
 
-test("graphBlock: fact with confidence 1.0 omits percentage", () => {
-  const detail = makeDetail({
-    facts: [makeFact({ id: "f001", description: "certain fact", confidence: 1.0 })],
-  });
-  const prompt = buildWorkerPrompt({ detail, phase: "explore" });
-  const section = graphSection(prompt);
-  assert.ok(section.includes("- f001: certain fact"));
-  assert.ok(!section.includes("(100%)"), "1.0 confidence should not show percentage");
+test("failIntent records killedBy", () => {
+  const g = new InMemoryGraph();
+  const p = createProject(g);
+  const intent = g.addIntent(p.id, { description: "x", creator: "planner" });
+  g.claimIntent(p.id, intent.id, "w1", 1000);
+  g.failIntent(p.id, intent.id, "wrong direction", false, "planner");
+  const failed = g.getIntent(p.id, intent.id);
+  assert.equal(failed!.status, "failed");
+  assert.equal(failed!.killedBy, "planner");
 });
 
-test("graphBlock: multiple facts each get their own bullet line", () => {
-  const detail = makeDetail({
-    facts: [
-      makeFact({ id: "f001", description: "first fact" }),
-      makeFact({ id: "f002", description: "second fact" }),
-      makeFact({ id: "f003", description: "third fact" }),
-    ],
-  });
-  const prompt = buildWorkerPrompt({ detail, phase: "explore" });
-  const section = graphSection(prompt);
-  assert.ok(section.includes("- f001: first fact"));
-  assert.ok(section.includes("- f002: second fact"));
-  assert.ok(section.includes("- f003: third fact"));
-  const idx1 = section.indexOf("- f001:");
-  const idx2 = section.indexOf("- f002:");
-  const idx3 = section.indexOf("- f003:");
-  assert.ok(idx1 < idx2 && idx2 < idx3, "facts should preserve input order");
+test("failIntent with recordDeadEnd=false does not record dead-end", () => {
+  const g = new InMemoryGraph();
+  const p = createProject(g);
+  const intent = g.addIntent(p.id, { description: "Investigate X", creator: "planner" });
+  g.claimIntent(p.id, intent.id, "w1", 1000);
+  g.failIntent(p.id, intent.id, "transient", false);
+  assert.ok(!g.isDeadEnd(p.id, "investigate x"));
 });
 
-test("graphBlock: intent with status, creator, and fromFacts renders all fields", () => {
-  const detail = makeDetail({
-    intents: [
-      makeIntent({
-        id: "i001",
-        fromFacts: ["f001", "f002"],
-        description: "explore branch",
-        creator: "dispatcher",
-        status: "done",
-      }),
-    ],
+test("hint defaults to kind=direction", () => {
+  const g = new InMemoryGraph();
+  const p = createProject(g);
+  const h = g.addHint(p.id, { content: "try X", creator: "metacog" });
+  assert.equal(h.kind, "direction");
+  assert.equal(h.targetIntentId, undefined);
+});
+
+test("hint can carry stop-explorer kind + targetIntentId", () => {
+  const g = new InMemoryGraph();
+  const p = createProject(g);
+  const intent = g.addIntent(p.id, { description: "x", creator: "planner" });
+  const h = g.addHint(p.id, { content: "stop this", creator: "metacog", kind: "stop-explorer", targetIntentId: intent.id });
+  assert.equal(h.kind, "stop-explorer");
+  assert.equal(h.targetIntentId, intent.id);
+});
+
+test("sweepExpiredLeases releases claimed intents past expiry", async () => {
+  const g = new InMemoryGraph();
+  const p = createProject(g);
+  const intent = g.addIntent(p.id, { description: "x", creator: "planner" });
+  g.claimIntent(p.id, intent.id, "w1", 1);
+  await new Promise((r) => setTimeout(r, 10));
+  assert.ok(g.sweepExpiredLeases() >= 1);
+  assert.equal(g.getIntent(p.id, intent.id)!.status, "open");
+});
+
+test("directive queue filters by consumedAt", () => {
+  const g = new InMemoryGraph();
+  const p = createProject(g);
+  g.addDirective(p.id, { kind: "stop", payload: "done" });
+  g.addDirective(p.id, { kind: "hint", payload: "try X" });
+  assert.equal(g.unconsumedDirectives(p.id).length, 2);
+  const dirs = g.unconsumedDirectives(p.id);
+  g.consumeDirective(p.id, dirs[0].id);
+  assert.equal(g.unconsumedDirectives(p.id).length, 1);
+});
+
+test("progress stagnation resets on fact accept", () => {
+  const g = new InMemoryGraph();
+  const p = createProject(g);
+  const intent = g.addIntent(p.id, { description: "x", creator: "planner" });
+  g.claimIntent(p.id, intent.id, "w1", 1000);
+  g.failIntent(p.id, intent.id, "failed", false);
+  assert.equal(g.progress(p.id).stagnationLevel, 1);
+  const fact = g.addFact(p.id, { description: "good", source: "explorer" });
+  g.resolveFact(p.id, fact.id, { decision: "accept", reason: "ok" });
+  assert.equal(g.progress(p.id).stagnationLevel, 0);
+});
+
+test("blocked fact stays in graph, is low weight, and can be promoted later", () => {
+  const g = new InMemoryGraph();
+  const p = createProject(g);
+  const f = g.addFact(p.id, { description: "reachable only after login", source: "explorer", confidence: 0.9 });
+
+  g.resolveFact(p.id, f.id, {
+    decision: "block",
+    reason: "missing auth precondition",
+    requiredConditions: ["valid login session"],
   });
-  const prompt = buildWorkerPrompt({ detail, phase: "explore" });
-  const section = graphSection(prompt);
-  assert.ok(
-    section.includes("- i001 [done] role=dispatcher from=f001,f002: explore branch"),
-    `expected intent line in section, got: ${section}`,
+
+  const blocked = g.getFact(p.id, f.id)!;
+  assert.equal(blocked.status, "blocked");
+  assert.equal(blocked.confidence, 0.35);
+  assert.deepEqual(blocked.requiredConditions, ["valid login session"]);
+  assert.equal(g.progress(p.id).blockedFacts, 1);
+
+  g.resolveFact(p.id, f.id, { decision: "accept", reason: "precondition satisfied by another session", confidence: 0.75 });
+  const accepted = g.getFact(p.id, f.id)!;
+  assert.equal(accepted.status, "accepted");
+  assert.equal(accepted.confidence, 0.75);
+});
+
+
+test("addLink creates a link between two facts", () => {
+  const g = new InMemoryGraph();
+  const p = createProject(g);
+  const f1 = g.addFact(p.id, { description: "source fact", source: "explorer" });
+  const f2 = g.addFact(p.id, { description: "derived fact", source: "explorer" });
+  const link = g.addLink(p.id, { fromFactId: f1.id, toFactId: f2.id, kind: "supports" });
+  assert.ok(link.id);
+  assert.equal(link.fromFactId, f1.id);
+  assert.equal(link.toFactId, f2.id);
+  assert.equal(link.kind, "supports");
+});
+
+test("links() returns all links for a project", () => {
+  const g = new InMemoryGraph();
+  const p = createProject(g);
+  const f1 = g.addFact(p.id, { description: "a", source: "explorer" });
+  const f2 = g.addFact(p.id, { description: "b", source: "explorer" });
+  const f3 = g.addFact(p.id, { description: "c", source: "explorer" });
+  g.addLink(p.id, { fromFactId: f1.id, toFactId: f2.id, kind: "supports" });
+  g.addLink(p.id, { fromFactId: f2.id, toFactId: f3.id, kind: "contradicts", evidence: ["x"] });
+  const links = g.links(p.id);
+  assert.equal(links.length, 2);
+  assert.deepEqual(links[0]!.evidence, []);
+  assert.deepEqual(links[1]!.evidence, ["x"]);
+});
+
+test("links() isolated per project", () => {
+  const g = new InMemoryGraph();
+  const p1 = createProject(g, { session: "s-link-1" });
+  const p2 = createProject(g, { session: "s-link-2" });
+  const f1 = g.addFact(p1.id, { description: "a", source: "explorer" });
+  const f2 = g.addFact(p1.id, { description: "b", source: "explorer" });
+  g.addLink(p1.id, { fromFactId: f1.id, toFactId: f2.id, kind: "supports" });
+  assert.equal(g.links(p1.id).length, 1);
+  assert.equal(g.links(p2.id).length, 0);
+});
+
+test("claimIntent on non-open intent throws", () => {
+  const g = new InMemoryGraph();
+  const p = createProject(g);
+  const intent = g.addIntent(p.id, { description: "x", creator: "planner" });
+  g.claimIntent(p.id, intent.id, "w1", 1000);
+  assert.throws(
+    () => g.claimIntent(p.id, intent.id, "w2", 1000),
+    /is not open/,
   );
 });
 
-test("graphBlock: intent with empty 'fromFacts' shows 'from=origin'", () => {
-  const detail = makeDetail({
-    intents: [
-      makeIntent({
-        id: "i300",
-        fromFacts: [],
-        description: "starts from origin",
-        status: "open",
-      }),
-    ],
-  });
-  const prompt = buildWorkerPrompt({ detail, phase: "explore" });
-  const section = graphSection(prompt);
-  assert.ok(
-    section.includes("from=origin"),
-    `empty 'fromFacts' should render as 'from=origin', got: ${section}`,
+test("concludeIntent on already-done intent throws", () => {
+  const g = new InMemoryGraph();
+  const p = createProject(g);
+  const intent = g.addIntent(p.id, { description: "x", creator: "planner" });
+  g.claimIntent(p.id, intent.id, "w1", 1000);
+  g.concludeIntent(p.id, intent.id, "f001");
+  assert.throws(
+    () => g.concludeIntent(p.id, intent.id, "f002"),
+    /already concluded/,
   );
 });
 
-test("graphBlock: link renders as '- <id>: <from> --<kind>--> <to>'", () => {
-  const detail = makeDetail({
-    links: [makeLink({ id: "l001", fromFactId: "f001", toFactId: "f002", kind: "enables" })],
-  });
-  const prompt = buildWorkerPrompt({ detail, phase: "explore" });
-  const section = graphSection(prompt);
-  assert.ok(
-    section.includes("- l001: f001 --enables--> f002"),
-    `expected link line, got: ${section}`,
+test("failIntent on already-failed intent throws", () => {
+  const g = new InMemoryGraph();
+  const p = createProject(g);
+  const intent = g.addIntent(p.id, { description: "x", creator: "planner" });
+  g.failIntent(p.id, intent.id, "first failure", false);
+  assert.throws(
+    () => g.failIntent(p.id, intent.id, "second failure", false),
+    /already failed/,
   );
 });
 
-test("graphBlock: all three sections appear in fixed Facts/Intents/Links order", () => {
-  const detail = makeDetail({
-    facts: [makeFact({ id: "fX" })],
-    intents: [makeIntent({ id: "iX" })],
-    links: [makeLink({ id: "lX" })],
-  });
-  const prompt = buildWorkerPrompt({ detail, phase: "explore" });
-  const section = graphSection(prompt);
-  const idxFacts = section.indexOf("Facts:");
-  const idxIntents = section.indexOf("Intents:");
-  const idxLinks = section.indexOf("Links:");
-  assert.ok(idxFacts >= 0 && idxIntents > idxFacts && idxLinks > idxIntents,
-    `expected Facts < Intents < Links order, got idxFacts=${idxFacts} idxIntents=${idxIntents} idxLinks=${idxLinks}`);
-});
-
-test("graphBlock: status is bracketed and reflects the intent.status field", () => {
-  for (const status of ["open", "working", "done", "failed"] as const) {
-    const detail = makeDetail({
-      intents: [
-        makeIntent({ id: `i_${status}`, status, description: `${status} intent` }),
-      ],
-    });
-    const prompt = buildWorkerPrompt({ detail, phase: "explore" });
-    const section = graphSection(prompt);
-    assert.ok(
-      section.includes(`[${status}]`),
-      `expected status '${status}' in section, got: ${section}`,
-    );
-  }
-});
-
-test("graphBlock: chain of fact → intent → fact renders all entities independently", () => {
-  const detail = makeDetail({
-    facts: [
-      makeFact({ id: "origin", description: "origin fact" }),
-      makeFact({ id: "f001", description: "branch discovered" }),
-    ],
-    intents: [
-      makeIntent({
-        id: "i001",
-        fromFacts: ["origin"],
-        to: "f001",
-        status: "done",
-        description: "discover branch",
-        creator: "tester",
-      }),
-    ],
-  });
-  const prompt = buildWorkerPrompt({ detail, phase: "explore" });
-  const section = graphSection(prompt);
-  assert.ok(section.includes("- origin: origin fact"));
-  assert.ok(section.includes("- f001: branch discovered"));
-  assert.ok(
-    section.includes("- i001 [done] role=tester from=origin: discover branch"),
-    `expected chain entry, got: ${section}`,
+test("resolveFact on already-resolved fact throws", () => {
+  const g = new InMemoryGraph();
+  const p = createProject(g);
+  const f = g.addFact(p.id, { description: "x", source: "explorer" });
+  g.resolveFact(p.id, f.id, { decision: "accept", reason: "ok" });
+  assert.throws(
+    () => g.resolveFact(p.id, f.id, { decision: "reject", reason: "changed mind" }),
+    /is not resolvable/,
   );
 });
 
-test("graphBlock: large graph with many facts/intents/links renders all entries", () => {
-  const facts = Array.from({ length: 5 }, (_, i) =>
-    makeFact({ id: `f${i + 1}`, description: `fact ${i + 1}` }),
-  );
-  const intents = Array.from({ length: 4 }, (_, i) =>
-    makeIntent({
-      id: `i${i + 1}`,
-      fromFacts: [`f${i + 1}`],
-      description: `intent ${i + 1}`,
-      status: i % 2 === 0 ? "open" : "done",
-    }),
-  );
-  const links = Array.from({ length: 3 }, (_, i) =>
-    makeLink({ id: `l${i + 1}`, fromFactId: `f${i + 1}`, toFactId: `f${i + 2}`, kind: `kind${i + 1}` }),
-  );
-  const detail = makeDetail({ facts, intents, links });
-  const prompt = buildWorkerPrompt({ detail, phase: "explore" });
-  const section = graphSection(prompt);
-
-  for (let i = 1; i <= 5; i++) {
-    assert.ok(section.includes(`- f${i}: fact ${i}`), `missing fact f${i}`);
-  }
-  for (let i = 1; i <= 4; i++) {
-    assert.ok(section.includes(`- i${i} [`), `missing intent i${i}`);
-  }
-  for (let i = 1; i <= 3; i++) {
-    assert.ok(section.includes(`- l${i}:`), `missing link l${i}`);
-  }
-  assert.ok(!section.includes("- none"), "fully populated graph should have no '- none' placeholders");
+test("addFact sets stepDiscovered from current step counter", () => {
+  const g = new InMemoryGraph();
+  const p = createProject(g);
+  const intent = g.addIntent(p.id, { description: "x", creator: "planner" });
+  g.claimIntent(p.id, intent.id, "w1", 1000);
+  g.concludeIntent(p.id, intent.id);
+  const fact = g.addFact(p.id, { description: "post-step fact", source: "explorer" });
+  assert.ok(fact.stepDiscovered !== undefined, "stepDiscovered should be set");
+  assert.ok(fact.stepDiscovered! >= 1, "stepDiscovered should reflect executed steps");
 });
