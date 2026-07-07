@@ -78,7 +78,8 @@ Every case follows this structure:
 | Skill | Scope |
 |---|---|
 | `decx-cli` | DECX CLI command usage. Independent, no cross-skill routing. |
-| `decx-app-vulnhunt` | APK app-layer vulnerability hunting. Uses Cairn-style SQLite blackboard for vulnerability discovery. |
-| `decx-framework-vulnhunt` | Framework/Binder vulnerability hunting. Uses Cairn-style SQLite blackboard for vulnerability discovery. |
-| `decx-report` | Report generation from blackboard export data. |
-| `decx-poc` | PoC app construction from verified graph paths. |
+| `decx-analysis-core` | Shared Fact/Intent/Hint DAG protocol and planner/generator/evaluator orchestration for DECX analysis skills. |
+| `decx-app-vulnhunt` | APK app-layer vulnerability hunting. Uses `decx-analysis-core`; keeps APP routing and evidence gates locally. |
+| `decx-framework-vulnhunt` | Framework/Binder vulnerability hunting. Uses `decx-analysis-core`; keeps framework routing and evidence gates locally. |
+| `decx-report` | Report generation from finalized finding Facts in the shared DAG. |
+| `decx-poc` | PoC construction from one finalized finding Fact. |
