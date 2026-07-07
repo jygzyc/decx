@@ -1,148 +1,82 @@
 ---
 name: decx-framework-vulnhunt
 description: Android framework vulnerability hunting with DECX. Use when analyzing processed framework bundles, system_server, Binder services, AIDL implementations, vendor/OEM framework code, or privileged framework IPC exploit chains.
-metadata:
-  requires:
-    bins: ["decx"]
 ---
 
 # DECX Framework Vulnerability Hunting
 
-**Goal: discover exploitable vulnerability chains in the target framework to enable timely remediation and reduce business security risk.** Identify proven, exploitable paths from Binder entrypoint to system-visible impact, validated through the evidence gate. Every intent created should serve this goal.
+Goal: prove exploitable framework paths from Binder/service entrypoint to system-visible impact.
 
-Evidence graph: observations as facts, relations as edges, investigation steps as intents.
+## Routing Gate
 
-Route elsewhere: `decx-app-vulnhunt` (APK app-layer), `decx-cli` (command help), `decx-report` (reports), `decx-poc` (PoC).
+Use for Android framework/system_server/Binder vulnerability hunting. Do not use for APK app-layer hunts, report writing, PoC construction, or generic DECX command help.
 
-## Main Agent: Delegate and Decide
+Use `decx-analysis-core` for the Fact/Intent/Hint DAG. Route reports to `decx-report`, PoC work to `decx-poc`, APK hunts to `decx-app-vulnhunt`.
 
-Main agent does **only** these, nothing else:
-1. `init` project + `decx ard framework open` final processed JAR
-2. Delegate intent goals to subagent (one goal per delegation)
-3. Read subagent summary + run `chains` to verify evidence paths
-4. Decide promotion against `references/risk-rating.md`
-5. Handoff to report/poc
+## Role Boundary
 
-Main agent must NOT run `decx code`, `decx ard`, read source code, load references, or analyze vulnerability patterns. All analysis happens in subagent.
+- **Planner/Main Agent**: open final processed framework target, initialize root facts/intents, record human Hints, claim runnable Intents, dispatch Generator/Evaluator subagents, read returned node IDs/queries, run `check`/`chains`, decide promotion.
+- **Generator subagent**: execute one claimed Intent using DECX commands, load only routed references, write evidence artifacts, return temp facts. It may chain once to another Generator inside the same Intent when context is insufficient.
+- **Evaluator subagent**: check temp facts against this evidence gate, write accepted Facts, close/fail the Intent, return generated node IDs/queries.
 
-## Subagent: Owns Full Intent Lifecycle
+Planner must not run `decx code` / `decx ard` or read source. Generator must not write DAG truth. Evaluator must not explore new directions.
 
-Subagent receives: intent goal text + DB dir + DECX port. It owns the full lifecycle:
-1. Create the intent via `intent` CLI (knows phase, references facts it discovers)
-2. Run `decx code`/`decx ard` queries (must view code via DECX commands — never guess)
-3. Load `references/index.md` for routing, `references/patterns/*.md` for trace cues
-4. Write `fact`/`edge` directly to DB
-5. Call `solve --conclude <factId>` or `--fail` when done
-6. Return a structured JSON summary (contract below)
-
-Subagent creates the intent itself (not main agent), so it always knows the correct `--from` fact IDs — no mismatch errors.
-
-### Subagent Summary Contract
-
-After `solve`, subagent returns this JSON as its final output:
-
-```json
-{
-  "intent_id": "i003",
-  "status": "done",
-  "phase": "trace",
-  "goal": "Trace Binder call to privileged sink",
-  "facts": {
-    "total": 6,
-    "types": { "service-entrypoint": 1, "binder-reachability": 1, "control": 1, "identity": 1, "sink": 1, "impact": 1 },
-    "key_fact_ids": ["f004", "f009"]
-  },
-  "has_proving_path": true,
-  "result_fact": "f009"
-}
-```
-
-**DB is always source of truth.** Summary is a routing aid — main agent uses it to decide next intents. Before promotion, main agent still verifies graph structure with `chains`.
-
-Do not specify subagent type when delegating — just give the task goal + DB dir + DECX port.
-
-## Commands
+## Core Commands
 
 ```bash
-# Main agent
-node scripts/decx-analysis-db.mjs init   <dir> --session <name> --kind android_framework
-node scripts/decx-analysis-db.mjs intents <dir> [--status <open|done|failed>]
-node scripts/decx-analysis-db.mjs facts   <dir> [--prefix <type>]
-node scripts/decx-analysis-db.mjs chains  <dir> [--root-prefix <type>] [--leaf-prefix <type>]
-node scripts/decx-analysis-db.mjs export  <dir>
-
-# Subagent
-node scripts/decx-analysis-db.mjs intent  <dir> [--from <factId,...>] --goal "<question>" [--priority <n>] [--phase <stage>]
-node scripts/decx-analysis-db.mjs fact    <dir> --prefix <type> --body "<text>" [--evidence <path>] [--confidence <0-1>]
-node scripts/decx-analysis-db.mjs edge    <dir> --from <factId> --to <factId> --kind <proves|enable|carry|amplify|bypass|observe>
-node scripts/decx-analysis-db.mjs solve   <dir> <intentId> --conclude <factId> | --fail "<reason>"
-node scripts/decx-analysis-db.mjs chains  <dir> [--root-prefix <type>] [--leaf-prefix <type>]
-node scripts/decx-analysis-db.mjs path    <dir> --from <id> --to <id>
-node scripts/decx-analysis-db.mjs ancestors  <dir> --fact <id>
-node scripts/decx-analysis-db.mjs descendants <dir> --fact <id>
+node skills/decx-analysis-core/scripts/decx-graph.mjs init <graph-dir> --session <name> --kind android_framework
+node skills/decx-analysis-core/scripts/decx-graph.mjs fact <graph-dir> --root --kind target --body "Framework target opened for analysis" --evidence <target-path>
+node skills/decx-analysis-core/scripts/decx-graph.mjs intent <graph-dir> --root --goal "Collect framework surface: Binder services, AIDL methods, system services" --phase surface
+node skills/decx-analysis-core/scripts/decx-graph.mjs intent <graph-dir> --from <node,...> --goal "<question>" --phase <stage>
+node skills/decx-analysis-core/scripts/decx-graph.mjs start <graph-dir> <intentId> --by <generator-id> [--lease-ms 1800000]
+node skills/decx-analysis-core/scripts/decx-graph.mjs renew <graph-dir> <intentId> --by <generator-id>
+node skills/decx-analysis-core/scripts/decx-graph.mjs fact <graph-dir> --from <intentId> --kind <type> --body "<accepted evidence>" --evidence <path>
+node skills/decx-analysis-core/scripts/decx-graph.mjs hint <graph-dir> --from <node> --body "<human suggestion>" --author human
+node skills/decx-analysis-core/scripts/decx-graph.mjs solve <graph-dir> <intentId> --status solved|failed|cancelled
+node skills/decx-analysis-core/scripts/decx-graph.mjs check <graph-dir>
+node skills/decx-analysis-core/scripts/decx-graph.mjs chains <graph-dir>
 ```
 
-## Dispatch Protocol
+## Dispatch Loop
 
-Main agent follows this exact loop, nothing more:
+1. `init` + `decx ard framework open` final processed JAR.
+2. Add root target Fact and root surface Intent.
+3. Record human Hints when provided.
+4. Claim open/expired Intents and launch one Generator per claim.
+5. Launch one Evaluator for returned temp facts.
+6. Planner creates next Intents from accepted Facts + Hints, after checking failed/cancelled Intents for duplicate blockers.
+7. Promote only after `check`/`chains` proves a complete accepted path.
 
-```
-1. init + decx ard framework open
-2. Delegate to subagent: goal="Collect framework surface: Binder services, AIDL methods, system services", phase=surface
-   Subagent: intent → analyze → write facts → solve → return summary
-3. For each service-entrypoint fact in summary: delegate to subagent goal="Trace <factId> to privileged sink, prove 6-tuple", phase=trace
-   Subagent: intent --from <factId> → analyze → write facts → solve → return summary
-4. For each promoted pair: delegate to subagent goal="Validate composition edge <f1,f2>", phase=compose
-   Subagent: intent --from <f1,f2> → analyze → write facts → solve → return summary
-5. Check chains, promote against risk-rating.md, handoff
-```
+## Framework Evidence Gate
 
-One intent = one subagent invocation. Do not batch multiple intents in one delegation.
+Promote only when accepted Facts prove all required kinds along a derived DAG path:
 
-## Evidence Gate (Framework 6-tuple)
-
-Promote only when ALL six fact types exist, connected by `proves` edges:
-
-| Type | What it proves |
+| Kind | Required proof |
 |---|---|
-| `service-entrypoint` | Binder service exposes method |
-| `binder-reachability` | unprivileged app can reach the method |
-| `control` | attacker-controlled parameter reaches sink |
-| `identity` + `permission-guard`/`appop-guard`/`user-guard` | caller identity and authorization at trust boundary |
-| `sink` | privileged operation reached |
+| `service-entrypoint` | Binder/service method exposed |
+| `binder-reachability` | unprivileged caller can reach it |
+| `control` | attacker-controlled Binder parameter/state reaches sink |
+| `identity` | caller identity at trust boundary |
+| `permission-guard` / `appop-guard` / `user-guard` | authorization result |
+| `sink` | privileged operation |
 | `impact` | system-visible consequence |
 
-## Composition Edges
+Reject temp facts based only on names/registration, inline-only evidence, mixed evidence kinds, or scope drift.
 
-| Edge | Meaning |
-|---|---|
-| `enable` | A creates access needed by B |
-| `carry` | A transports UID/package/user/URI/Intent/token/Binder state to B |
-| `amplify` | A increases B's framework/system impact |
-| `bypass` | A defeats permission/app-op/identity/user/callee defense |
-| `observe` | callback/broadcast/result/launched Intent makes B's impact visible |
+## Promotion
 
-## Rules
+Promotion is a dedicated Intent. Evaluator writes exactly one finding Fact:
 
-| Rule | Why |
-|---|---|
-| Main agent never runs `decx code`/`decx ard` or reads source | main agent context stays clean |
-| Subagent owns full intent lifecycle (create → analyze → solve → summarize) | subagent knows fact IDs, avoids `--from` mismatch |
-| Subagent views code via `decx code`/`decx ard` commands only — never guesses | guessing produces hallucinated evidence |
-| Subagent returns structured JSON summary after `solve` | main agent gets concise view without extra DB reads |
-| DB is source of truth; verify with `chains` before promotion | summary is routing aid, not proof of evidence gate |
-| One intent per subagent invocation | prevents context explosion |
-| `evidence` must be file path | prevents token blowup |
-| Method/service names are not evidence | registration ≠ reachability |
-| Identity/authorization evidence required at trust boundary | framework findings need caller identity proof |
-| Composition must be validated by dedicated subagent | adjacency ≠ composition |
-| Cannot state `poc-validated` / `runtime-validated` | static analysis limit |
-| Handoff at 60% context: `export` + session name | prevents truncation |
-| Full method signatures: `"pkg.Class.method(param):return"` | precise identification |
-| One final framework target per hunt; use collect/process/run path for split jars | intermediate jars lose AIDL/Stub/identity paths |
+```bash
+node skills/decx-analysis-core/scripts/decx-graph.mjs fact <graph-dir> --from <promotion_intent> --kind framework-finding --body "<finding title + impact>" --evidence <finding-evidence.md>
+```
+
+The evidence file must name entry fact, impact fact, required path facts, target/session, and rating decision.
 
 ## References
 
-- `references/index.md` — routing matrix (subagent loads this)
-- `references/risk-rating.md` — severity levels (main agent loads before promotion)
-- `references/patterns/*.md` — vulnerability shapes (subagent loads on signal)
+- `skills/decx-analysis-core/references/graph-protocol.md`
+- `skills/decx-analysis-core/references/role-protocol.md`
+- `references/index.md` — load by Generator/Evaluator for routing
+- `references/patterns/*.md` — load only matching pattern cards
+- `references/risk-rating.md` — load only before promotion

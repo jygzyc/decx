@@ -11,13 +11,20 @@
  */
 
 import { cpSync, readFileSync, readdirSync, renameSync, statSync, writeFileSync } from 'node:fs';
-import { join, dirname, basename, extname } from 'node:path';
+import { join, dirname, basename, extname, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
 const PLACEHOLDER_PKG = 'com.poc.targetapp';
 const PLACEHOLDER_PROJ = 'poc-targetapp';
+
+
+const GENERATED_NAMES = new Set(['.gradle', 'build', 'out']);
+
+function shouldCopy(src) {
+  return !src.split(sep).some((part) => GENERATED_NAMES.has(part));
+}
 
 const TEXT_EXT = new Set([
   '.java', '.kt', '.xml', '.gradle', '.kts', '.properties', '.toml',
@@ -79,8 +86,8 @@ export function createPocProject({ appName, cwd = process.cwd() }) {
   if (!statSync(serverTpl).isDirectory()) throw new Error(`template not found: ${serverTpl}`);
   try { statSync(projectDir); throw new Error(`destination already exists: ${projectDir}`); } catch (e) { if (e.code !== 'ENOENT') throw e; }
 
-  cpSync(appTpl, join(projectDir, 'app'), { recursive: true });
-  cpSync(serverTpl, join(projectDir, 'server'), { recursive: true });
+  cpSync(appTpl, join(projectDir, 'app'), { recursive: true, filter: shouldCopy });
+  cpSync(serverTpl, join(projectDir, 'server'), { recursive: true, filter: shouldCopy });
 
   const replacements = [[PLACEHOLDER_PKG, newPkg], [PLACEHOLDER_PROJ, `poc-${appName}`], ['targetapp', appName]];
   const changed = walkAndReplace(projectDir, replacements);
