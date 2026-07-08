@@ -68,7 +68,7 @@ Cross-session analysis is supported through a read-only federation layer. It enu
 
 ## Role Model
 
-The plugin uses the `decx-agent` role shape, but Planner is the main orchestrator:
+The plugin uses a planner/explorer/evaluator/metacog role shape, with Planner as the main orchestrator:
 
 ```text
 planner/mainAgent | explorer | evaluator | metacog | system

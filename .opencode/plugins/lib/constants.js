@@ -20,7 +20,7 @@ export const MAX_LOG_SIZE = 5 * 1024 * 1024;
 export const KEEP_LOG_SIZE = 2 * 1024 * 1024;
 export const MAX_TIMELINE_BUFFER = 50;
 
-// Aligned with decx-agent RoleId: planner | explorer | evaluator | metacog | system.
+// RoleId shape: planner | explorer | evaluator | metacog | system.
 // `system` has no public write function; it is represented by plugin hooks.
 export const ROLE_FUNCTIONS = Object.freeze({
   planner: [

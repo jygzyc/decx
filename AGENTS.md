@@ -31,10 +31,6 @@ AI Assistant / CLI
 | `decx/decx-plugin/` | Kotlin, Shadow JAR | JADX GUI plugin, lifecycle, UI, in-process MCP server management |
 | `decx/decx-server/` | Kotlin, Shadow JAR | Standalone headless server with `DecxServerApp` main class |
 | `decx-cli/` | TypeScript, Node.js 22.5+ | User CLI for session management and analysis commands |
-| `decx-agent/src/server/` | TypeScript, Node.js 22.5+ | SQLite state, local API, and Web audit UI for the standalone agent |
-| `decx-agent/src/dispatcher/` | TypeScript, Node.js 22.5+ | Cairn-inspired bootstrap/reason/explore/metacog/review loop and workflow routing |
-| `decx-agent/src/roles/` | TypeScript, Node.js 22.5+ | Built-in and configured role prompt registry |
-| `decx-agent/src/workers/` | TypeScript, Node.js 22.5+ | Bottom adapters for command and model workers |
 | `skills/decx-cli/` | Skill `decx-cli` | DECX CLI usage, general analysis, and workflow routing |
 | `skills/decx-app-vulnhunt/` | Skill `decx-app-vulnhunt` | Android app vulnerability hunting workflow |
 | `skills/decx-framework-vulnhunt/` | Skill `decx-framework-vulnhunt` | Android framework vulnerability hunting workflow |
@@ -124,30 +120,7 @@ Notable details:
 
 ### Agent framework
 
-The agent is a generic, configured TypeScript framework intentionally separate from the Kotlin server and the deterministic `decx` CLI.
-
-- `decx-agent` is bundled as a standalone binary. Do not add a `decx agent` bridge command.
-- Public commands are `run <config>`, `resume`, `status`, `workers`, and `serve`.
-- There are no fixed business task subcommands; vulnerability hunting, cloud-control analysis, attribution, parameter reversal, and other tasks are expressed by `task.json`, prompt files, roles, and workflow rules.
-- Runtime state is stored in SQLite at `.decx/agent_tasks/agent.sqlite` by default.
-- Session directories under `.decx/agent_tasks/<session>/` hold `task.json`, prompt files, and task-local artifacts.
-- The dispatcher loop has `bootstrap`, `reason`, `explore`, `metacog`, and asynchronous `review` phases. Data flows: **planner** (bootstrap) creates root facts + intents from hints → **generator** (explore) executes intents and produces pending facts → **evaluator** (reason/review) reviews pending facts and promotes accepted ones into facts → **metacog** (metacog) analyzes facts and produces hints for the planner. All phases are configurable via `workflow.phases` in `task.json`.
-- Built-in roles are `planner`, `generator`, `evaluator`, and `metacog`.
-- **planner** creates root facts (accepted, no review) and converts hints into intents. Does not produce analysis facts.
-- **generator** executes intents and produces facts with `status: "pending"`.
-- **evaluator** is the only role that can transition a fact from `pending` to `accepted` or `rejected`.
-- **metacog** produces hints only (no facts, no intents).
-- Facts have a three-state lifecycle: `pending` (generator output) → `accepted` or `rejected` (evaluator decision). Only `accepted` facts flow into proof chains and downstream reasoning.
-- **Dead-end deduplication**: failed intents record a `dead_end` entry keyed by `route_hash` (djb2 of normalized description). Open intents matching a known dead-end are auto-skipped before dispatch, preventing workers from re-attempting proven-futile routes.
-- **Concurrent multi-project scheduling**: `runActiveOnce` dispatches all active projects concurrently via `Promise.allSettled`. SQLite WAL + `busy_timeout` handles concurrent writes.
-- **Event bus**: `DispatcherEventBus` (in-memory ring + optional JSONL persistence) emits typed events (`fact.pending`, `fact.accepted`, `fact.rejected`, `project.completed`, `project.failed`) consumed by SSE subscribers for real-time UI updates.
-- **SSE streaming**: `GET /api/projects/:id/stream` pushes real-time state changes to the Web UI. Falls back to polling if SSE is unavailable.
-- **Worker file isolation**: each worker execution gets a unique `workers/<worker>-<intent>-<ts>/` subdirectory as cwd, with a `shared` symlink to the session root. Successful worker dirs are cleaned up; failed ones retained for debugging.
-- Three optional workflow knobs live under `workflow.{qualityGate,metacog,stopGate}` in `task.json`. All default to undefined (current behavior preserved); set them to enable deterministic fact quality gating (accept/demote/reject by lowering `confidence` or dropping), trigger-based divergence (everyExploreCount/consecutiveLowConfFacts/consecutiveReasonIdle), and completion discipline (requireNoOpenIntents/minFactConfidence).
-- Worker backends are bottom adapters. They receive prompts and return JSON; they do not own agent state. CLI runners (`codex`, `claude-code`, `opencode`, plus any custom command) use `kind: "command"`. Model runners (`api`, `openai`, `anthropic`, `openai-compatible`, plus any custom `ModelProvider`) use `kind: "model"` and are matched by id through `src/workers/providers/registry.ts`, which wraps the official `openai` and `@anthropic-ai/sdk` SDKs. New model providers are added with `registerProvider(...)` — no source edit required. The legacy `api` `WorkerKind` is gone; the `api` worker name still resolves to `model`.
-- Command workers are split into a driver registry plus command adapter/base helpers under `decx-agent/src/workers/`; configured command workers support prompt/session/path placeholders, optional `sessionStrategy` (`none`, `stable`, `uuid`, `regex`), optional `sessionPattern`, and `responseMode: "jsonl-assistant-text"` for JSONL agent output.
-- `.opencode/plugins/decx.js` is the OpenCode DECX workflow control plane. It must not register `skills.paths`; graph writes go through fixed function-level plugin tools backed by `.opencode/plugins/lib/graph-api.js` and the embedded `.opencode/plugins/lib/decx-graph.js`; Planner/MainAgent orchestrates Explorer/Evaluator/Metacog subagents, and open hints must be explicitly answered before ordinary planner work continues; cross-session analysis is read-only federation over isolated `.decx-analysis/<session>/decx-analysis.db` files, not shared writes.
-- Validate agent changes with `cd decx-agent && npm run build && npm run smoke`, plus `cd decx-cli && npm run build && npm test`.
+The agent framework (`decx-agent`) has been extracted into a standalone project and is no longer part of this repository. It is a generic, configured TypeScript framework separate from the Kotlin server and the deterministic `decx` CLI.
 
 ## Build And Test Commands
 
