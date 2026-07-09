@@ -117,9 +117,17 @@ Query:
   path       <graph-dir>  Find a shortest DAG path
   ancestors  <graph-dir>  List transitive predecessors
   descendants <graph-dir> List transitive successors
-  chains     <graph-dir>  List root-to-leaf paths
+  chains     <graph-dir>  List root-to-leaf paths with chain confidence (sorted desc)
+  confidence <graph-dir>  Aggregate confidence forward from a node (min over chain, max over merge)
+  gate       <graph-dir>  Check an evidence gate: which required fact kinds are present on a path
   export     <graph-dir>  Export graph JSON
   check      <graph-dir>  Validate references, acyclicity, and root traceability
+
+Confidence (0..1) is set per fact via 'fact --confidence'. Chain confidence is the
+min over the facts on a chain (weakest-link rule); merging chains take the max.
+'gate --from <fact> --kinds a,b,c [--threshold 0.7]' reports which required kinds
+have accepted evidence on the forward path and the path's chain confidence; the
+kind set is domain-defined (core never validates kind names).
 `;
 
 function die(msg) { console.error(`error: ${msg}`); process.exit(1); }
@@ -471,10 +479,25 @@ function cmdChains(dir) {
   const paths = [];
   const dfs = (n, path) => {
     const next = adj.get(n) || [];
-    if (next.length === 0) { paths.push(path); return; }
+    if (next.length === 0) {
+      // Chain confidence = min confidence over the facts on this path (weakest link).
+      const confs = path
+        .filter((k) => k.startsWith("fact:"))
+        .map((k) => nodeConfidence(db, p.id, { type: "fact", id: k.slice(5) }));
+      const chainConfidence = confs.length ? Math.min(...confs) : null;
+      paths.push({ path, chain_confidence: chainConfidence });
+      return;
+    }
     for (const m of next) dfs(m, [...path, m]);
   };
   for (const s of starts) dfs(s, [s]);
+  // Sort by chain confidence descending (nulls last) so the strongest
+  // evidence-backed chains surface first.
+  paths.sort((a, b) => {
+    if (a.chain_confidence === null) return 1;
+    if (b.chain_confidence === null) return -1;
+    return b.chain_confidence - a.chain_confidence;
+  });
   print(paths);
 }
 function cmdCheck(dir) {
@@ -491,6 +514,122 @@ function cmdCheck(dir) {
   }
   print({ ok: errors.length === 0, errors });
   if (errors.length) process.exitCode = 1;
+}
+
+// --- confidence propagation ----------------------------------------------
+// A fact carries its own confidence (0..1); intents/hints contribute 1.0.
+// Chain confidence = min over the facts on that chain (weakest-link rule:
+// a speculation-only chain is dominated by its least-proven step, which is
+// what precision-first vuln hunting wants). When multiple chains merge at a
+// node, take the max (the strongest supporting evidence wins).
+function nodeConfidence(db, projectId, node) {
+  if (node.type !== "fact") return 1;
+  const row = db.prepare("SELECT confidence FROM facts WHERE project_id=? AND id=?").get(projectId, node.id);
+  return row ? Number(row.confidence) : 0;
+}
+
+// Build forward adjacency (from -> [to]) over the whole graph.
+function forwardAdj(db, projectId) {
+  const adj = new Map();
+  for (const l of allLinks(db, projectId)) {
+    const a = `${l.from_type}:${l.from_id}`;
+    const b = `${l.to_type}:${l.to_id}`;
+    if (!adj.has(a)) adj.set(a, []);
+    adj.get(a).push({ key: b, type: l.to_type, id: l.to_id });
+  }
+  return adj;
+}
+
+function cmdConfidence(dir, opts) {
+  const db = openDb(dir); const p = getProject(db);
+  if (!opts.from) die("--from <node> required");
+  const start = parseNode(opts.from);
+  assertNode(db, p.id, start);
+  const adj = forwardAdj(db, p.id);
+  // BFS forward; for each visited node keep the max chain confidence reaching it.
+  // A chain confidence to a node = min(node's own confidence, max over incoming edges).
+  const best = new Map();
+  const startKey = key(start);
+  best.set(startKey, nodeConfidence(db, p.id, start));
+  const queue = [startKey];
+  while (queue.length) {
+    const cur = queue.shift();
+    const curConf = best.get(cur);
+    for (const e of adj.get(cur) || []) {
+      const own = nodeConfidence(db, p.id, { type: e.type, id: e.id });
+      const via = Math.min(curConf, own);
+      const prev = best.get(e.key);
+      if (prev === undefined || via > prev) {
+        best.set(e.key, via);
+        queue.push(e.key);
+      }
+    }
+  }
+  print({ from: startKey, confidence: best.get(startKey), descendants: [...best.entries()]
+    .filter(([k]) => k !== startKey)
+    .map(([node, confidence]) => ({ node, confidence }))
+    .sort((a, b) => b.confidence - a.confidence) });
+}
+
+// --- evidence gate ---------------------------------------------------------
+// A domain passes --kinds <csv> (e.g. entrypoint,reachability,control,guard,sink,impact).
+// Core walks the forward DAG from --from <fact>, collects every fact reachable,
+// and reports which required kinds have accepted evidence + the chain confidence.
+// Core never validates kind names — that is the domain skill's contract.
+function cmdGate(dir, opts) {
+  const db = openDb(dir); const p = getProject(db);
+  if (!opts.from) die("--from <fact> required");
+  if (!opts.kinds) die("--kinds <a,b,c> required");
+  const start = parseNode(opts.from);
+  if (start.type !== "fact") die("--from must reference a fact");
+  assertNode(db, p.id, start);
+
+  const required = String(opts.kinds).split(",").map((s) => s.trim()).filter(Boolean);
+  const threshold = opts.threshold !== undefined ? Number(opts.threshold) : null;
+
+  // Collect all facts reachable forward from the entry fact (inclusive).
+  const adj = forwardAdj(db, p.id);
+  const reachable = new Set([key(start)]);
+  const stack = [key(start)];
+  while (stack.length) {
+    const cur = stack.pop();
+    for (const e of adj.get(cur) || []) {
+      if (!reachable.has(e.key)) { reachable.add(e.key); stack.push(e.key); }
+    }
+  }
+
+  // Map kind -> best (highest-confidence) fact of that kind in the reachable set.
+  const rows = db.prepare("SELECT id, kind, confidence FROM facts WHERE project_id=?").all(p.id);
+  const byKind = new Map();
+  for (const r of rows) {
+    if (!reachable.has(`fact:${r.id}`)) continue;
+    const prev = byKind.get(r.kind);
+    if (prev === undefined || Number(r.confidence) > Number(prev.confidence)) {
+      byKind.set(r.kind, { fact: r.id, kind: r.kind, confidence: Number(r.confidence) });
+    }
+  }
+
+  const report = required.map((k) => byKind.get(k) || { kind: k, fact: null, confidence: null });
+  const present = report.filter((r) => r.fact !== null);
+  const missing = report.filter((r) => r.fact === null).map((r) => r.kind);
+  // Chain confidence = min confidence over the present required facts (weakest link).
+  const chainConfidence = present.length
+    ? Math.min(...present.map((r) => r.confidence))
+    : null;
+  const complete = missing.length === 0;
+  let meetsThreshold = null;
+  if (threshold !== null && chainConfidence !== null) {
+    meetsThreshold = chainConfidence >= threshold;
+  }
+
+  print({
+    from: key(start),
+    complete,
+    missing,
+    chain_confidence: chainConfidence,
+    ...(threshold !== null ? { threshold, meets_threshold: meetsThreshold } : {}),
+    required: report,
+  });
 }
 
 const [cmd, dir, ...rest] = process.argv.slice(2);
@@ -517,6 +656,8 @@ try {
     case "ancestors": walk(dir, opts, true); break;
     case "descendants": walk(dir, opts, false); break;
     case "chains": cmdChains(dir); break;
+    case "confidence": cmdConfidence(dir, opts); break;
+    case "gate": cmdGate(dir, opts); break;
     case "check": cmdCheck(dir); break;
     default: die(`unknown command: ${cmd}`);
   }

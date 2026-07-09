@@ -14,6 +14,9 @@ Core stores and queries only Fact / Intent / Hint DAG state. A domain skill supp
 | evaluator gate | when a temp fact can become an accepted Fact |
 | routing references | which domain reference files to load on which signal |
 | promotion/handoff policy | when accepted facts become downstream input |
+| confidence bands | the 0..1 bands for proven / inferred / speculative evidence in this domain |
+| promotion threshold | the minimum `chain_confidence` a gate must meet before a finding may be promoted |
+| required gate kinds | the `--kinds` passed to `gate` (e.g. app: `entrypoint,reachability,control,guard,sink,impact`) |
 
 ## Boundary Rules
 

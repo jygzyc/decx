@@ -15,10 +15,11 @@ Core is only the analysis DAG kernel:
 
 - build and extend a traceable DAG;
 - query paths, ancestors, descendants, and chains;
+- aggregate per-Fact confidence and check evidence gates;
 - enforce Planner / Generator / Evaluator write boundaries;
 - provide atomic intent claims for parallel work.
 
-Core does **not** define APP/framework/cloud/reverse semantics, fact kinds, risk, severity, report policy, or tool routing.
+Core does **not** define APP/framework/cloud/reverse semantics, fact kinds, risk, severity, report policy, tool routing, confidence bands, or promotion thresholds — those belong to the domain skill.
 
 ## Session Contract
 
@@ -36,11 +37,13 @@ Exactly three graph nodes exist:
 
 | Node | Meaning | Writer |
 |---|---|---|
-| Fact | accepted evidence | Evaluator, or Planner for explicit root facts |
+| Fact | accepted evidence (carries a 0..1 `confidence`) | Evaluator, or Planner for explicit root facts |
 | Intent | concrete analysis task | Planner |
 | Hint | human-authored guidance | Planner records human input |
 
 Links are provenance only. Chains are derived from links, never stored as independent truth.
+
+A **Hypothesis** is not a fourth node — it is a Fact with `--kind hypothesis`, recording a speculative risk path that is not yet fully proven. See `references/graph-protocol.md`.
 
 ## Required Flow
 
@@ -67,21 +70,28 @@ Planner must not accept temp facts. Generator must not write DAG truth. Evaluato
 ```bash
 node skills/decx-analysis-core/scripts/decx-graph.mjs init <graph-dir> --session <name> --kind <domain>
 node skills/decx-analysis-core/scripts/decx-graph.mjs fact <graph-dir> --root --kind target --body "<root fact>" --evidence <path-or-note>
-node skills/decx-analysis-core/scripts/decx-graph.mjs intent <graph-dir> --root --goal "<initial task>" --phase surface
-node skills/decx-analysis-core/scripts/decx-graph.mjs intent <graph-dir> --from <node,...> --goal "<task>" --phase <phase>
+node skills/decx-analysis-core/scripts/decx-graph.mjs intent <graph-dir> --root --goal "<initial task>" --phase surface [--priority <n>]
+node skills/decx-analysis-core/scripts/decx-graph.mjs intent <graph-dir> --from <node,...> --goal "<task>" --phase <phase> [--priority <n>]
 node skills/decx-analysis-core/scripts/decx-graph.mjs start <graph-dir> <intentId> --by <generator-id> [--lease-ms 1800000]
 node skills/decx-analysis-core/scripts/decx-graph.mjs renew <graph-dir> <intentId> --by <generator-id> [--lease-ms 1800000]
-node skills/decx-analysis-core/scripts/decx-graph.mjs fact <graph-dir> --from <intentId> --kind <type> --body "<accepted evidence>" --evidence <path>
+node skills/decx-analysis-core/scripts/decx-graph.mjs fact <graph-dir> --from <intentId> --kind <type> --body "<accepted evidence>" --evidence <path> --confidence <0..1>
+node skills/decx-analysis-core/scripts/decx-graph.mjs link <graph-dir> --from <fact> --to <fact> --kind derives
 node skills/decx-analysis-core/scripts/decx-graph.mjs hint <graph-dir> --from <node> --body "<human guidance>" --author human
-node skills/decx-analysis-core/scripts/decx-graph.mjs solve <graph-dir> <intentId> --status solved|failed|cancelled
+node skills/decx-analysis-core/scripts/decx-graph.mjs solve <graph-dir> <intentId> --status solved|failed|cancelled [--fail "<reason>" | --reason "<reason>"]
+node skills/decx-analysis-core/scripts/decx-graph.mjs confidence <graph-dir> --from <node>
+node skills/decx-analysis-core/scripts/decx-graph.mjs gate <graph-dir> --from <entry-fact> --kinds <a,b,c> [--threshold <0..1>]
+node skills/decx-analysis-core/scripts/decx-graph.mjs chains <graph-dir>
 node skills/decx-analysis-core/scripts/decx-graph.mjs check <graph-dir>
 node skills/decx-analysis-core/scripts/decx-graph.mjs export <graph-dir>
 ```
 
-`start` atomically claims an `open` intent or reclaims a `running` intent whose lease expired. `renew` keeps a long-running claim alive.
+`start` atomically claims an `open` intent or reclaims a `running` intent whose lease expired. `renew` keeps a long-running claim alive. `--by` has a `--worker` alias and `--lease-ms` has a `--leaseMs` alias. `intent --priority <n>` orders intents in queries (higher first; default `0`). `solve --status failed` requires `--fail "<reason>"` or `--reason "<reason>"`; `--fail` alone implies `failed`.
+
+`fact --confidence` sets per-Fact evidence strength (0..1). `confidence` aggregates it forward (min over a chain, max over a merge). `gate` checks which required Fact kinds are present on the path from an entry Fact and the path's chain confidence — the machine-checkable form of a domain evidence gate. `chains` lists root-to-leaf paths with each chain's confidence, sorted descending. See `references/graph-protocol.md` for the confidence model and Hypothesis usage.
 
 ## References
 
 - `references/graph-protocol.md` — DAG invariants and node rules.
 - `references/role-protocol.md` — role boundaries, leases, generator chaining.
 - `references/extension-contract.md` — what domain skills must provide.
+- `references/finding-consumer-contract.md` — how downstream skills consume finalized findings.

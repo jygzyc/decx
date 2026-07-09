@@ -52,7 +52,8 @@ node skills/decx-analysis-core/scripts/decx-graph.mjs start <graph-dir> <intentI
 ```
 
 Rules:
-- `--by` is required.
+- `--by` is required (`--worker` is an alias).
+- `--lease-ms` sets the claim duration (`--leaseMs` is an alias; default 1800000 ms).
 - `start` may claim `open` intents or expired `running` intents.
 - a running Generator should renew before lease expiry:
 
