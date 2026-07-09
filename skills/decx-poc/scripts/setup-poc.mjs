@@ -5,9 +5,10 @@
  *
  * Usage: node setup-poc.mjs <target-app>
  *
- * Copies the split PoC template and replaces placeholders:
+ * Copies the split PoC template and replaces placeholders (longest match first):
  *   com.poc.targetapp -> com.poc.<target-app>
  *   poc-targetapp     -> poc-<target-app>
+ *   targetapp         -> <target-app>
  */
 
 import { cpSync, readFileSync, readdirSync, renameSync, statSync, writeFileSync } from 'node:fs';

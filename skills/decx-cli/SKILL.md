@@ -21,7 +21,7 @@ Use only for DECX CLI command execution: session lifecycle, code/manifest inspec
 | open / reuse / close a target | `decx process` |
 | classes, methods, source, xrefs, inheritance, search | `decx code` |
 | manifest, components, deep links, resources, AIDL, framework services (Android only) | `decx ard` with `-P <port>` |
-| live Binder services or permissions from a device (Android only) | `decx ard system-services` / `decx ard perm-info` — no `-P` |
+| live Binder services, permissions, foreground app, or app launch from a device (Android only) | `decx ard system-services` / `decx ard perm-info` / `decx ard top-app` / `decx ard am-start` — no `-P` |
 | install or update DECX runtime | `decx self` |
 
 Running `decx` with no arguments prints the same top-level help as `decx --help`.
@@ -41,7 +41,8 @@ decx process close --all
 ## Argument Rules
 
 - Session-backed `decx code` and `decx ard` accept `-P <port>` or `-s <name>`. When exactly one session is alive, omit both for auto-select; with multiple sessions, pass one explicitly.
-- adb-backed `decx ard system-services` and `decx ard perm-info` never take `-P`; use `--serial` for device selection.
+- adb-backed `decx ard system-services`, `perm-info`, `top-app`, and `am-start` never take `-P`; use `--serial` (or `$ANDROID_SERIAL`) for device selection. The target resolves via `--serial` > `$ANDROID_SERIAL` > the lone connected device; `--serial`/`$ANDROID_SERIAL` is required when more than one device is attached.
+- Session-backed `decx code` and `decx ard` commands accept `--page <n>` for server-side pagination (default `1`).
 - Quote all identifiers: class names, method signatures, field identifiers, resource paths, package names, interface names.
 - Method signatures: use the exact signature returned by `decx code search-method` or context/search results. Never use shortened signatures, partial class names, placeholders, or `...`.
 
@@ -85,7 +86,7 @@ Concrete failure modes from real sessions. These are not generic CLI tips; they 
 
 - **Multiple sessions + omitted `-P`/`-s`**: `decx code` and `decx ard` auto-select only when one session is alive. Once more than one session exists, always pass `-P <port>` or `-s <name>`.
 - **Shortened method signature**: `"Class.method"` or `"Class.method():void"` returns wrong method, an empty body, or a stale cached match. First run `decx code search-method "<name>"`, then copy the exact returned signature into `method-source`, `method-context`, `method-cfg`, or `xref-method`. Never substitute `...` or drop parameter types.
-- **`-P` on adb-backed commands**: `decx ard system-services` and `decx ard perm-info` talk to adb, not the DECX HTTP server. Adding `-P <port>` causes the command to fail with an unrelated error and may mask the real adb connectivity issue.
+- **`-P` on adb-backed commands**: `decx ard system-services`, `perm-info`, `top-app`, and `am-start` talk to adb, not the DECX HTTP server. Adding `-P <port>` causes the command to fail with an unrelated error and may mask the real adb connectivity issue.
 - **`decx code search-global` without `--limit`**: returns up to the server default (often hundreds of matches), burns context, and frequently hides the actual hit. Always set `--limit` to a small working set (start at 20–50) and refine.
 - **`process open` reuses file but fails on name conflict**: a previous session with the same `--name` is still bound. Either pick a fresh `--name`, pass `--force` to rebind, or close the old session first with `decx process close`.
 - **Forgetting to quote identifiers with shell metacharacters**: class/method/URI strings containing `$`, `(`, `)`, `:`, or `*` are parsed by the shell and either error or target the wrong symbol. Always wrap in double quotes; never rely on escaping.

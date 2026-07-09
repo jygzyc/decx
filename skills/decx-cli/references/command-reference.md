@@ -15,7 +15,9 @@
 
 - Running `decx` with no arguments prints the same top-level help as `decx --help`.
 - Session-backed `decx code` and `decx ard` commands accept `-P <port>` or `-s <name>`.
-- adb-backed `decx ard` commands such as `system-services` and `perm-info` do not use `-P <port>`.
+- Session-backed `decx code` and `decx ard` commands accept `--page <n>` for server-side pagination; it defaults to `1`.
+- adb-backed `decx ard` commands (`system-services`, `perm-info`, `top-app`, `am-start`) do not use `-P <port>`.
+- adb-backed device commands resolve the target device with priority `--serial` > `$ANDROID_SERIAL` > the single connected device. `--serial` (or `$ANDROID_SERIAL`) is required when more than one device is attached.
 - When only one session is alive and `-P` is not specified, the CLI auto-selects it.
 - `-s, --session <name>` selects a session by name as an alternative to `-P <port>`.
 - `process list` does not take `-P <port>`.
@@ -61,7 +63,7 @@ Conflict behavior:
 
 ## Code Commands
 
-All `code` commands support `-s, --session <name>` as an alternative to `-P <port>`.
+All `code` commands support `-s, --session <name>` as an alternative to `-P <port>`, and `--page <n>` for server-side pagination.
 
 | Command | Purpose |
 |--------|---------|
@@ -82,7 +84,7 @@ All `code` commands support `-s, --session <name>` as an alternative to `-P <por
 
 ## Android Commands
 
-All session-backed `ard` commands support `-s, --session <name>` as an alternative to `-P <port>`.
+All session-backed `ard` commands support `-s, --session <name>` as an alternative to `-P <port>`, and `--page <n>` for server-side pagination.
 
 | Command | Purpose |
 |--------|---------|
@@ -96,11 +98,15 @@ All session-backed `ard` commands support `-s, --session <name>` as an alternati
 | `decx ard system-service-impl "<interface>" -P <port>` | Resolve framework service implementation |
 | `decx ard system-services --serial <serial> [--grep <keyword>]` | List live Binder/system services as JSON |
 | `decx ard perm-info "<permission>" --serial <serial>` | Resolve one permission as JSON |
+| `decx ard top-app --serial <serial>` | Return the current foreground app and activity as JSON |
+| `decx ard am-start "<pkg-or-component>" --serial <serial> [--activity <class>]` | Launch an app or activity via `adb am start` |
 | `decx ard all-resources -P <port>` | List resource file names (`--include`, `--no-regex`) |
 | `decx ard resource-file "<res>" -P <port>` | Read one resource file |
 | `decx ard strings -P <port>` | Read `strings.xml` |
 
-For `system-services`, consume `services[].name` and `services[].interfaces` from parsed JSON. For `perm-info`, reason from fields such as `permission`, `package`, `description`, and `protectionLevel`.
+For `system-services`, consume `services[].name` and `services[].interfaces` from parsed JSON. For `perm-info`, reason from fields such as `permission`, `package`, `description`, and `protectionLevel`. For `top-app`, consume `package` and `activity`. For `am-start`, reason from `started`, `component` (or `package`), and any `error`.
+
+`am-start` accepts either a package name (launches via its launcher intent), a `pkg/.Activity` component, or a package argument paired with `--activity <class>` (for example `.MainActivity`). Passing both a component argument and `--activity` errors.
 
 ## Framework Commands
 
@@ -192,6 +198,8 @@ decx code method-source "<signature>" -s <session-name>
 decx ard app-manifest -P <port>
 decx ard system-services --serial <serial> --grep "<keyword>"
 decx ard perm-info "<permission>" --serial <serial>
+decx ard top-app --serial <serial>
+decx ard am-start "com.example" --activity ".MainActivity" --serial <serial>
 decx ard framework process <oem> --source-dir "<dir>" --out-dir "<dir>"
 decx ard framework open "<framework-jar>" -P <port>
 ```
@@ -200,7 +208,7 @@ Do not mix session and adb argument styles:
 
 - `decx code *` -> always session-backed, needs `-P <port>` or `-s <name>`
 - `decx ard app-*`, `exported-components`, `resource-file`, `system-service-impl`, `strings`, `all-resources` -> session-backed, needs `-P <port>` or `-s <name>`
-- `decx ard system-services`, `perm-info` -> adb-backed, no `-P <port>`
+- `decx ard system-services`, `perm-info`, `top-app`, `am-start` -> adb-backed, no `-P <port>`
 - `decx ard framework collect`, `process` -> adb-backed (no `-P`)
 - `decx ard framework run` -> hybrid: adb for collect, `-P` for open
 - `decx ard framework open` -> session-backed after jar resolution; adb options only affect generated-jar resolution when `[jar]` is omitted

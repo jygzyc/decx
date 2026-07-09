@@ -11,7 +11,13 @@ Report a finding only if all four conditions are satisfied:
 3. **Deeply traced**: the controlled value is followed through helpers, callbacks, IPC/component/WebView/provider boundaries, and result/grant paths to the sink or blocker
 4. **Impactful**: the path causes a visible security consequence
 
-If any condition is missing, do not report it as a finding. Keep it only as an intermediate analysis record, chain pivot, or unresolved candidate until the missing gate is proven.
+These four conditions are checked mechanically by the `gate` command — Reachable↔`reachability`, Controllable↔`control`, Deeply traced↔`entrypoint`+`guard`+`sink`, Impactful↔`impact`. Run it before promotion:
+
+```bash
+node skills/decx-analysis-core/scripts/decx-graph.mjs gate <graph-dir> --from <entrypoint-fact> --kinds entrypoint,reachability,control,guard,sink,impact --threshold 0.7
+```
+
+Promote only when the gate returns `complete: true` **and** `meets_threshold: true`. If either fails, do not report it as a finding. Keep it only as an intermediate analysis record, chain pivot, or a `fact --kind hypothesis` (unresolved candidate) until the missing gate is proven.
 
 Check the gate with exact evidence: entrypoint, controlled fields, call chain, guard result, sink argument, and visible impact. Crash-only malformed input, theoretical issues, permission declarations with no exploitable chain, and component reachability with no `Impactful` outcome are not findings.
 
@@ -92,6 +98,28 @@ Do not report the following:
 - purely functional or compatibility bugs
 
 ## 4. Adjustment Factors
+
+These factors adjust two things: the **rating level** (§2) and the **Fact confidence** set when the evidence is written. A fact's confidence reflects evidence quality, not severity; adjustment factors that make the evidence firmer raise confidence, factors that make it shakier lower it.
+
+### Confidence mapping (Fact `--confidence`)
+
+Raise confidence toward `1.0` (proven) when the evidence is:
+
+- read directly from decompiled source / manifest / trace output that can be re-read
+- statically traced end-to-end with no cross-process / cross-version assumption
+- confirmed by a re-readable artifact (xref, CFG, resource dump)
+
+Lower confidence into the `0.5 – 0.7` (inferred) band when the evidence depends on:
+
+- a cross-process, cross-version, or dynamic-dispatch boundary resolved by assumption
+- behaviour observed only on one OEM/version without source confirmation
+
+Lower confidence into the `0.2 – 0.4` (speculative) band when the evidence is:
+
+- an observed pattern shape only, with unconfirmed reachability
+- a guard bypass assumed possible but not demonstrated
+
+### Rating adjustment
 
 Raise the rating when:
 

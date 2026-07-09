@@ -16,16 +16,15 @@ Guidance for DECX skills.
 
 | Layer | Purpose | Load when |
 |---|---|---|
-| `index.md` | Routing matrix: composite chains, single-pattern routing, load order, casebook index | Always first |
-| `overviews/` | Component analysis flow, promotion signals, false positive guide | Entrypoint context matters |
+| `index.md` | Routing matrix: composite chains, single-pattern routing, load order | Always first |
 | `patterns/` | Vulnerability shape: core concept, sources, sinks, guards, rating, trace commands, example shapes | Specific signal matched |
-| `casebooks/` | Abstract exploit-chain shapes from public cases | Comparable chain shapes needed |
-| `risk-rating.md` | Exploitability gate, severity levels, adjustment factors | Before promoting a candidate |
+| `risk-rating.md` | Exploitability gate, severity levels, adjustment factors, confidence mapping | Before promoting a candidate |
 
 ### Single Source of Truth
 
-- **Chain pivot routing**: `index.md` only. Do not duplicate in overviews or pattern files.
+- **Chain pivot routing**: `index.md` only. Do not duplicate in pattern files.
 - **Rating authority**: `risk-rating.md` only. Patterns convey impact scope in the `## Analyze` `impact` field; they do not have a standalone `## Rating` section.
+- **Evidence gate**: the core `gate` command is the only promotion gate check; do not re-derive completeness from prose.
 - **False-positive and sibling-card loading rules**: SKILL.md `Constraints` + `index.md` Load Order. Do not repeat in pattern files.
 
 ### Pattern Template
@@ -60,25 +59,12 @@ Reachability, Controllability, Sink, Missing guard, Visible impact
 
 Framework guards must include explicit Binder boundary constraints (e.g., caller identity bound before privileged operation, target user bound via INTERACT_ACROSS_USERS before asUser call).
 
-### Casebook Format
-
-Every case follows this structure:
-
-```
-## Case: <Name>
-### Abstract Shape   (text diagram)
-### Key Mistake
-### Why It Was Exploitable
-### Generalized Detection Rule
-### Related           (pattern cross-references)
-```
-
 ## Skill Inventory
 
 | Skill | Scope |
 |---|---|
 | `decx-cli` | DECX CLI command usage. Independent, no cross-skill routing. |
-| `decx-analysis-core` | Shared Fact/Intent/Hint DAG protocol and planner/generator/evaluator orchestration for DECX analysis skills. |
+| `decx-analysis-core` | Shared Fact/Intent/Hint DAG protocol, confidence propagation, evidence-gate checks, and planner/generator/evaluator orchestration for DECX analysis skills. |
 | `decx-app-vulnhunt` | APK app-layer vulnerability hunting. Uses `decx-analysis-core`; keeps APP routing and evidence gates locally. |
 | `decx-framework-vulnhunt` | Framework/Binder vulnerability hunting. Uses `decx-analysis-core`; keeps framework routing and evidence gates locally. |
 | `decx-report` | Report generation from finalized finding Facts in the shared DAG. |

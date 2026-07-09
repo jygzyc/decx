@@ -30,9 +30,12 @@ node skills/decx-analysis-core/scripts/decx-graph.mjs intent <graph-dir> --root 
 node skills/decx-analysis-core/scripts/decx-graph.mjs intent <graph-dir> --from <node,...> --goal "<question>" --phase <stage>
 node skills/decx-analysis-core/scripts/decx-graph.mjs start <graph-dir> <intentId> --by <generator-id> [--lease-ms 1800000]
 node skills/decx-analysis-core/scripts/decx-graph.mjs renew <graph-dir> <intentId> --by <generator-id>
-node skills/decx-analysis-core/scripts/decx-graph.mjs fact <graph-dir> --from <intentId> --kind <type> --body "<accepted evidence>" --evidence <path>
+node skills/decx-analysis-core/scripts/decx-graph.mjs fact <graph-dir> --from <intentId> --kind <type> --body "<accepted evidence>" --evidence <path> --confidence <0..1>
+node skills/decx-analysis-core/scripts/decx-graph.mjs link <graph-dir> --from <fact> --to <fact> --kind derives
 node skills/decx-analysis-core/scripts/decx-graph.mjs hint <graph-dir> --from <node> --body "<human suggestion>" --author human
 node skills/decx-analysis-core/scripts/decx-graph.mjs solve <graph-dir> <intentId> --status solved|failed|cancelled
+node skills/decx-analysis-core/scripts/decx-graph.mjs confidence <graph-dir> --from <fact>
+node skills/decx-analysis-core/scripts/decx-graph.mjs gate <graph-dir> --from <entry-fact> --kinds entrypoint,reachability,control,guard,sink,impact [--threshold 0.7]
 node skills/decx-analysis-core/scripts/decx-graph.mjs check <graph-dir>
 node skills/decx-analysis-core/scripts/decx-graph.mjs chains <graph-dir>
 ```
@@ -43,13 +46,29 @@ node skills/decx-analysis-core/scripts/decx-graph.mjs chains <graph-dir>
 2. Add root target Fact and root surface Intent.
 3. Record human Hints when provided.
 4. Claim open/expired Intents and launch one Generator per claim.
-5. Launch one Evaluator for returned temp facts.
-6. Planner creates next Intents from accepted Facts + Hints, after checking failed/cancelled Intents for duplicate blockers.
-7. Promote only after `check`/`chains` proves a complete accepted path.
+5. Launch one Evaluator for returned temp facts. Evaluator links accepted Facts into a chain (`link --kind derives`) and sets `--confidence` per the bands below.
+6. Planner creates next Intents from accepted Facts + Hints, after checking failed/cancelled Intents for duplicate blockers. Speculative risk paths are recorded as `fact --kind hypothesis` (low confidence) and linked with `--kind supports`.
+7. Promote only after `gate` reports `complete: true` and `meets_threshold: true`.
+
+## APP Confidence Bands
+
+| Band | Confidence | Evidence quality |
+|---|---|---|
+| proven | `1.0` | decompiled source / manifest / trace output that can be re-read |
+| inferred | `0.5 – 0.7` | cross-process / cross-version / dynamic-dispatch resolved by assumption |
+| speculative | `0.2 – 0.4` | observed pattern shape only, unconfirmed reachability |
+
+Promotion threshold: `chain_confidence >= 0.7`.
 
 ## APP Evidence Gate
 
-Promote only when accepted Facts prove all required kinds along a derived DAG path:
+The gate is the six required Fact kinds below. Check it with one command, not by reading prose:
+
+```bash
+node skills/decx-analysis-core/scripts/decx-graph.mjs gate <graph-dir> --from <entrypoint-fact> --kinds entrypoint,reachability,control,guard,sink,impact --threshold 0.7
+```
+
+Promote only when the gate returns `complete: true` **and** `meets_threshold: true`.
 
 | Kind | Required proof |
 |---|---|
@@ -60,17 +79,18 @@ Promote only when accepted Facts prove all required kinds along a derived DAG pa
 | `sink` | dangerous operation |
 | `impact` | visible consequence |
 
-Reject temp facts based only on names, inline-only evidence, mixed evidence kinds, or scope drift.
+Reject temp facts based only on names, inline-only evidence, mixed evidence kinds, or scope drift. Evaluator must link the accepted Facts of a candidate path with `link --kind derives` so `gate` and `chains` can traverse them.
 
 ## Promotion
 
-Promotion is a dedicated Intent. Evaluator writes exactly one finding Fact:
+Promotion is a dedicated Intent. Verify the gate first, then Evaluator writes exactly one finding Fact whose `--confidence` equals the path's `chain_confidence`:
 
 ```bash
-node skills/decx-analysis-core/scripts/decx-graph.mjs fact <graph-dir> --from <promotion_intent> --kind app-finding --body "<finding title + impact>" --evidence <finding-evidence.md>
+node skills/decx-analysis-core/scripts/decx-graph.mjs gate <graph-dir> --from <entrypoint-fact> --kinds entrypoint,reachability,control,guard,sink,impact --threshold 0.7
+node skills/decx-analysis-core/scripts/decx-graph.mjs fact <graph-dir> --from <promotion_intent> --kind app-finding --body "<finding title + impact>" --evidence <finding-evidence.md> --confidence <chain_confidence>
 ```
 
-The evidence file must name entry fact, impact fact, required path facts, target/session, and rating decision.
+The evidence file must name entry fact, impact fact, required path facts, target/session, rating decision, and the chain confidence.
 
 ## References
 
