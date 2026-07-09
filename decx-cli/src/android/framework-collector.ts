@@ -1,4 +1,5 @@
-import { mkdirSync } from "fs";
+import { copyFileSync, mkdirSync, renameSync, rmSync } from "fs";
+import { randomBytes } from "crypto";
 import * as path from "path";
 import { AdbClient } from "./adb.js";
 import type { FrameworkCollectionResult, FrameworkOem } from "./types.js";
@@ -52,18 +53,39 @@ export async function collectFrameworkFiles(
   const files: string[] = [];
   const failures: Array<{ path: string; error: string }> = [];
 
-  for (const remotePath of remoteFiles) {
-    const localPath = path.join(sourceDir, remotePath.replace(/^\/+/, ""));
-    mkdirSync(path.dirname(localPath), { recursive: true });
-    try {
-      adb.pull(remotePath, localPath);
-      files.push(localPath);
-    } catch (error) {
-      failures.push({
-        path: remotePath,
-        error: error instanceof Error ? error.message : String(error),
-      });
-    }
+  // Stage pulls in a CWD-relative dir so the local path handed to adb is never
+  // an absolute POSIX path. This sidesteps the WSL case where the resolved adb
+  // is the Windows adb.exe, which cannot interpret /mnt/<drive>/... paths and
+  // fails with "cannot create file/directory: No such file or directory". A
+  // relative path resolves identically for both WSL-Node and Windows adb.exe
+  // (both inherit this process' working directory). Files are then relocated to
+  // their final nested POSIX target under sourceDir via Node's fs.
+  const stagingDir = `.decx_pull_tmp_${randomBytes(4).toString("hex")}`;
+  mkdirSync(stagingDir, { recursive: true });
+
+  try {
+    remoteFiles.forEach((remotePath, index) => {
+      const localPath = path.join(sourceDir, remotePath.replace(/^\/+/, ""));
+      // Flat, collision-free staging name (device file names can repeat across
+      // subtrees, so prefix with the iteration index).
+      const stagedName = `file_${index.toString().padStart(4, "0")}_${path.basename(remotePath)}`;
+      const stagedFile = path.join(stagingDir, stagedName);
+      try {
+        adb.pull(remotePath, stagedFile);
+        mkdirSync(path.dirname(localPath), { recursive: true });
+        moveFile(stagedFile, localPath);
+        files.push(localPath);
+      } catch (error) {
+        // Best-effort cleanup of a half-pulled staged file so it can't leak.
+        rmSync(stagedFile, { force: true });
+        failures.push({
+          path: remotePath,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+    });
+  } finally {
+    rmSync(stagingDir, { recursive: true, force: true });
   }
 
   return {
@@ -73,4 +95,23 @@ export async function collectFrameworkFiles(
     files,
     failures,
   };
+}
+
+/**
+ * Move a file, falling back to copy+delete across filesystems.
+ * renameSync is atomic and preferred, but throws EXDEV when source and
+ * destination live on different mounts (e.g. CWD on one drive, sourceDir on
+ * another). The codebase had no cross-device move helper, so it lives here.
+ */
+function moveFile(source: string, destination: string): void {
+  try {
+    renameSync(source, destination);
+  } catch (error) {
+    if (error instanceof Error && (error as NodeJS.ErrnoException).code === "EXDEV") {
+      copyFileSync(source, destination);
+      rmSync(source, { force: true });
+      return;
+    }
+    throw error;
+  }
 }
