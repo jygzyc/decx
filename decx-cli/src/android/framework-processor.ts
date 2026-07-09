@@ -1,4 +1,5 @@
-import { closeSync, copyFileSync, existsSync, mkdirSync, openSync, readdirSync, readFileSync, rmSync } from "fs";
+import AdmZip from "adm-zip";
+import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "fs";
 import * as os from "os";
 import * as path from "path";
 import { spawnSync } from "child_process";
@@ -46,31 +47,22 @@ function detectFilesystemType(filePath: string): "erofs" | "ext4" | "ext2" {
 }
 
 function listZipEntries(inputFile: string): string[] {
-  return runTool("unzip", ["-Z1", inputFile])
-    .split(/\r?\n/)
-    .map((line) => line.trim())
+  return new AdmZip(inputFile)
+    .getEntries()
+    .map((entry) => entry.entryName)
     .filter(Boolean);
 }
 
 function extractZipEntry(inputFile: string, entryName: string, targetPath: string): void {
-  const outputFd = openSync(targetPath, "w");
+  const data = new AdmZip(inputFile).readFile(entryName);
+  if (!data) {
+    throw new FileError(`Failed to read '${entryName}' from ${inputFile}`);
+  }
   try {
-    const result = spawnSync("unzip", ["-p", inputFile, entryName], {
-      stdio: ["ignore", outputFd, "pipe"],
-    });
-    if (result.error) {
-      throw new FileError(`Failed to read '${entryName}' from ${inputFile}: ${result.error.message}`);
-    }
-    if (result.status !== 0) {
-      throw new FileError(
-        result.stderr?.toString().trim() || `Failed to extract '${entryName}' from ${inputFile}`,
-      );
-    }
+    writeFileSync(targetPath, data);
   } catch (error) {
     rmSync(targetPath, { force: true });
     throw error;
-  } finally {
-    closeSync(outputFd);
   }
 }
 

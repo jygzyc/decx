@@ -1,6 +1,6 @@
-import { existsSync, mkdirSync, rmSync, statSync, writeFileSync } from "fs";
+import { existsSync, mkdirSync, rmSync, statSync } from "fs";
 import * as path from "path";
-import { spawnSync } from "child_process";
+import AdmZip from "adm-zip";
 import type { FrameworkPathLayout, FrameworkToolPaths } from "../src/android/types.js";
 import { processFrameworkFiles, runTasksWithConcurrency } from "../src/android/framework-processor.js";
 import { resetTestDir } from "./test-paths.js";
@@ -52,18 +52,11 @@ describe("framework processor zip extraction", () => {
     const apexTmpDir = path.join(rootDir, "apex_tmp");
     mkdirSync(sourceDir, { recursive: true });
 
-    const dexPath = path.join(rootDir, "classes.dex");
     const jarPath = path.join(sourceDir, "framework.jar");
-    writeFileSync(dexPath, Buffer.alloc(2 * 1024 * 1024, 0x7f));
 
-    const zipResult = spawnSync("zip", ["-q", "source/framework.jar", "classes.dex"], {
-      cwd: rootDir,
-      encoding: "utf-8",
-    });
-    if (zipResult.status !== 0) {
-      throw new Error(zipResult.stderr || zipResult.stdout || zipResult.error?.message || "zip failed");
-    }
-    expect(zipResult.error).toBeUndefined();
+    const zip = new AdmZip();
+    zip.addFile("classes.dex", Buffer.alloc(2 * 1024 * 1024, 0x7f));
+    zip.writeZip(jarPath);
 
     const layout: FrameworkPathLayout = {
       rootDir,

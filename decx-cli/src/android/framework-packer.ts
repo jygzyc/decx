@@ -1,7 +1,6 @@
-import { copyFileSync, existsSync, mkdirSync, readdirSync, rmSync, writeFileSync } from "fs";
+import AdmZip from "adm-zip";
+import { existsSync, readdirSync } from "fs";
 import * as path from "path";
-import { randomBytes } from "crypto";
-import { spawnSync } from "child_process";
 import { FileError } from "../utils/errors.js";
 import type { FrameworkPackResult, FrameworkPathLayout } from "./types.js";
 
@@ -42,34 +41,16 @@ export async function packFrameworkJar(layout: FrameworkPathLayout): Promise<Fra
     throw new FileError(`No processed files found in ${layout.outTmpDir}`);
   }
 
-  const stagingDir = path.join(layout.outDir, `.pack_tmp_${randomBytes(4).toString("hex")}`);
-  const manifestDir = path.join(stagingDir, "META-INF");
-  const stagedFiles = collectFiles(layout.outTmpDir);
-
-  mkdirSync(manifestDir, { recursive: true });
-  writeFileSync(path.join(manifestDir, "MANIFEST.MF"), FRAMEWORK_MANIFEST, "utf-8");
-  for (const filePath of stagedFiles) {
-    copyFileSync(filePath, path.join(stagingDir, path.basename(filePath)));
+  // Build the jar in memory with adm-zip instead of shelling out to `zip`.
+  // addLocalFile uses each file's basename as the entry name, so the packed
+  // jar has a flat layout rooted at the jar root — same shape as the old
+  // staging-dir + `zip -r` flow, without the temp dir or PATH dependency.
+  const zip = new AdmZip();
+  zip.addFile("META-INF/MANIFEST.MF", Buffer.from(FRAMEWORK_MANIFEST, "utf-8"));
+  for (const filePath of collectFiles(layout.outTmpDir)) {
+    zip.addLocalFile(filePath);
   }
-
-  const result = spawnSync(
-    "zip",
-    ["-q", "-r", layout.jarPath, "META-INF", ...stagedFiles.map((filePath) => path.basename(filePath))],
-    {
-      cwd: stagingDir,
-      encoding: "utf-8",
-    },
-  );
-
-  rmSync(stagingDir, { recursive: true, force: true });
-
-  if (result.error) {
-    throw new FileError(`Failed to execute zip: ${result.error.message}`);
-  }
-
-  if (result.status !== 0) {
-    throw new FileError(result.stderr?.trim() || result.stdout?.trim() || "Failed to create out.jar");
-  }
+  zip.writeZip(layout.jarPath);
 
   return {
     ok: true,
