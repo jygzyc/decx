@@ -65,6 +65,15 @@ export interface NpmUpdateCommand {
   args: string[];
   display: string;
   env: NodeJS.ProcessEnv;
+  /**
+   * Whether the command must be spawned through a shell.
+   *
+   * Invoking npm via its JS entrypoint (`node .../npm-cli.js`) needs no shell
+   * and works everywhere. The shim fallback resolves to `npm.cmd` on Windows,
+   * which is a batch file; spawning a batch file without a shell throws EINVAL
+   * on Node 20.12+/22+/24+ (post CVE-2024-27980), so it requires `shell: true`.
+   */
+  shell: boolean;
 }
 
 function withPathPrefix(env: NodeJS.ProcessEnv, dirs: string[], platform: NodeJS.Platform): NodeJS.ProcessEnv {
@@ -88,16 +97,33 @@ export function resolveNpmUpdateCommand(
   const updateArgs = buildCliUpdateArgs(packageName);
   const nodeDir = path.dirname(execPath);
 
-  if (env.npm_execpath && exists(env.npm_execpath)) {
-    const args = [env.npm_execpath, ...updateArgs];
+  // Preferred: invoke npm's JS entrypoint directly with the current node.
+  // This sidesteps the Windows `npm`→`npm.cmd` ENOENT bug and the EINVAL that
+  // spawning a batch file without a shell raises on modern Node, and it avoids
+  // the DEP0190 shell+args deprecation warning. `npm_execpath` (set when npm
+  // invokes us) already points here; otherwise we probe the standard layouts:
+  //   <nodeDir>/node_modules/npm/bin/npm-cli.js            (Windows installer, nvm-windows)
+  //   <nodeDir>/../lib/node_modules/npm/bin/npm-cli.js     (Unix homebrew/apt/nvm)
+  const npmEntryCandidates = [
+    env.npm_execpath,
+    path.join(nodeDir, "node_modules", "npm", "bin", "npm-cli.js"),
+    path.join(nodeDir, "..", "lib", "node_modules", "npm", "bin", "npm-cli.js"),
+    path.join(nodeDir, "..", "node_modules", "npm", "bin", "npm-cli.js"),
+  ];
+  const npmEntry = npmEntryCandidates.find((candidate) => candidate && exists(candidate));
+  if (npmEntry) {
+    const args = [npmEntry, ...updateArgs];
     return {
       command: execPath,
       args,
       display: `${path.basename(execPath)} ${args.join(" ")}`,
       env: withPathPrefix(env, [nodeDir], platform),
+      shell: false,
     };
   }
 
+  // Last-resort fallback: the npm shim on PATH. On Windows this resolves to
+  // npm.cmd (a batch file) and therefore MUST be spawned through a shell.
   const npmBinName = platform === "win32" ? "npm.cmd" : "npm";
   const candidates = [
     path.join(nodeDir, npmBinName),
@@ -113,6 +139,7 @@ export function resolveNpmUpdateCommand(
     args: updateArgs,
     display: `${command} ${updateArgs.join(" ")}`,
     env: withPathPrefix(env, [nodeDir, "/opt/homebrew/bin", "/usr/local/bin", "/usr/bin"], platform),
+    shell: platform === "win32",
   };
 }
 
@@ -196,12 +223,16 @@ export function makeSelfCommand(): Command {
         stdio: "inherit",
         timeout: 120_000,
         env: npmCommand.env,
+        shell: npmCommand.shell,
       });
 
       if (result.error) {
+        const nodeDir = path.dirname(process.execPath);
         const hint = result.error.message.includes("ENOENT")
-          ? ` (npm was not found; checked ${path.dirname(process.execPath)}, PATH, and common install locations)`
-          : "";
+          ? ` (npm was not found; checked ${nodeDir}\\node_modules\\npm, PATH, and common install locations)`
+          : result.error.message.includes("EINVAL")
+            ? " (spawning npm on Windows requires a shell; this may be an outdated Node.js)"
+            : "";
         throw new DecxError(`CLI update failed: ${result.error.message}${hint}`, "UPDATE_ERROR");
       }
       if (result.signal) {
