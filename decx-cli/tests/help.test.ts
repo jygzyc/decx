@@ -215,6 +215,7 @@ describe("ard", () => {
       "app-manifest", "main-activity", "app-application",
       "exported-components", "app-deeplinks", "app-receivers",
       "system-service-impl", "system-services", "perm-info",
+      "top-app", "am-start",
       "all-resources", "resource-file", "strings", "get-aidl", "framework",
     ]);
   });
@@ -248,6 +249,21 @@ describe("ard", () => {
     expect(hasFlag(systemServices, "--adb-path")).toBe(true);
     expect(hasFlag(systemServices, "--serial")).toBe(true);
     expect(hasFlag(systemServices, "--grep")).toBe(true);
+  });
+
+  it("top-app has no positional argument and includes adb device options", () => {
+    const topApp = findCommand(cmd, ["top-app"])!;
+    expect(topApp.registeredArguments.length).toBe(0);
+    expect(hasFlag(topApp, "--adb-path")).toBe(true);
+    expect(hasFlag(topApp, "--serial")).toBe(true);
+  });
+
+  it("am-start has <pkg-or-component> argument, adb device options, and --activity", () => {
+    const amStart = findCommand(cmd, ["am-start"])!;
+    expect(amStart.registeredArguments.length).toBeGreaterThanOrEqual(1);
+    expect(hasFlag(amStart, "--adb-path")).toBe(true);
+    expect(hasFlag(amStart, "--serial")).toBe(true);
+    expect(hasFlag(amStart, "--activity")).toBe(true);
   });
 
   it("framework registers collect/process/run/open subcommands", () => {

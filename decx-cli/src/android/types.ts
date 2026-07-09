@@ -31,6 +31,25 @@ export interface PermissionInfo {
   [key: string]: string | null | undefined;
 }
 
+export interface TopAppResult {
+  package: string;
+  activity: string | null;
+}
+
+export interface AmStartTarget {
+  /** Fully-qualified component, e.g. "com.example/.MainActivity" or "com.example/com.example.Main". */
+  component?: string;
+  /** Package name to launch via its launcher intent. Mutually exclusive with `component`. */
+  package?: string;
+}
+
+export interface AmStartResult {
+  component?: string;
+  package?: string;
+  started: boolean;
+  raw: string;
+}
+
 export interface FrameworkToolPaths {
   adb: string;
   debugfs: string;

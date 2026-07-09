@@ -1,6 +1,14 @@
 import { spawnSync } from "child_process";
 import { DecxError, FileError, ProcessError } from "../utils/errors.js";
-import type { AdbClientOptions, AdbCommandResult, PermissionInfo, SystemServicesResult } from "./types.js";
+import type {
+  AdbClientOptions,
+  AdbCommandResult,
+  AmStartResult,
+  AmStartTarget,
+  PermissionInfo,
+  SystemServicesResult,
+  TopAppResult,
+} from "./types.js";
 
 const SUPPORTED_FRAMEWORK_OEMS = ["vivo", "oppo", "xiaomi", "honor", "google", "samsung"] as const;
 type SupportedFrameworkOem = typeof SUPPORTED_FRAMEWORK_OEMS[number];
@@ -16,9 +24,15 @@ export function parseAdbDevicesOutput(output: string): string[] {
     .map((parts) => parts[0]);
 }
 
-export function resolvePreferredSerial(output: string, requestedSerial?: string): string {
+export function resolvePreferredSerial(output: string, requestedSerial?: string, envSerial?: string): string {
   if (requestedSerial) return requestedSerial;
   const devices = parseAdbDevicesOutput(output);
+  if (envSerial) {
+    if (devices.length === 0) {
+      throw new DecxError("No connected Android device detected via adb", "ADB_DEVICE_MISSING");
+    }
+    return envSerial;
+  }
   if (devices.length === 0) {
     throw new DecxError("No connected Android device detected via adb", "ADB_DEVICE_MISSING");
   }
@@ -132,6 +146,77 @@ export function parsePermissionInfoOutput(output: string, permission: string): P
   return info;
 }
 
+/**
+ * Parse `dumpsys activity activities` output for the current foreground package/activity.
+ *
+ * Prefers `topResumedActivity`/`mResumedActivity` (modern ActivityTaskManager dumps),
+ * whose lines look like:
+ *   `topResumedActivity=ActivityRecord{2b3c u0 com.example/.MainActivity t123}`
+ * Falls back to `mFocusedApp` (older / launcher hint), which look like:
+ *   `mFocusedApp=AppWindowToken{... token=Token{... com.example/com.example.MainActivity}}`
+ * Returns null when no foreground entry can be located.
+ */
+export function parseForegroundAppOutput(output: string): TopAppResult | null {
+  const resumedMatch = output.match(/(?:topResumedActivity|mResumedActivity)=ActivityRecord\{[^}]*\su0\s+(\S+?)\s/);
+  if (resumedMatch) {
+    const component = resumedMatch[1];
+    const slashIndex = component.indexOf("/");
+    if (slashIndex > 0) {
+      const pkg = component.slice(0, slashIndex);
+      const activity = component.slice(slashIndex + 1);
+      return { package: pkg, activity: resolveActivityName(pkg, activity) };
+    }
+    return { package: component, activity: null };
+  }
+
+  const focusedMatch = output.match(/mFocusedApp=.*?token=Token\{[^}]*\s([^\s}]+)\}/i);
+  if (focusedMatch) {
+    const component = focusedMatch[1];
+    const slashIndex = component.indexOf("/");
+    if (slashIndex > 0) {
+      const pkg = component.slice(0, slashIndex);
+      const activity = component.slice(slashIndex + 1);
+      return { package: pkg, activity: resolveActivityName(pkg, activity) };
+    }
+    return { package: component, activity: null };
+  }
+
+  return null;
+}
+
+/**
+ * Normalize an activity class name from a component's post-slash part.
+ * `com.example/.MainActivity` -> `.MainActivity` is reported as `com.example.MainActivity`;
+ * fully-qualified activities are returned unchanged.
+ */
+function resolveActivityName(pkg: string, activity: string): string {
+  if (activity.startsWith(".")) {
+    return `${pkg}${activity}`;
+  }
+  return activity;
+}
+
+export function buildAmStartCommand(target: AmStartTarget): string {
+  if (target.component) {
+    return `am start -W -n ${shellQuote(target.component)}`;
+  }
+  if (target.package) {
+    return `am start -W ${shellQuote(target.package)}`;
+  }
+  throw new DecxError("am start requires either a component or a package", "ADB_AM_START_TARGET_REQUIRED");
+}
+
+export function parseAmStartOutput(output: string): { started: boolean } {
+  const normalized = output.toLowerCase();
+  if (/status:\s*ok/.test(normalized)) {
+    return { started: true };
+  }
+  if (/\bstarted\b/.test(normalized) && !/error/.test(normalized)) {
+    return { started: true };
+  }
+  return { started: false };
+}
+
 export class AdbClient {
   private selectedSerial: string | null = null;
 
@@ -142,7 +227,7 @@ export class AdbClient {
   }
 
   private baseArgs(): string[] {
-    const serial = this.selectedSerial ?? this.options.serial;
+    const serial = this.selectedSerial ?? this.options.serial ?? process.env.ANDROID_SERIAL;
     return serial ? ["-s", serial] : [];
   }
 
@@ -171,7 +256,11 @@ export class AdbClient {
   }
 
   private selectDevice(): void {
-    this.selectedSerial = resolvePreferredSerial(this.run(["devices"], 10_000).stdout, this.options.serial);
+    this.selectedSerial = resolvePreferredSerial(
+      this.run(["devices"], 10_000).stdout,
+      this.options.serial,
+      process.env.ANDROID_SERIAL,
+    );
   }
 
   ensureDeviceConnected(): void {
@@ -226,5 +315,33 @@ export class AdbClient {
     if (result.status !== 0) {
       throw new ProcessError(result.stderr.trim() || result.stdout.trim() || `adb pull failed: ${remotePath}`);
     }
+  }
+
+  getForegroundApp(): TopAppResult {
+    const output = this.shell("dumpsys activity activities | grep -E '(mResumedActivity|topResumedActivity|mFocusedApp)'", 15_000);
+    const parsed = parseForegroundAppOutput(output);
+    if (!parsed) {
+      throw new DecxError("No foreground activity detected on the device", "ADB_NO_FOREGROUND_APP");
+    }
+    return parsed;
+  }
+
+  amStart(target: AmStartTarget): AmStartResult {
+    const command = buildAmStartCommand(target);
+    const output = this.shell(command, 30_000);
+    const { started } = parseAmStartOutput(output);
+    if (!started) {
+      throw new DecxError(
+        `am start failed: ${output.trim().split(/\r?\n/).pop() || "unknown error"}`,
+        "ADB_AM_START_FAILED",
+        { component: target.component, package: target.package },
+      );
+    }
+    return {
+      component: target.component,
+      package: target.package,
+      started: true,
+      raw: output.trim(),
+    };
   }
 }
