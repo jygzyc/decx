@@ -22,7 +22,7 @@
   "dependencies": {
     "@ai-sdk/anthropic": "^4.0.7",
     "@ai-sdk/openai": "^3.0.73",
-    "ai": "^7.0.14",
+    "ai": "^7.0.20",
     "commander": "^15.0.0"
   },
   "devDependencies": {
