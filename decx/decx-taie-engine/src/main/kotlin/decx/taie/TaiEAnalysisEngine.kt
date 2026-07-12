@@ -1,0 +1,322 @@
+package decx.taie
+
+import pascal.taie.World
+import pascal.taie.analysis.pta.PointerAnalysis
+import pascal.taie.analysis.pta.PointerAnalysisResult
+import pascal.taie.ir.stmt.Invoke
+import pascal.taie.language.classes.ClassHierarchy
+import pascal.taie.language.classes.JMethod
+import java.io.File
+
+/**
+ * Core Tai-e analysis engine: World construction, PTA, call-graph queries,
+ * and rule-based taint analysis.
+ *
+ * This runs inside the TaiEEngine process (decx-taie-engine module).
+ * It is NOT visible to decx-core — all communication goes through
+ * TaiEEngineMain's JSON-RPC protocol.
+ */
+class TaiEAnalysisEngine(
+    private val inputFile: File,
+    private val isApk: Boolean,
+    private val androidJarsDir: String?,
+    private val outputDir: File,
+    private val rulesDir: File?
+) {
+
+    @Volatile
+    private var ptaResult: PointerAnalysisResult? = null
+
+    @Volatile
+    private var ready = false
+
+    @Volatile
+    private var analysisReady = false
+
+    private var loadedRules: List<VulnRule> = emptyList()
+
+    val isReady: Boolean get() = ready
+    val isAnalysisReady: Boolean get() = analysisReady
+
+    /**
+     * Initializes the engine: builds World, runs PTA, loads rules.
+     * This is a blocking call — may take minutes for large APKs.
+     */
+    fun initialize() {
+        outputDir.mkdirs()
+
+        // Load rules first (fast, no Tai-e dependency)
+        if (rulesDir != null && rulesDir.isDirectory) {
+            loadedRules = RuleLoader.load(rulesDir)
+            System.err.println("[TaiEEngine] Loaded ${loadedRules.size} rule(s) from ${rulesDir.absolutePath}")
+        }
+
+        // Build World + run PTA
+        val args = buildList {
+            if (!isApk) {
+                add("--world-builder")
+                add("pascal.taie.frontend.java.JavaWorldBuilder")
+            }
+            add("--output-dir")
+            add(outputDir.absolutePath)
+
+            if (isApk) {
+                add("-am")
+                if (androidJarsDir != null) {
+                    add("-ajs")
+                    add(androidJarsDir)
+                }
+                add("-cp")
+                add(inputFile.absolutePath)
+            } else {
+                add("-cp")
+                add(inputFile.absolutePath)
+            }
+
+            // Memory-conservative PTA config
+            add("-a")
+            add("pta=cs:ci;implicit-entries:false;only-app:true;time-limit:600")
+        }
+
+        pascal.taie.Main.main(*args.toTypedArray())
+
+        val result: PointerAnalysisResult = World.get().getResult(PointerAnalysis.ID)
+        ptaResult = result
+        ready = true
+        analysisReady = true
+    }
+
+    // ------------------------------------------------------------------
+    // CG / xref queries
+    // ------------------------------------------------------------------
+
+    fun callersOf(decxMethodSig: String): List<TaintResult.CallEdge> {
+        val pta = ptaResult ?: return emptyList()
+        val method = resolveMethod(decxMethodSig) ?: return emptyList()
+        return runCatching {
+            pta.callGraph.getCallersOf(method).map { invoke ->
+                TaintResult.CallEdge(
+                    from = TaiESignatures.toDecxMethodId(invoke.container),
+                    to = decxMethodSig,
+                    invokeType = describeInvokeKind(invoke),
+                    line = invoke.lineNumber.takeIf { it > 0 }
+                )
+            }
+        }.getOrElse { emptyList() }
+    }
+
+    fun calleesOf(decxMethodSig: String): List<TaintResult.CallEdge> {
+        val pta = ptaResult ?: return emptyList()
+        val method = resolveMethod(decxMethodSig) ?: return emptyList()
+        return runCatching {
+            pta.callGraph.getCalleesOfM(method).map { callee ->
+                TaintResult.CallEdge(
+                    from = decxMethodSig,
+                    to = TaiESignatures.toDecxMethodId(callee),
+                    invokeType = "resolved",
+                    line = null
+                )
+            }
+        }.getOrElse { emptyList() }
+    }
+
+    fun subclassesOf(classSig: String, transitive: Boolean): List<String> {
+        val ch = hierarchy() ?: return emptyList()
+        return runCatching {
+            val cls = ch.getClass(classSig) ?: return emptyList()
+            val subs = if (transitive) ch.getAllSubclassesOf(cls) else ch.getDirectSubclassesOf(cls)
+            subs.map { it.name }
+        }.getOrElse { emptyList() }
+    }
+
+    fun implementorsOf(ifaceSig: String, transitive: Boolean): List<String> {
+        val ch = hierarchy() ?: return emptyList()
+        return runCatching {
+            val iface = ch.getClass(ifaceSig) ?: return emptyList()
+            val impls = if (transitive) {
+                ch.getAllSubclassesOf(iface).filter { it != iface }
+            } else {
+                ch.getDirectImplementorsOf(iface)
+            }
+            impls.map { it.name }
+        }.getOrElse { emptyList() }
+    }
+
+    fun pointsTo(decxMethodSig: String, varName: String): List<String> {
+        val pta = ptaResult ?: return emptyList()
+        return runCatching {
+            val method = resolveMethod(decxMethodSig) ?: return emptyList()
+            val ir = method.ir
+            val varToQuery: pascal.taie.ir.exp.Var? = when {
+                varName == "this" || varName == "@this" -> ir.`this`
+                varName == "return" || varName == "ret" -> ir.returnVars.firstOrNull()
+                varName.startsWith("p") -> {
+                    val idx = varName.removePrefix("p").toIntOrNull() ?: return emptyList()
+                    ir.params.getOrNull(idx)
+                }
+                else -> ir.vars.firstOrNull { it.name == varName }
+            } ?: return emptyList()
+
+            pta.getPointsToSet(varToQuery).map { obj ->
+                val type = obj.type.toString()
+                val container = obj.containerMethod
+                    .map { TaiESignatures.toDecxMethodId(it) }
+                    .orElse(null)
+                if (container != null) "$type @ $container" else type
+            }
+        }.getOrElse { emptyList() }
+    }
+
+    // ------------------------------------------------------------------
+    // Rule queries (three core interfaces)
+    // ------------------------------------------------------------------
+
+    /** Interface 1: return loaded rule summaries */
+    fun getRuleSummaries(): List<TaintResult.RuleSummary> {
+        return loadedRules.map { rule ->
+            TaintResult.RuleSummary(
+                id = rule.id ?: "",
+                name = rule.name ?: "",
+                description = rule.description ?: "",
+                parameters = rule.parameters?.map { p ->
+                    TaintResult.RuleParameter(
+                        name = p.name, type = p.type, description = p.description,
+                        required = p.required, defaultValue = p.defaultValue
+                    )
+                }
+            )
+        }
+    }
+
+    /** Interface 2: execute a preset rule by ID */
+    fun investigate(ruleId: String, params: Map<String, String>): List<TaintResult.TaintPath> {
+        val rule = loadedRules.find { it.id == ruleId }
+            ?: return emptyList()
+        val resolved = rule.resolveParams(params)
+        return executeRule(resolved)
+    }
+
+    /** Interface 3: execute a custom inline rule */
+    fun investigateCustom(ruleYaml: String, params: Map<String, String>): List<TaintResult.TaintPath> {
+        val rule = RuleLoader.parseYaml(ruleYaml) ?: return emptyList()
+        val resolved = rule.resolveParams(params)
+        return executeRule(resolved.copy(id = rule.id ?: "custom"))
+    }
+
+    // ------------------------------------------------------------------
+    // Rule execution
+    // ------------------------------------------------------------------
+
+    private fun executeRule(rule: VulnRule): List<TaintResult.TaintPath> {
+        val ch = hierarchy() ?: return emptyList()
+        val pta = ptaResult ?: return emptyList()
+        val cg = pta.callGraph
+
+        val paths = mutableListOf<TaintResult.TaintPath>()
+
+        // Resolve source methods from patterns
+        val sourceMethods = rule.source.orEmpty().flatMap { spec ->
+            MethodFinder.resolveMethods(spec.method, ch)
+        }.distinct()
+
+        // Resolve sink methods from patterns
+        val sinkMethods = rule.sink.orEmpty().flatMap { spec ->
+            MethodFinder.resolveMethods(spec.method, ch)
+        }.distinct()
+
+        if (sourceMethods.isEmpty() || sinkMethods.isEmpty()) return emptyList()
+
+        // For each source, find callers and trace to sinks via call graph
+        // This is a simplified taint analysis using the PTA call graph:
+        // for each source method, find all callers; for each caller, check if
+        // any sink method is reachable within trace_depth.
+        val traceDepth = rule.traceDepth ?: 10
+
+        for (source in sourceMethods) {
+            val sourceSig = TaiESignatures.toDecxMethodId(source)
+            val callers = cg.getCallersOf(source)
+
+            for (invoke in callers) {
+                val caller = invoke.container
+                val callerSig = TaiESignatures.toDecxMethodId(caller)
+
+                // Check if this caller (or its callees within traceDepth) reaches a sink
+                val reachable = bfsReachable(caller, sinkMethods.toSet(), traceDepth, cg)
+                for (sinkMethod in reachable) {
+                    val sinkSig = TaiESignatures.toDecxMethodId(sinkMethod)
+                    paths.add(TaintResult.TaintPath(
+                        ruleId = rule.id ?: "custom",
+                        source = sourceSig,
+                        sink = sinkSig,
+                        steps = listOf(
+                            TaintResult.TaintStep(
+                                method = callerSig,
+                                line = invoke.lineNumber.takeIf { it > 0 } ?: 0,
+                                desc = "calls $sourceSig"
+                            )
+                        )
+                    ))
+                }
+            }
+        }
+
+        return paths.distinct()
+    }
+
+    /**
+     * BFS from [start] to find any of [targets] within [maxDepth] call-graph edges.
+     */
+    private fun bfsReachable(
+        start: JMethod,
+        targets: Set<JMethod>,
+        maxDepth: Int,
+        cg: pascal.taie.analysis.graph.callgraph.CallGraph<Invoke, JMethod>
+    ): Set<JMethod> {
+        val found = mutableSetOf<JMethod>()
+        val visited = mutableSetOf<JMethod>()
+        val queue = ArrayDeque<Pair<JMethod, Int>>()
+        queue.addLast(start to 0)
+        visited.add(start)
+
+        while (queue.isNotEmpty()) {
+            val (method, depth) = queue.removeFirst()
+            if (method in targets) {
+                found.add(method)
+            }
+            if (depth >= maxDepth) continue
+
+            val callees = runCatching { cg.getCalleesOfM(method) }.getOrElse { emptySet() }
+            for (callee in callees) {
+                if (callee !in visited) {
+                    visited.add(callee)
+                    queue.addLast(callee to depth + 1)
+                }
+            }
+        }
+        return found
+    }
+
+    // ------------------------------------------------------------------
+    // Helpers
+    // ------------------------------------------------------------------
+
+    private fun hierarchy(): ClassHierarchy? =
+        runCatching { World.get().classHierarchy }.getOrNull()
+
+    private fun resolveMethod(decxSig: String): JMethod? {
+        val ch = hierarchy() ?: return null
+        val taiESig = TaiESignatures.decxToTaiESignature(decxSig)
+        return ch.getMethod(taiESig)
+    }
+
+    private fun describeInvokeKind(invoke: Invoke): String {
+        return when {
+            invoke.isVirtual -> "virtual"
+            invoke.isStatic -> "static"
+            invoke.isInterface -> "interface"
+            invoke.isSpecial -> "special"
+            invoke.isDynamic -> "dynamic"
+            else -> "other"
+        }
+    }
+}

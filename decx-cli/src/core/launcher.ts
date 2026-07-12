@@ -343,7 +343,7 @@ export function extractPassthroughArgs(argv: readonly string[] = process.argv): 
   if (openIdx === -1) return [];
 
   const raw = cmdArgs.slice(openIdx + 1);
-  const decxFlagsWithValue = ["-P", "--port", "-n", "--name", "--tai-e-rules", "--tai-e-android-jars"];
+  const decxFlagsWithValue = ["-P", "--port", "-n", "--name", "--tai-e-rules", "--tai-e-android-jars", "--tai-e-xmx"];
   const decxFlags = ["--force", "--mcp", "--no-mcp", "--tai-e", "--no-tai-e"];
 
   const result: string[] = [];

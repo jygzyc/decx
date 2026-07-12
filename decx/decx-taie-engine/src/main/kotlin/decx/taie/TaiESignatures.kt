@@ -1,4 +1,4 @@
-package jadx.plugins.decx.server.taie
+package decx.taie
 
 import pascal.taie.language.classes.JField
 import pascal.taie.language.classes.JMethod
@@ -53,17 +53,37 @@ object TaiESignatures {
 
     /**
      * Returns the DECX class name (dotted, `$` for inner classes) for a Tai-e [JMethod]'s
-     * declaring class. This is just [pascal.taie.language.classes.JClass.getName],
-     * exposed here for symmetry with the other converters.
+     * declaring class.
      */
     fun toDecxClassName(method: JMethod): String = method.declaringClass.name
 
     /**
      * Normalizes a Tai-e [Type] to the DECX type string.
-     *
-     * Tai-e's [Type.toString] already uses Java-source style (int, java.lang.String,
-     * java.lang.String[]), which matches DECX. We call toString() and strip any
-     * incidental whitespace to match DECX's no-space convention.
+     * Tai-e's [Type.toString] already uses Java-source style, matching DECX.
      */
     private fun Type.toDecxType(): String = toString().replace(" ", "")
+
+    /**
+     * Converts a DECX method signature to a Tai-e method signature.
+     * DECX:   com.example.Foo.bar(int,java.lang.String):boolean
+     * Tai-e:  <com.example.Foo: boolean bar(int,java.lang.String)>
+     */
+    fun decxToTaiESignature(decxSig: String): String {
+        val lastColon = decxSig.lastIndexOf(':')
+        if (lastColon < 0) return "<$decxSig>"
+        val retType = decxSig.substring(lastColon + 1)
+        val beforeRet = decxSig.substring(0, lastColon)
+
+        val parenIdx = beforeRet.indexOf('(')
+        if (parenIdx < 0) return "<$decxSig>"
+        val classAndMethod = beforeRet.substring(0, parenIdx)
+        val params = beforeRet.substring(parenIdx)
+
+        val lastDot = classAndMethod.lastIndexOf('.')
+        if (lastDot < 0) return "<$decxSig>"
+        val className = classAndMethod.substring(0, lastDot)
+        val methodName = classAndMethod.substring(lastDot + 1)
+
+        return "<$className: $retType $methodName$params>"
+    }
 }

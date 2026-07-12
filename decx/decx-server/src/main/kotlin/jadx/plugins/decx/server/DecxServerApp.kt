@@ -4,10 +4,8 @@ import jadx.api.JadxDecompiler
 import jadx.cli.JadxCLIArgs
 import jadx.plugins.decx.Decx
 import jadx.plugins.decx.DecxConstants
-import jadx.plugins.decx.server.taie.InvestigationRule
-import jadx.plugins.decx.server.taie.RuleLoader
-import jadx.plugins.decx.server.taie.TaiEEngine
-import jadx.plugins.decx.service.VulnHuntService
+import jadx.plugins.decx.service.ITaiEEngine
+import jadx.plugins.decx.taie.TaiEEngineProcess
 import jadx.plugins.decx.utils.PluginUtils
 import jadx.plugins.decx.utils.WarmupUtils
 import java.io.File
@@ -98,60 +96,43 @@ object DecxServerApp {
 		val warmupElapsed = WarmupUtils.warmup(toWarmup, logProgress = { message -> println("[*] $message") })
 		println("[+] Warmup completed in ${warmupElapsed}ms")
 
-		// Tai-e static analysis engine (optional, server-only).
-		// Initializes in the background; DECX endpoints use it when ready,
-		// and fall back to JADX-only xref when null or not yet ready.
-		val taiEEngine = if (options.taiEEnabled) {
-			println("[*] Initializing Tai-e analysis engine...")
+		// TaiEEngine: optional, runs as a SEPARATE process for memory isolation.
+		// The engine process loads rules from ~/.decx/rules/ automatically.
+		// DECX endpoints use it when ready, fall back to JADX-only xref otherwise.
+		var taiEEngineProcess: TaiEEngineProcess? = null
+		val taiEEngine: ITaiEEngine? = if (options.taiEEnabled) {
+			println("[*] Starting TaiEEngine process...")
 			try {
-				val engine = TaiEEngine.fromDecompiler(
-					inputFile = inputFile,
-					decompiler = decompiler,
-					androidJarsDir = options.taiEAndroidJars
-				)
-				engine.startAsync()
-				println("[+] Tai-e engine initializing in background (xref will upgrade when ready)")
-				engine
+				// Locate the TaiEEngine jar (next to decx-server.jar or in build/dist)
+				val engineJar = findTaiEEngineJar()
+				if (engineJar == null) {
+					println("[!] TaiEEngine jar not found, falling back to JADX-only xref")
+					null
+				} else {
+					val rulesDir = options.taiERulesDir
+						?.let { File(it) }
+						?: File(System.getProperty("user.home"), ".decx/rules")
+					val proc = TaiEEngineProcess(
+						engineJarPath = engineJar.absolutePath,
+						apkFile = inputFile,
+						rulesDir = if (rulesDir.isDirectory) rulesDir else null,
+						androidJarsDir = options.taiEAndroidJars,
+						xmx = options.taiEXmx
+					)
+					val client = proc.start()
+					taiEEngineProcess = proc
+					println("[+] TaiEEngine process started (xref will upgrade when ready)")
+					client
+				}
 			} catch (e: Throwable) {
-				println("[!] Tai-e init failed, falling back to JADX-only xref: ${e.message}")
+				println("[!] TaiEEngine failed to start, falling back to JADX-only xref: ${e.message}")
 				null
 			}
 		} else {
 			null
 		}
 
-		// Load investigation rules from ~/.decx/rules/ or --tai-e-rules <dir>
-		val rulesDir = options.taiERulesDir
-			?.let { File(it) }
-			?: File(System.getProperty("user.home"), ".decx/rules")
-		val investigationRules = if (taiEEngine != null && rulesDir.isDirectory) {
-			val loaded = RuleLoader.load(rulesDir)
-			if (loaded.isNotEmpty()) {
-				println("[+] Loaded ${loaded.size} investigation rule(s) from ${rulesDir.absolutePath}")
-			}
-			loaded
-		} else {
-			emptyList()
-		}
-		val vulnHuntRules = investigationRules.map { rule ->
-			VulnHuntService.RuleSummary(rule.id ?: "", rule.description ?: "", rule.category ?: "general", rule.targetSdk)
-		}
-		val ruleExecutor: ((String) -> VulnHuntService.RuleExecution?)? = if (investigationRules.isNotEmpty()) {
-			{ ruleId: String ->
-				investigationRules.find { it.id == ruleId }?.let { rule ->
-					VulnHuntService.RuleExecution(
-						summary = VulnHuntService.RuleSummary(rule.id ?: "", rule.description ?: "", rule.category ?: "general", rule.targetSdk),
-						targets = rule.targets.orEmpty().map { VulnHuntService.TargetSpec(it.kind, it.signature) },
-						collect = rule.collect.orEmpty().map {
-							VulnHuntService.CollectSpec(it.kind, it.variable, it.depth, it.includeCallees, it.fromCallersOf)
-						},
-						context = rule.context?.map { VulnHuntService.ContextSpec(it.kind, it.component) }
-					)
-				}
-			}
-		} else null
-
-		val api = Decx.api(decompiler, taiEEngine = taiEEngine, vulnHuntRules = vulnHuntRules, ruleExecutor = ruleExecutor)
+		val api = Decx.api(decompiler, taiEEngine = taiEEngine)
 		val server = Decx.httpServer(api, port)
 		val started = server.start(port)
 		if (!started) {
@@ -191,6 +172,7 @@ object DecxServerApp {
 			Thread.currentThread().join()
 		} catch (_: InterruptedException) {
 			println("\n[*] Shutting down...")
+			taiEEngineProcess?.stop()
 			server.stop()
 		}
 	}
@@ -200,7 +182,8 @@ object DecxServerApp {
 		val mcpEnabled: Boolean = false,
 		val taiEEnabled: Boolean = false,
 		val taiERulesDir: String? = null,
-		val taiEAndroidJars: String? = null
+		val taiEAndroidJars: String? = null,
+		val taiEXmx: String = "4G"
 	)
 
 	private fun extractDecxOptionsAndFilterArgs(args: Array<String>): Pair<DecxCliOptions, Array<String>> {
@@ -209,6 +192,7 @@ object DecxServerApp {
 		var taiEEnabled = false
 		var taiERulesDir: String? = null
 		var taiEAndroidJars: String? = null
+		var taiEXmx = "4G"
 		val result = mutableListOf<String>()
 		var i = 0
 		while (i < args.size) {
@@ -245,6 +229,14 @@ object DecxServerApp {
 					}
 					taiEAndroidJars = args[i]
 				}
+				"--tai-e-xmx" -> {
+					i++
+					if (i >= args.size) {
+						System.err.println("Error: --tai-e-xmx requires a value")
+						System.exit(1)
+					}
+					taiEXmx = args[i]
+				}
 				else -> result.add(args[i])
 			}
 			i++
@@ -254,8 +246,24 @@ object DecxServerApp {
 			mcpEnabled = mcpEnabled,
 			taiEEnabled = taiEEnabled,
 			taiERulesDir = taiERulesDir,
-			taiEAndroidJars = taiEAndroidJars
+			taiEAndroidJars = taiEAndroidJars,
+			taiEXmx = taiEXmx
 		) to result.toTypedArray()
+	}
+
+	/**
+	 * Locates the decx-taie-engine.jar, which ships alongside decx-server.jar
+	 * in ~/.decx/bin/ or in the build dist directory.
+	 */
+	private fun findTaiEEngineJar(): File? {
+		// Same directory as the decx-server jar
+		val serverJarDir = File(DecxServerApp::class.java.protectionDomain.codeSource?.location?.toURI()?.path ?: ".").parentFile
+		val candidates = listOf(
+			File(serverJarDir, "decx-taie-engine.jar"),
+			File(System.getProperty("user.home"), ".decx/bin/decx-taie-engine.jar"),
+			File("decx/build/dist/decx-taie-engine.jar")
+		)
+		return candidates.firstOrNull { it.exists() }
 	}
 
 	private fun printHelp() {

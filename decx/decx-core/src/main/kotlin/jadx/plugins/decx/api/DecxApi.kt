@@ -44,11 +44,13 @@ interface DecxApi {
     fun getSelectedText(): DecxApiResult
     fun getSelectedClass(): DecxApiResult
 
-    // ==================== Vuln Hunt Service (Tai-e evidence collection) ====================
-    /** Lists available investigation rules loaded from ~/.decx/rules/. */
-    fun getVulnRules(): DecxApiResult
-    /** Executes an investigation rule by ID, collecting structured evidence. */
-    fun investigate(ruleId: String): DecxApiResult
+    // ==================== Taint Service (Tai-e taint analysis) ====================
+    /** Interface 1: Lists available preset taint rules from ~/.decx/rules/. */
+    fun getTaintRules(): DecxApiResult
+    /** Interface 2: Executes a preset rule by ID, returns source→sink paths. */
+    fun investigate(ruleId: String, params: Map<String, String>): DecxApiResult
+    /** Interface 3: Executes a custom inline rule, returns source→sink paths. */
+    fun investigateCustom(ruleYaml: String, params: Map<String, String>): DecxApiResult
     /** Queries the points-to set of a variable in a method (pointer analysis). */
     fun getPointsTo(mth: String, variable: String): DecxApiResult
     /** Lists dynamically-registered broadcast receivers (Tai-e Android modeling). */

@@ -1,22 +1,15 @@
-# Investigation rule: ZIP Slip (directory traversal via archive extraction)
-# Collects evidence for path traversal vulnerabilities in ZIP/archive extraction
-# code. The engine traces the extracted entry name's flow to file I/O;
-# the AI determines if the path is insufficiently sanitized.
+# ZIP Slip: archive entry name to file path construction
 id: zip_slip
-description: "Collect evidence for ZIP slip / directory traversal in archive extraction"
+name: "ZIP Slip"
+description: "Detect ZIP slip / directory traversal via archive extraction where entry name reaches file path"
+severity: high
 category: path_traversal
-
-targets:
-  - kind: method
-    signature: "<java.util.zip.ZipFile: java.util.Enumeration entries()>"
-  - kind: method
-    signature: "<java.util.zip.ZipInputStream: java.util.zip.ZipEntry getNextEntry()>"
-
-collect:
-  - kind: callers
-    include_callees: true
-  - kind: variable_flow
-    variable: return
-    depth: 8
-
-context: []
+trace_depth: 8
+source:
+  - kind: return
+    method: "<java.util.zip.ZipInputStream: java.util.zip.ZipEntry getNextEntry()>"
+sink:
+  - method: "<java.io.File: void <init>(java.lang.String)>"
+    taint_check: ["p0"]
+  - method: "<java.io.FileOutputStream: void <init>(java.lang.String)>"
+    taint_check: ["p0"]

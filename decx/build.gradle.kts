@@ -53,9 +53,11 @@ tasks.register<Copy>("dist") {
     group = "build"
     dependsOn(":decx-plugin:dist")
     dependsOn(":decx-server:dist")
+    dependsOn(":decx-taie-engine:dist")
 
     from("${project(":decx-plugin").projectDir}/build/dist")
     from("${project(":decx-server").projectDir}/build/dist")
+    from("${project(":decx-taie-engine").projectDir}/build/dist")
     // Include built-in investigation rules in the dist output
     from("$rootDir/../rules") {
         into("rules")

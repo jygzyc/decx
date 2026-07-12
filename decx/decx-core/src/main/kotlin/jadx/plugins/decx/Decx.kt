@@ -12,7 +12,6 @@ import jadx.plugins.decx.server.McpTool
 import jadx.plugins.decx.server.McpToolRegistry
 import jadx.plugins.decx.service.ITaiEEngine
 import jadx.plugins.decx.service.UiBackedService
-import jadx.plugins.decx.service.VulnHuntService
 
 /**
  * Public DECX core entry point for embedders.
@@ -25,10 +24,8 @@ object Decx {
         decompiler: JadxDecompiler,
         cacheEnabled: Boolean = true,
         uiService: UiBackedService? = null,
-        taiEEngine: ITaiEEngine? = null,
-        vulnHuntRules: List<VulnHuntService.RuleSummary> = emptyList(),
-        ruleExecutor: ((String) -> VulnHuntService.RuleExecution?)? = null
-    ): DecxApi = DecxApiImpl(decompiler, cacheEnabled, uiService, taiEEngine, vulnHuntRules, ruleExecutor)
+        taiEEngine: ITaiEEngine? = null
+    ): DecxApi = DecxApiImpl(decompiler, cacheEnabled, uiService, taiEEngine)
 
     fun httpServer(api: DecxApi, port: Int = DecxConstants.DEFAULT_PORT): DecxServer =
         DecxServer(api, port)

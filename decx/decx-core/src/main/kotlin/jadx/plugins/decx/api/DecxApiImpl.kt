@@ -6,8 +6,8 @@ import jadx.plugins.decx.service.ContextService
 import jadx.plugins.decx.service.CommonService
 import jadx.plugins.decx.service.DecxService
 import jadx.plugins.decx.service.ITaiEEngine
+import jadx.plugins.decx.service.TaintService
 import jadx.plugins.decx.service.UiBackedService
-import jadx.plugins.decx.service.VulnHuntService
 import jadx.plugins.decx.utils.AnalysisResultUtils
 import jadx.plugins.decx.utils.CacheUtils
 import jadx.plugins.decx.utils.ItemKind
@@ -20,16 +20,14 @@ class DecxApiImpl(
     decompiler: JadxDecompiler,
     private val cacheEnabled: Boolean = true,
     uiService: UiBackedService? = null,
-    taiEEngine: ITaiEEngine? = null,
-    vulnHuntRules: List<VulnHuntService.RuleSummary> = emptyList(),
-    private val ruleExecutor: ((String) -> VulnHuntService.RuleExecution?)? = null
+    taiEEngine: ITaiEEngine? = null
 ) : DecxApi {
 
     private val commonService = CommonService(decompiler)
     private val contextService = ContextService(decompiler, taiEEngine)
     private val androidService = AndroidService(decompiler)
-    private val vulnHuntService = VulnHuntService(decompiler, taiEEngine, vulnHuntRules)
-    private val services: List<DecxService> = listOfNotNull(commonService, contextService, androidService, uiService, vulnHuntService)
+    private val taintService = TaintService(decompiler, taiEEngine)
+    private val services: List<DecxService> = listOfNotNull(commonService, contextService, androidService, uiService, taintService)
 
     // ==================== Common Service ====================
 
@@ -172,37 +170,121 @@ class DecxApiImpl(
 
     // ==================== Vuln Hunt Service ====================
 
-    override fun getVulnRules(): DecxApiResult = vulnHuntService.handleGetRules()
+    // ==================== Taint Service ====================
 
-    override fun investigate(ruleId: String): DecxApiResult {
-        val execution = ruleExecutor?.invoke(ruleId)
-            ?: return DecxApiResult.fail(
-                AnalysisResultUtils.error(DecxKind.INVESTIGATE, mapOf("rule_id" to ruleId), DecxError.RESOURCE_NOT_FOUND,
-                    "Rule '$ruleId' not found. Call get_vuln_rules to list available rules.")
+    override fun getTaintRules(): DecxApiResult = taintService.handleGetRules()
+
+    override fun investigate(ruleId: String, params: Map<String, String>): DecxApiResult =
+        taintService.handleInvestigate(ruleId, params)
+
+    override fun investigateCustom(ruleYaml: String, params: Map<String, String>): DecxApiResult =
+        taintService.handleInvestigateCustom(ruleYaml, params)
+
+    override fun getPointsTo(mth: String, variable: String): DecxApiResult {
+        val query = mapOf("method" to mth, "variable" to variable)
+        val engine = taintService.getEngine()
+        if (engine == null || !engine.isAnalysisReady) {
+            return DecxApiResult.fail(
+                AnalysisResultUtils.error(DecxKind.POINTS_TO, query, DecxError.SERVICE_ERROR,
+                    if (engine == null) "TaiEEngine not available"
+                    else "TaiEEngine pointer analysis not ready")
             )
-        return vulnHuntService.handleInvestigate(execution)
+        }
+        val pts = engine.pointsTo(mth, variable)
+        val items = pts.mapIndexed { i, desc ->
+            AnalysisResultUtils.item(
+                id = "$mth#$variable#$i", kind = ItemKind.EVIDENCE,
+                title = "Allocation: $desc", content = desc,
+                meta = linkedMapOf("method" to mth, "variable" to variable, "source" to "taie")
+            )
+        }
+        return DecxApiResult.ok(AnalysisResultUtils.success(DecxKind.POINTS_TO, query, items))
     }
 
-    override fun getPointsTo(mth: String, variable: String): DecxApiResult =
-        vulnHuntService.handlePointsTo(mth, variable)
+    override fun getTaieDynamicReceivers(): DecxApiResult {
+        val query = emptyMap<String, Any>()
+        val engine = taintService.getEngine()
+        if (engine == null || !engine.isReady) {
+            return DecxApiResult.fail(
+                AnalysisResultUtils.error(DecxKind.DYNAMIC_RECEIVERS_TAIE, query, DecxError.SERVICE_ERROR,
+                    "TaiEEngine not available or not ready")
+            )
+        }
+        val receivers = engine.dynamicReceivers()
+        val items = receivers.mapIndexed { i, recv ->
+            AnalysisResultUtils.item(
+                id = "dynamic-receiver-$i", kind = ItemKind.EVIDENCE,
+                title = "Dynamic receiver: ${recv.receiverClass}",
+                content = "${recv.receiverClass} registered in ${recv.registerMethod}",
+                meta = linkedMapOf(
+                    "register_method" to recv.registerMethod,
+                    "receiver_class" to recv.receiverClass,
+                    "action_filters" to recv.actionFilters, "source" to "taie"
+                )
+            )
+        }
+        return DecxApiResult.ok(AnalysisResultUtils.success(DecxKind.DYNAMIC_RECEIVERS_TAIE, query, items))
+    }
 
-    override fun getTaieDynamicReceivers(): DecxApiResult =
-        vulnHuntService.handleGetDynamicReceivers()
+    override fun getIccTargets(component: String): DecxApiResult {
+        val query = mapOf("component" to component)
+        val engine = taintService.getEngine()
+        if (engine == null || !engine.isReady) {
+            return DecxApiResult.fail(
+                AnalysisResultUtils.error(DecxKind.ICC_TARGETS, query, DecxError.SERVICE_ERROR,
+                    "TaiEEngine not available or not ready")
+            )
+        }
+        val targets = engine.iccTargets(component)
+        val items = targets.mapIndexed { i, tgt ->
+            AnalysisResultUtils.item(
+                id = "icc-target-$i", kind = ItemKind.EVIDENCE,
+                title = "ICC: ${tgt.sourceComponent} -> ${tgt.targetComponent.ifEmpty { "?" }}",
+                content = "${tgt.intentCall} from ${tgt.sourceComponent}",
+                meta = linkedMapOf(
+                    "source_component" to tgt.sourceComponent,
+                    "intent_call" to tgt.intentCall,
+                    "target_component" to tgt.targetComponent,
+                    "is_explicit" to tgt.isExplicit, "source" to "taie"
+                )
+            )
+        }
+        return DecxApiResult.ok(AnalysisResultUtils.success(DecxKind.ICC_TARGETS, query, items))
+    }
 
-    override fun getIccTargets(component: String): DecxApiResult =
-        vulnHuntService.handleGetIccTargets(component)
-
-    override fun getCallbacks(component: String): DecxApiResult =
-        vulnHuntService.handleGetCallbacks(component)
+    override fun getCallbacks(component: String): DecxApiResult {
+        val query = mapOf("component" to component)
+        val engine = taintService.getEngine()
+        if (engine == null || !engine.isReady) {
+            return DecxApiResult.fail(
+                AnalysisResultUtils.error(DecxKind.CALLBACKS, query, DecxError.SERVICE_ERROR,
+                    "TaiEEngine not available or not ready")
+            )
+        }
+        val callbacks = engine.registeredCallbacks(component)
+        val items = callbacks.mapIndexed { i, cb ->
+            AnalysisResultUtils.item(
+                id = "callback-$i", kind = ItemKind.EVIDENCE,
+                title = "Callback: ${cb.callbackMethod}",
+                content = "${cb.hostClass} registers ${cb.callbackMethod} (${cb.interfaceType})",
+                meta = linkedMapOf(
+                    "host_class" to cb.hostClass,
+                    "callback_method" to cb.callbackMethod,
+                    "interface_type" to cb.interfaceType, "source" to "taie"
+                )
+            )
+        }
+        return DecxApiResult.ok(AnalysisResultUtils.success(DecxKind.CALLBACKS, query, items))
+    }
 
     override fun getCallGraph(mth: String, direction: String): DecxApiResult {
         val query = mapOf("method" to mth, "direction" to direction)
-        val engine = vulnHuntService.getEngine()
+        val engine = taintService.getEngine()
         if (engine == null || !engine.isReady) {
             return DecxApiResult.fail(
                 AnalysisResultUtils.error(DecxKind.CALL_GRAPH, query, DecxError.SERVICE_ERROR,
-                    if (engine == null) "Tai-e engine not available"
-                    else "Tai-e engine not ready")
+                    if (engine == null) "TaiEEngine not available"
+                    else "TaiEEngine not ready")
             )
         }
         val items = mutableListOf<Map<String, Any>>()

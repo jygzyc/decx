@@ -1,18 +1,19 @@
-# Investigation rule: Dynamic Receiver Abuse
-# Collects evidence for dynamically-registered broadcast receivers that may
-# receive sensitive data or trigger dangerous actions. The engine lists all
-# registerReceiver call sites with their action filters and receiver classes;
-# the AI determines if any receiver is exported, processes sensitive intents,
-# or can be triggered by malicious apps.
+# Dynamic Receiver Abuse: sensitive data sent via dynamic broadcast
 id: dynamic_receiver_abuse
-description: "Collect evidence for dynamic broadcast receiver abuse"
-category: dynamic_receiver
-
-targets: []
-
-collect: []
-
-context:
-  - kind: dynamic_receivers
-  - kind: callbacks
-    component: all
+name: "Dynamic Receiver Data Leak"
+description: "Detect sensitive data (e.g. IMEI, serial) sent through dynamically registered broadcast receivers"
+severity: medium
+category: data_leak
+trace_depth: 12
+source:
+  - kind: return
+    method: "<android.telephony.TelephonyManager: java.lang.String getDeviceId()>"
+  - kind: return
+    method: "<android.os.Build: java.lang.String getSerial()>"
+  - kind: field
+    method: "<android.os.Build: java.lang.String SERIAL>"
+sink:
+  - method: "<android.content.Context: void sendBroadcast(android.content.Intent)>"
+    taint_check: ["p0"]
+  - method: "<android.content.Context: void sendBroadcast(android.content.Intent,java.lang.String)>"
+    taint_check: ["p0"]

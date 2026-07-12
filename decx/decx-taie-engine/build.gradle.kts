@@ -1,24 +1,18 @@
 plugins {
     alias(libs.plugins.kotlin.jvm)
     alias(libs.plugins.shadow)
+    `maven-publish`
 }
 
 dependencies {
-    implementation(project(":decx-core"))
-    implementation(libs.jadx.core) {
-        isChanging = false
-    }
-    implementation(libs.jadx.cli) {
-        isChanging = false
-    }
-    implementation(libs.kotlin.reflect)
+    // Tai-e static analysis framework — the sole consumer of this dependency.
+    implementation(libs.tai.e)
+    // YAML rule parsing (AppShark-style source/sink/sanitizer rules)
+    implementation(libs.jackson.dataformat.yaml)
+    // JSON-RPC protocol serialization
     implementation(libs.gson)
     implementation(libs.slf4j.api)
     implementation(libs.logback.classic)
-
-    testImplementation(libs.junit.jupiter)
-    testImplementation(libs.assertj.core)
-    testRuntimeOnly(libs.junit.platform.launcher)
 }
 
 tasks {
@@ -27,13 +21,15 @@ tasks {
     }
 
     named<com.github.jengelman.gradle.plugins.shadow.tasks.ShadowJar>("shadowJar") {
-        archiveBaseName = "decx-server"
+        archiveBaseName = "decx-taie-engine"
         archiveClassifier = ""
         archiveVersion = project.version.toString()
+        // Relocate ASM to avoid conflicts if this jar is ever loaded alongside JADX
+        relocate("org.objectweb.asm", "decx.taie.asm")
         mergeServiceFiles()
         manifest {
             attributes(
-                "Main-Class" to "jadx.plugins.decx.server.DecxServerApp",
+                "Main-Class" to "decx.taie.TaiEEngineMain",
                 "Implementation-Version" to project.version.toString()
             )
         }

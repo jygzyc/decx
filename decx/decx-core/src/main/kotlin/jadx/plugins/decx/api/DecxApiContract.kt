@@ -123,9 +123,12 @@ object DecxRoutes {
     val vuln = DecxRouteGroup(
         name = "vuln",
         routes = listOf(
-            DecxRoute("/api/decx/get_vuln_rules", DecxKind.VULN_RULES) { api, _ -> api.getVulnRules() },
+            DecxRoute("/api/decx/get_taint_rules", DecxKind.VULN_RULES) { api, _ -> api.getTaintRules() },
             DecxRoute("/api/decx/investigate", DecxKind.INVESTIGATE) { api, params ->
-                api.investigate(params.string("rule_id"))
+                api.investigate(params.string("rule_id"), params.stringMap("params"))
+            },
+            DecxRoute("/api/decx/investigate_custom", DecxKind.INVESTIGATE) { api, params ->
+                api.investigateCustom(params.string("rule_yaml"), params.stringMap("params"))
             },
             DecxRoute("/api/decx/get_points_to", DecxKind.POINTS_TO) { api, params ->
                 api.getPointsTo(params.string("mth"), params.string("var"))

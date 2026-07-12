@@ -1,26 +1,14 @@
-# Investigation rule: Intent Redirection
-# Collects evidence for potential intent redirection vulnerabilities.
-# The engine gathers callers, variable flow, and ICC targets;
-# the AI determines if a real vulnerability exists.
+# Intent Redirection: Parcelable extra flows to startActivity
 id: intent_redirection
-description: "Collect evidence for potential intent redirection via Parcelable extras"
+name: "Intent Redirection"
+description: "Detect intent redirection via Parcelable extras passed to startActivity"
+severity: high
 category: intent_redirection
-target_sdk: "26:34"
-
-targets:
-  - kind: method
-    signature: "<android.os.BaseBundle: android.os.Parcelable getParcelable(java.lang.String)>"
-
-collect:
-  - kind: callers
-    include_callees: false
-  - kind: variable_flow
-    variable: return
-    depth: 10
-  - kind: icc_targets
-    from_callers_of: "<android.app.Activity: void startActivity(android.content.Intent)>"
-
-context:
-  - kind: dynamic_receivers
-  - kind: callbacks
-    component: exported
+trace_depth: 10
+source:
+  - kind: return
+    method: "<android.os.BaseBundle: android.os.Parcelable getParcelable(java.lang.String)>"
+sink:
+  - method: "<android.app.Activity: void startActivity(android.content.Intent)>"
+    taint_check: ["p0"]
+    param_type: ["android.content.Intent"]

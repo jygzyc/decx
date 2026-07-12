@@ -3,137 +3,110 @@ package jadx.plugins.decx.service
 /**
  * Contract between DECX core and the Tai-e static analysis engine.
  *
- * This interface lives in decx-core and has zero Tai-e imports, so that
- * decx-core (and the JADX GUI plugin) can reference it without pulling in
- * the Tai-e dependency. The concrete implementation [TaiEEngine] lives in
- * decx-server, which has Tai-e on its classpath.
+ * This interface lives in decx-core and has zero Tai-e imports. The concrete
+ * implementation [jadx.plugins.decx.taie.TaiEEngineClient] lives in decx-core
+ * as an IPC client that talks to the TaiEEngine process (decx-taie-engine module).
  *
- * The engine serves as an "evidence collector" — it queries structural
- * program facts (call graph, class hierarchy, points-to, Android modeling)
- * and returns them as DECX-signature-keyed data. It does NOT make vulnerability
- * judgments; that is left to the AI consuming the evidence via DECX endpoints.
+ * The engine serves three core APIs for taint analysis:
+ * 1. [getRules] — query available preset rules
+ * 2. [investigate] — execute a preset rule by ID (with optional parameters)
+ * 3. [investigateCustom] — execute an AI-provided inline rule
  *
- * Two readiness tiers:
- * - [isReady] (Tier 1): CallGraph + ClassHierarchy are available. Fast (seconds).
- *   Powers xref replacement (callersOf, calleesOf, subclasses, implementors).
- * - [isAnalysisReady] (Tier 2): Pointer analysis is complete. Slow (minutes).
- *   Powers variable tracking (pointsTo, variable flow) and taint evidence.
+ * Additionally, it provides CG/xref queries (callersOf, calleesOf, etc.)
+ * that replace JADX's single-level useIn with dispatch-resolved call graph.
  *
- * When the engine is null (GUI plugin mode) or not yet ready, all DECX
- * endpoints fall back to the existing JADX-based logic.
+ * When the engine is null (disabled) or not yet ready, DECX endpoints
+ * fall back to the existing JADX-based logic.
  */
 interface ITaiEEngine {
 
-    /** Tier 1 readiness: CallGraph and ClassHierarchy are available. */
+    /** Tier 1 readiness: engine process is alive and accepting requests. */
     val isReady: Boolean
 
     /** Tier 2 readiness: pointer analysis is complete. */
     val isAnalysisReady: Boolean
 
     // ------------------------------------------------------------------
-    // Tier 1: Call Graph + Class Hierarchy (replaces JADX xref)
+    // CG / xref queries (replace JADX useIn)
     // ------------------------------------------------------------------
 
-    /**
-     * Returns all methods that call [methodSig] (i.e., callers of the method).
-     * Replaces JADX's `JavaMethod.useIn` single-level reverse lookup.
-     *
-     * @param methodSig DECX canonical method signature, e.g.
-     *   `com.example.Foo.bar(int,java.lang.String):boolean`
-     */
     fun callersOf(methodSig: String): List<CallEdge>
-
-    /**
-     * Returns all methods called by [methodSig] (i.e., callees of the method),
-     * with virtual dispatch resolved to concrete implementations.
-     * Replaces JADX's `MethodNode.instructions` intra-method scan.
-     */
     fun calleesOf(methodSig: String): List<CallEdge>
-
-    /**
-     * Returns all subclasses of [classSig].
-     * @param transitive if true, includes transitive descendants;
-     *   if false, only direct subclasses.
-     * Replaces the smali `.super` text scan.
-     */
     fun subclassesOf(classSig: String, transitive: Boolean): List<String>
-
-    /**
-     * Returns all classes that implement [ifaceSig].
-     * @param transitive if true, includes transitive implementors;
-     *   if false, only direct implementors.
-     * Replaces the smali `.implement` text scan.
-     */
     fun implementorsOf(ifaceSig: String, transitive: Boolean): List<String>
 
-    /**
-     * Returns all methods reachable from the entry points in the call graph.
-     * Useful for dead-code elimination and reachability filtering.
-     */
-    fun reachableMethods(): List<String>
-
     // ------------------------------------------------------------------
-    // Tier 2: Pointer Analysis (variable tracking / evidence collection)
+    // Three core taint analysis interfaces
     // ------------------------------------------------------------------
 
     /**
-     * Returns the allocation sites (as DECX signatures or type names) that
-     * the given variable can point to.
-     *
-     * @param methodSig the method containing the variable
-     * @param varName variable identifier: "return", "this", "p0", "p1", etc.
-     * @return list of allocation-site descriptions (e.g. "new com.example.Foo" or
-     *   the allocating method signature). Empty if PTA is not ready or the
-     *   variable has no points-to information.
+     * Interface 1: Query rules.
+     * Returns preset rules loaded from ~/.decx/rules/ at engine startup.
      */
+    fun getRules(): List<RuleSummary>
+
+    /**
+     * Interface 2: Execute a preset rule by ID.
+     * @param ruleId the rule ID from [getRules]
+     * @param params parameter values to substitute into the rule's {{param}} placeholders
+     * @return source→sink taint paths
+     */
+    fun investigate(ruleId: String, params: Map<String, String> = emptyMap()): List<TaintPath>
+
+    /**
+     * Interface 3: Execute a custom inline rule.
+     * @param ruleYaml full rule definition in YAML (source/sink/sanitizer/trace_depth)
+     * @param params parameter values to substitute into {{param}} placeholders
+     * @return source→sink taint paths
+     */
+    fun investigateCustom(ruleYaml: String, params: Map<String, String> = emptyMap()): List<TaintPath>
+
+    // ------------------------------------------------------------------
+    // Variable tracking (pointer analysis)
+    // ------------------------------------------------------------------
+
     fun pointsTo(methodSig: String, varName: String): List<String>
 
     // ------------------------------------------------------------------
-    // Android vulnerability modeling (evidence collection)
+    // Android vulnerability modeling
     // ------------------------------------------------------------------
 
-    /**
-     * Returns dynamically-registered broadcast receivers discovered by static
-     * analysis (Tai-e's DynamicReceiverModel). Each entry records the method
-     * that called `registerReceiver`, the receiver class, and action filters.
-     *
-     * Only available in Android (APK) mode. Returns empty list for Java JARs.
-     */
     fun dynamicReceivers(): List<DynamicReceiverInfo>
-
-    /**
-     * Returns ICC (inter-component communication) targets resolved from
-     * `startActivity` / `sendBroadcast` / `startService` calls.
-     *
-     * @param componentSig the source component class signature, or empty string
-     *   to get all ICC targets in the app.
-     * Only available in Android (APK) mode.
-     */
     fun iccTargets(componentSig: String): List<IccTarget>
-
-    /**
-     * Returns callback methods registered by the given component (e.g.
-     * `OnClickListener.onClick` registered via `setOnClickListener`).
-     *
-     * @param componentSig the component class signature, or empty string
-     *   to get all registered callbacks.
-     * Only available in Android (APK) mode.
-     */
     fun registeredCallbacks(componentSig: String): List<CallbackInfo>
 
     // ------------------------------------------------------------------
-    // Evidence data classes (pure Kotlin, no Tai-e types)
+    // Evidence data classes
     // ------------------------------------------------------------------
 
-    /**
-     * A directed call-graph edge.
-     *
-     * @param from caller method signature (DECX format)
-     * @param to callee method signature (DECX format)
-     * @param invokeType the invoke kind: "virtual", "static", "interface",
-     *   "special", "other"
-     * @param line source line number of the call site, or null if unknown
-     */
+    data class RuleSummary(
+        val id: String,
+        val name: String,
+        val description: String,
+        val parameters: List<RuleParameter>? = null
+    )
+
+    data class RuleParameter(
+        val name: String,
+        val type: String,
+        val description: String,
+        val required: Boolean,
+        val defaultValue: String? = null
+    )
+
+    data class TaintPath(
+        val ruleId: String,
+        val source: String,
+        val sink: String,
+        val steps: List<TaintStep>
+    )
+
+    data class TaintStep(
+        val method: String,
+        val line: Int,
+        val desc: String
+    )
+
     data class CallEdge(
         val from: String,
         val to: String,
@@ -141,30 +114,12 @@ interface ITaiEEngine {
         val line: Int?
     )
 
-    /**
-     * A dynamically-registered broadcast receiver.
-     *
-     * @param registerMethod the method that called `registerReceiver` (DECX sig)
-     * @param receiverClass the receiver class name
-     * @param actionFilters Intent action filter strings registered
-     */
     data class DynamicReceiverInfo(
         val registerMethod: String,
         val receiverClass: String,
         val actionFilters: List<String>
     )
 
-    /**
-     * An inter-component communication target.
-     *
-     * @param sourceComponent the component initiating the ICC (class name)
-     * @param intentCall the method call that triggers ICC (DECX sig, e.g.
-     *   `android.app.Activity.startActivity(android.content.Intent):void`)
-     * @param targetComponent the resolved target component class name, or
-     *   empty string if unresolved (implicit intent with no match)
-     * @param isExplicit true if the intent was explicit (named target),
-     *   false if implicit (action-based)
-     */
     data class IccTarget(
         val sourceComponent: String,
         val intentCall: String,
@@ -172,14 +127,6 @@ interface ITaiEEngine {
         val isExplicit: Boolean
     )
 
-    /**
-     * A registered callback method.
-     *
-     * @param hostClass the class that registered the callback
-     * @param callbackMethod the callback method (DECX sig)
-     * @param interfaceType the listener interface type (e.g.
-     *   `android.view.View$OnClickListener`)
-     */
     data class CallbackInfo(
         val hostClass: String,
         val callbackMethod: String,

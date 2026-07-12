@@ -12,6 +12,19 @@ class DecxRequestParams(private val payload: Map<String, Any>) {
         return payload.boolean(name) ?: throw IllegalArgumentException("Missing required parameter: $name")
     }
 
+    /**
+     * Extracts a string map parameter (e.g. rule params).
+     * Returns empty map if the parameter is absent.
+     */
+    @Suppress("UNCHECKED_CAST")
+    fun stringMap(name: String): Map<String, String> {
+        val raw = payload[name] ?: return emptyMap()
+        return when (raw) {
+            is Map<*, *> -> raw.entries.associate { it.key.toString() to it.value.toString() }
+            else -> emptyMap()
+        }
+    }
+
     fun filter(): DecxFilter {
         return DecxFilter.from(payload.obj("filter"))
     }

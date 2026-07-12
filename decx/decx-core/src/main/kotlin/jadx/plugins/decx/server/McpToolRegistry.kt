@@ -252,26 +252,35 @@ object McpToolRegistry {
     private val methodSigProp = prop("string", "Exact DECX method signature, e.g. com.example.Foo.bar(int,java.lang.String):boolean")
     private val componentNameProp = prop("string", "Fully-qualified component class name, or empty string for all components.")
     private val variableProp = prop("string", "Variable identifier: 'return', 'this', 'p0', 'p1', etc.")
-    private val ruleIdProp = prop("string", "Investigation rule ID (from get_vuln_rules).")
+    private val ruleIdProp = prop("string", "Taint rule ID (from get_taint_rules).")
+    private val ruleYamlProp = prop("string", "Full rule definition in YAML format (source/sink/sanitizer/trace_depth).")
     private val directionProp = prop("string", "Call graph direction: 'callers', 'callees', or 'both' (default).")
 
     private fun vulnTools(): List<McpTool> = listOf(
         noArgRoute(
-            "get_vuln_rules",
-            "List available investigation rules loaded from ~/.decx/rules/. Each rule declares what evidence to collect (callers, variable flow, ICC targets, etc.) for a vulnerability category. Use investigate to execute a rule.",
-            "/api/decx/get_vuln_rules"
+            "get_taint_rules",
+            "List available preset taint rules loaded from ~/.decx/rules/. Each rule has an id, name, description, and optional parameters. Use investigate to execute a rule by ID.",
+            "/api/decx/get_taint_rules"
         ),
         routeTool(
             name = "investigate",
-            description = "Execute an investigation rule by ID. Collects structured evidence (callers, callees, variable flow, ICC targets, dynamic receivers, callbacks) according to the rule's directives. Returns evidence items for AI vulnerability reasoning. The engine does NOT judge vulnerabilities — it collects evidence.",
+            description = "Execute a preset taint rule by ID. Runs source-to-sink taint analysis and returns paths. Optionally pass params to substitute {{param}} placeholders in the rule.",
             routePath = "/api/decx/investigate",
             properties = mapOf("rule_id" to ruleIdProp, "page" to pageProp),
             required = listOf("rule_id"),
             toPayload = { args -> linkedMapOf("rule_id" to methodArg(args), "page" to pageArg(args)) }
         ),
         routeTool(
+            name = "investigate_custom",
+            description = "Execute a custom taint rule provided as inline YAML. Allows AI to dynamically construct source/sink rules for custom analysis. Format: id, source (kind+method), sink (method+taint_check), sanitizer, trace_depth. Returns source-to-sink paths.",
+            routePath = "/api/decx/investigate_custom",
+            properties = mapOf("rule_yaml" to ruleYamlProp, "page" to pageProp),
+            required = listOf("rule_yaml"),
+            toPayload = { args -> linkedMapOf("rule_yaml" to (args["rule_yaml"] ?: ""), "page" to pageArg(args)) }
+        ),
+        routeTool(
             name = "get_points_to",
-            description = "Query the points-to set of a variable in a method. Returns allocation sites (where the object was created) that the variable can point to. Requires Tai-e pointer analysis to be ready (server started with --tai-e).",
+            description = "Query the points-to set of a variable in a method. Returns allocation sites that the variable can point to. Requires TaiEEngine pointer analysis to be ready.",
             routePath = "/api/decx/get_points_to",
             properties = mapOf("mth" to methodSigProp, "var" to variableProp, "page" to pageProp),
             required = listOf("mth", "var"),
@@ -279,26 +288,26 @@ object McpToolRegistry {
         ),
         noArgRoute(
             "get_taie_dynamic_receivers",
-            "List dynamically-registered broadcast receivers discovered by Tai-e static analysis. Each entry shows the registerReceiver call site, receiver class, and action filters. Android APK mode only.",
+            "List dynamically-registered broadcast receivers discovered by TaiEEngine static analysis. Android APK mode only.",
             "/api/decx/get_taie_dynamic_receivers"
         ),
         routeTool(
             name = "get_icc_targets",
-            description = "List inter-component communication (ICC) targets resolved by Tai-e. Shows which components are targeted by startActivity, sendBroadcast, startService calls, including implicit intent resolution. Android APK mode only.",
+            description = "List inter-component communication (ICC) targets resolved by TaiEEngine. Android APK mode only.",
             routePath = "/api/decx/get_icc_targets",
             properties = mapOf("component" to componentNameProp, "page" to pageProp),
             toPayload = { args -> linkedMapOf("component" to (args["component"] ?: ""), "page" to pageArg(args)) }
         ),
         routeTool(
             name = "get_callbacks",
-            description = "List registered callback methods (e.g. OnClickListener.onClick) discovered by Tai-e static analysis. Shows the host class, callback method, and listener interface type. Android APK mode only.",
+            description = "List registered callback methods discovered by TaiEEngine static analysis. Android APK mode only.",
             routePath = "/api/decx/get_callbacks",
             properties = mapOf("component" to componentNameProp, "page" to pageProp),
             toPayload = { args -> linkedMapOf("component" to (args["component"] ?: ""), "page" to pageArg(args)) }
         ),
         routeTool(
             name = "get_call_graph",
-            description = "Query the Tai-e call graph for a method's neighbors. Returns callers (who calls this method) and/or callees (what this method calls), with virtual dispatch resolved to concrete implementations. More accurate than JADX's single-level useIn.",
+            description = "Query the TaiEEngine call graph for a method's neighbors. Returns callers and/or callees with virtual dispatch resolved. More accurate than JADX's single-level useIn.",
             routePath = "/api/decx/get_call_graph",
             properties = mapOf("mth" to methodSigProp, "direction" to directionProp, "page" to pageProp),
             required = listOf("mth"),
