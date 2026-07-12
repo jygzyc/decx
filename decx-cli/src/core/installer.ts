@@ -211,3 +211,125 @@ export async function installDecxServer(
     return { ok: false, message: `Installation failed: ${err}` };
   }
 }
+
+// ---------------------------------------------------------------------------
+// Rules installation (investigation rule YAML files)
+// ---------------------------------------------------------------------------
+
+const RULES_DIR = decxPath("rules");
+const DECX_RULES_HOME: string | undefined = process.env.DECX_RULES_HOME;
+
+export type InstallDecxRulesResult =
+  | { ok: true; message: string; dir: string }
+  | { ok: false; message: string };
+
+/**
+ * Find the investigation rules directory.
+ * Priority: DECX_RULES_HOME env > ~/.decx/rules/
+ */
+export function findDecxRulesDir(): string | null {
+  if (DECX_RULES_HOME) {
+    if (existsSync(DECX_RULES_HOME)) return DECX_RULES_HOME;
+  }
+  if (existsSync(RULES_DIR)) return RULES_DIR;
+  return null;
+}
+
+export function selectRulesAsset(assets: ReleaseAsset[]): ReleaseAsset | undefined {
+  return assets.find((asset) => asset.name.includes("rules") && asset.name.endsWith(".tar.gz"));
+}
+
+/**
+ * Download and extract the investigation rules tarball from a GitHub release.
+ * Rules are extracted to ~/.decx/rules/ (or DECX_RULES_HOME).
+ */
+export async function installDecxRules(
+  prerelease: boolean = false,
+  options: InstallDecxServerOptions = {}
+): Promise<InstallDecxRulesResult> {
+  const {
+    fetchImpl = DEFAULT_FETCH,
+    downloadWithProgressImpl = downloadWithProgress,
+    logger = console,
+  } = options;
+
+  const rulesDir = DECX_RULES_HOME || RULES_DIR;
+
+  try {
+    logger.error(`  Fetching latest ${prerelease ? "prerelease" : "release"} info for rules...`);
+
+    const endpoint = prerelease
+      ? "https://api.github.com/repos/jygzyc/decx/releases?per_page=10"
+      : "https://api.github.com/repos/jygzyc/decx/releases/latest";
+
+    const res = await fetchImpl(endpoint, {
+      headers: { "Accept": "application/vnd.github+json" },
+    });
+    if (!res.ok) {
+      return { ok: false, message: `GitHub API error: HTTP ${res.status}` };
+    }
+
+    let release: ReleaseSummary;
+    if (prerelease) {
+      const releases = await res.json() as Array<ReleaseSummary & { prerelease: boolean }>;
+      const pre = releases.find((r) => r.prerelease);
+      if (!pre) return { ok: false, message: "No prerelease found" };
+      release = pre;
+    } else {
+      release = await res.json() as ReleaseSummary;
+    }
+
+    const asset = selectRulesAsset(release.assets);
+    if (!asset) {
+      return { ok: false, message: `No rules tarball found in release ${release.tag_name}` };
+    }
+
+    mkdirSync(rulesDir, { recursive: true });
+
+    const tmpPath = path.join(rulesDir, ".rules.tmp.tar.gz");
+    const downloadRes = await fetchImpl(asset.browser_download_url, { redirect: "follow" });
+    if (!downloadRes.ok || !downloadRes.body) {
+      return { ok: false, message: `Download failed: HTTP ${downloadRes.status}` };
+    }
+
+    const totalSize = Number(downloadRes.headers.get("content-length") || 0);
+    await downloadWithProgressImpl(downloadRes.body, tmpPath, totalSize, {
+      label: asset.name,
+    });
+
+    // Extract the tarball to a temp dir, then atomically replace the rules dir
+    const { execFileSync } = await import("child_process");
+    const extractTmp = path.join(rulesDir, ".tmp-extract");
+    try {
+      execFileSync("tar", ["-xzf", tmpPath, "-C", extractTmp], { stdio: "pipe" });
+    } catch {
+      // Fallback: try extracting directly into rulesDir
+      mkdirSync(extractTmp, { recursive: true });
+      try {
+        execFileSync("tar", ["-xzf", tmpPath, "-C", extractTmp], { stdio: "pipe" });
+      } catch (err) {
+        return { ok: false, message: `Failed to extract rules: ${err}` };
+      }
+    }
+
+    // Move extracted rules/* into rulesDir
+    const extractedRulesDir = path.join(extractTmp, "rules");
+    if (existsSync(extractedRulesDir)) {
+      const { readdirSync, copyFileSync, rmSync } = await import("fs");
+      for (const file of readdirSync(extractedRulesDir)) {
+        copyFileSync(path.join(extractedRulesDir, file), path.join(rulesDir, file));
+      }
+      rmSync(extractTmp, { recursive: true, force: true });
+    }
+
+    try { unlinkSync(tmpPath); } catch { /* ignore */ }
+
+    return {
+      ok: true,
+      message: `Installed investigation rules to ${rulesDir}`,
+      dir: rulesDir,
+    };
+  } catch (err) {
+    return { ok: false, message: `Rules installation failed: ${err}` };
+  }
+}

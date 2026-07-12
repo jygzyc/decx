@@ -56,5 +56,9 @@ tasks.register<Copy>("dist") {
 
     from("${project(":decx-plugin").projectDir}/build/dist")
     from("${project(":decx-server").projectDir}/build/dist")
+    // Include built-in investigation rules in the dist output
+    from("$rootDir/../rules") {
+        into("rules")
+    }
     into(layout.buildDirectory.dir("dist"))
 }

@@ -1,0 +1,18 @@
+# Investigation rule: Dynamic Receiver Abuse
+# Collects evidence for dynamically-registered broadcast receivers that may
+# receive sensitive data or trigger dangerous actions. The engine lists all
+# registerReceiver call sites with their action filters and receiver classes;
+# the AI determines if any receiver is exported, processes sensitive intents,
+# or can be triggered by malicious apps.
+id: dynamic_receiver_abuse
+description: "Collect evidence for dynamic broadcast receiver abuse"
+category: dynamic_receiver
+
+targets: []
+
+collect: []
+
+context:
+  - kind: dynamic_receivers
+  - kind: callbacks
+    component: all

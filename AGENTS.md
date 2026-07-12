@@ -55,8 +55,37 @@ AI Assistant / CLI
   `get_all_resources`, `get_resource_file`, `get_strings`
 - Android framework analysis:
   `get_system_service_impl`
+- Tai-e evidence collection (server-only, requires `--tai-e`):
+  `get_vuln_rules`, `investigate`, `get_points_to`, `get_taie_dynamic_receivers`,
+  `get_icc_targets`, `get_callbacks`, `get_call_graph`
 - Health endpoint:
   `GET /health`
+
+### Tai-e static analysis engine
+
+`decx-server` optionally embeds the [Tai-e](https://github.com/pascal-lab/Tai-e)
+static analysis framework as a background engine for call-graph construction,
+pointer analysis, and Android vulnerability modeling. It is **disabled by
+default** — enable with `--tai-e` on `decx process open`.
+
+When enabled, the engine provides two tiers:
+- **Tier 1 (Call Graph)**: replaces JADX's `useIn` + smali-scan xref with
+  Tai-e's dispatch-resolved whole-program call graph. `get_method_xref`,
+  `get_implement`, `get_sub_classes`, and `get_method_context` return Tai-e
+  results when ready, falling back to JADX otherwise.
+- **Tier 2 (Pointer Analysis + Evidence)**: powers the vuln-hunt endpoints
+  (`get_points_to`, `investigate`, `get_call_graph`, `get_icc_targets`,
+  `get_callbacks`, `get_taie_dynamic_receivers`). These collect structured
+  evidence for AI vulnerability reasoning — the engine does NOT make
+  vulnerability judgments.
+
+Investigation rules (YAML files in `~/.decx/rules/` or `--tai-e-rules <dir>`)
+declare "what evidence to collect" (callers, variable flow, ICC targets,
+dynamic receivers, callbacks). `decx self install` / `decx self update`
+download built-in rules from GitHub releases alongside the server JAR.
+
+The `ITaiEEngine` interface in `decx-core` is the contract between core and
+the Tai-e implementation in `decx-server`. The GUI plugin never loads Tai-e.
 
 ### Plugin responsibilities
 
@@ -96,11 +125,14 @@ Notable details:
 - `decx ard framework` provides framework collection and preprocessing subcommands:
   `collect`, `process`, `pack`, `run`, `open`, `tools`
 - `decx ard` also includes adb-backed inspection commands:
-  `system-services`, `perm-info`
+  `system-services`, `perm-info`, `top-app`, `am-start`
 - Framework processing is implemented in native TypeScript under `decx-cli/src/android/`
 - ADB interaction is centralized in `decx-cli/src/android/adb.ts`
 - `decx ard system-services` returns structured JSON for live Binder/system services and supports `--serial`, `--adb-path`, and `--grep`
 - `decx ard perm-info <permission>` returns one structured JSON object for a permission and supports `--serial` and `--adb-path`
+- `decx ard top-app` returns the current foreground package/activity via `dumpsys activity activities` and supports `--serial` and `--adb-path`
+- `decx ard am-start <pkg-or-component>` launches an app or activity via `am start`; pair a package argument with `--activity <class>` to target a specific activity, and use `--serial`/`--adb-path` for device selection
+- All adb-backed `decx ard` commands resolve the target device with priority `--serial` > `$ANDROID_SERIAL` > the single connected device, and require `--serial` (or `$ANDROID_SERIAL`) when more than one device is attached
 - `get_classes` accepts a `filter` object with `limit`, regex-enabled `includes`/`excludes`, and optional `regex=false`
 - `get_class_source` accepts an optional `filter.limit` to return at most N source lines
 - `get_aidl` and `get_dynamic_receivers` accept the same regex-enabled `filter` object for package filtering
@@ -113,7 +145,7 @@ Notable details:
 ### Skill workflow details
 
 - Skill architecture and authoring rules are defined in `skills/AGENTS.md`.
-- DECX analysis skills share `skills/decx-analysis-core/`, a minimal SQLite Fact/Intent/Hint DAG protocol. Each analysis session gets one `decx-analysis.db` under `.decx-analysis/<session>/`. App hunts initialize with `--kind android_app`; framework hunts initialize with `--kind android_framework`. Facts are accepted evidence, Intents are concrete analysis tasks, and Hints are human-authored guidance. Chains are derived from the Fact→Intent→Fact DAG. Intent execution uses `start --by <generator-id>` with a renewable lease for parallel work. The shared graph CLI is `skills/decx-analysis-core/scripts/decx-graph.mjs`.
+- DECX analysis skills share `skills/decx-analysis-core/`, a minimal SQLite Fact/Intent/Hint DAG protocol (Cairn-minimal blackboard). Each analysis session gets one `decx-analysis.db` under `.decx-analysis/<session>/`. App hunts initialize with `--kind android_app`; framework hunts initialize with `--kind android_framework`. An Intent *is* the graph edge (`from_facts` -> `to_fact`); Facts are the only truth nodes, and Hints are out-of-graph guidance. Chains are Fact→Fact paths formed by concluded Intents. `init` seeds a single `origin` Fact (`f000`); there is no `goal` Fact. Intent execution uses `start --by <generator-id>` with a renewable lease; `fact --from <intent> --by <same-generator>` requires that live claim. Finding kinds require the gate-enforced `promote` command. The shared graph CLI is `skills/decx-analysis-core/scripts/decx-graph.mjs`, and `skills/decx-analysis-core/tests/graph-conformance.mjs` verifies OpenCode/Skill bidirectional compatibility.
 - `skills/decx-report/` (`decx-report`) owns report templates and consumes finalized DECX analysis graph findings; app/framework vuln-hunt skills should not duplicate report templates.
 - `skills/decx-poc/scripts/setup-poc.mjs` copies `skills/decx-poc/assets/poc-template-app/` into `poc-<target>/app/` and `skills/decx-poc/assets/poc-template-server/` into `poc-<target>/server/`
 - The PoC app template keeps a dynamic button registry in `ExploitRegistry` and also accepts browser-driven `poc-<target>://run/trigger?exploit=<id>` launches through `PoCActivity`.

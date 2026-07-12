@@ -63,6 +63,9 @@ export function makeProcessCommand(): Command {
     .option("--mcp", "Also start MCP Streamable HTTP server on port + 1")
     .option("--force", "Start a new server even when a matching file/session already exists")
     .option("-n, --name <name>", "Session name used by -s/--session (default: input filename without extension)")
+    .option("--tai-e", "Enable Tai-e static analysis engine (call graph + pointer analysis + evidence collection)")
+    .option("--tai-e-rules <dir>", "Directory with investigation rule YAML files (default: ~/.decx/rules/)")
+    .option("--tai-e-android-jars <dir>", "Path to Android platform jars directory for Tai-e Android mode")
     .action(async (filePath: string, opts) => {
       const fmt = new Formatter();
       try {

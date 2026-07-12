@@ -9,7 +9,7 @@ import * as path from "path";
 import { fileURLToPath } from "url";
 import { Formatter } from "../utils/formatter.js";
 import { Manager } from "../core/config.js";
-import { checkForServerUpdate, installDecxServer, type InstallDecxServerResult } from "../core/installer.js";
+import { checkForServerUpdate, installDecxServer, installDecxRules, type InstallDecxServerResult, type InstallDecxRulesResult } from "../core/installer.js";
 import { DecxError, ServerError, withErrorHandler } from "../utils/errors.js";
 import { VERSION } from "../core/version.js";
 
@@ -149,10 +149,12 @@ export async function executeSelfInstall(
   prerelease: boolean,
   deps: {
     installDecxServerFn?: (prerelease?: boolean) => Promise<InstallDecxServerResult>;
+    installDecxRulesFn?: (prerelease?: boolean) => Promise<InstallDecxRulesResult>;
     manager?: ServerVersionManager;
   } = {}
 ): Promise<{ ok: true; version: string; path: string; message: string }> {
   const installDecxServerFn = deps.installDecxServerFn ?? installDecxServer;
+  const installDecxRulesFn = deps.installDecxRulesFn ?? installDecxRules;
   const manager = deps.manager ?? Manager.get();
   const result = await installDecxServerFn(prerelease);
 
@@ -161,6 +163,17 @@ export async function executeSelfInstall(
   }
 
   manager.updateServerVersion(result.version);
+
+  // Also install investigation rules (best-effort — don't fail if rules unavailable)
+  try {
+    const rulesResult = await installDecxRulesFn(prerelease);
+    if (!rulesResult.ok) {
+      // Non-fatal: rules may not exist in older releases
+    }
+  } catch {
+    // Non-fatal: rules installation is best-effort
+  }
+
   return {
     ok: true,
     version: result.version,
@@ -209,6 +222,19 @@ export function makeSelfCommand(): Command {
         }
       } else {
         console.error("  Server already up to date");
+      }
+
+      // Update investigation rules (best-effort)
+      console.error("  Updating investigation rules...");
+      try {
+        const rulesResult = await installDecxRules(opts.prerelease);
+        if (rulesResult.ok) {
+          console.error(`  ${rulesResult.message}`);
+        } else {
+          console.error(`  Rules update skipped: ${rulesResult.message}`);
+        }
+      } catch (err) {
+        console.error(`  Rules update failed: ${err}`);
       }
 
       // Update CLI
