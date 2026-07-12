@@ -10,6 +10,7 @@ import jadx.plugins.decx.server.DecxServer
 import jadx.plugins.decx.server.DecxMcpServer
 import jadx.plugins.decx.server.McpTool
 import jadx.plugins.decx.server.McpToolRegistry
+import jadx.plugins.decx.service.ITaiEEngine
 import jadx.plugins.decx.service.UiBackedService
 
 /**
@@ -22,8 +23,9 @@ object Decx {
     fun api(
         decompiler: JadxDecompiler,
         cacheEnabled: Boolean = true,
-        uiService: UiBackedService? = null
-    ): DecxApi = DecxApiImpl(decompiler, cacheEnabled, uiService)
+        uiService: UiBackedService? = null,
+        taiEEngine: ITaiEEngine? = null
+    ): DecxApi = DecxApiImpl(decompiler, cacheEnabled, uiService, taiEEngine)
 
     fun httpServer(api: DecxApi, port: Int = DecxConstants.DEFAULT_PORT): DecxServer =
         DecxServer(api, port)

@@ -5,6 +5,7 @@ import jadx.plugins.decx.service.AndroidService
 import jadx.plugins.decx.service.ContextService
 import jadx.plugins.decx.service.CommonService
 import jadx.plugins.decx.service.DecxService
+import jadx.plugins.decx.service.ITaiEEngine
 import jadx.plugins.decx.service.UiBackedService
 import jadx.plugins.decx.utils.AnalysisResultUtils
 import jadx.plugins.decx.utils.CacheUtils
@@ -16,11 +17,12 @@ import jadx.plugins.decx.utils.CacheUtils
 class DecxApiImpl(
     decompiler: JadxDecompiler,
     private val cacheEnabled: Boolean = true,
-    uiService: UiBackedService? = null
+    uiService: UiBackedService? = null,
+    taiEEngine: ITaiEEngine? = null
 ) : DecxApi {
 
     private val commonService = CommonService(decompiler)
-    private val contextService = ContextService(decompiler)
+    private val contextService = ContextService(decompiler, taiEEngine)
     private val androidService = AndroidService(decompiler)
     private val services: List<DecxService> = listOfNotNull(commonService, contextService, androidService, uiService)
 

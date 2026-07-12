@@ -4,6 +4,7 @@ import jadx.api.JadxDecompiler
 import jadx.cli.JadxCLIArgs
 import jadx.plugins.decx.Decx
 import jadx.plugins.decx.DecxConstants
+import jadx.plugins.decx.server.taie.TaiEEngine
 import jadx.plugins.decx.utils.PluginUtils
 import jadx.plugins.decx.utils.WarmupUtils
 
@@ -93,7 +94,29 @@ object DecxServerApp {
 		val warmupElapsed = WarmupUtils.warmup(toWarmup, logProgress = { message -> println("[*] $message") })
 		println("[+] Warmup completed in ${warmupElapsed}ms")
 
-		val api = Decx.api(decompiler)
+		// Tai-e static analysis engine (optional, server-only).
+		// Initializes in the background; DECX endpoints use it when ready,
+		// and fall back to JADX-only xref when null or not yet ready.
+		val taiEEngine = if (options.taiEEnabled) {
+			println("[*] Initializing Tai-e analysis engine...")
+			try {
+				val engine = TaiEEngine.fromDecompiler(
+					inputFile = inputFile,
+					decompiler = decompiler,
+					androidJarsDir = options.taiEAndroidJars
+				)
+				engine.startAsync()
+				println("[+] Tai-e engine initializing in background (xref will upgrade when ready)")
+				engine
+			} catch (e: Throwable) {
+				println("[!] Tai-e init failed, falling back to JADX-only xref: ${e.message}")
+				null
+			}
+		} else {
+			null
+		}
+
+		val api = Decx.api(decompiler, taiEEngine = taiEEngine)
 		val server = Decx.httpServer(api, port)
 		val started = server.start(port)
 		if (!started) {
@@ -139,12 +162,18 @@ object DecxServerApp {
 
 	private data class DecxCliOptions(
 		val port: Int = DecxConstants.DEFAULT_PORT,
-		val mcpEnabled: Boolean = false
+		val mcpEnabled: Boolean = false,
+		val taiEEnabled: Boolean = false,
+		val taiERulesDir: String? = null,
+		val taiEAndroidJars: String? = null
 	)
 
 	private fun extractDecxOptionsAndFilterArgs(args: Array<String>): Pair<DecxCliOptions, Array<String>> {
 		var port = DecxConstants.DEFAULT_PORT
 		var mcpEnabled = false
+		var taiEEnabled = false
+		var taiERulesDir: String? = null
+		var taiEAndroidJars: String? = null
 		val result = mutableListOf<String>()
 		var i = 0
 		while (i < args.size) {
@@ -163,11 +192,35 @@ object DecxServerApp {
 				}
 				"--mcp" -> mcpEnabled = true
 				"--no-mcp" -> mcpEnabled = false
+				"--tai-e" -> taiEEnabled = true
+				"--no-tai-e" -> taiEEnabled = false
+				"--tai-e-rules" -> {
+					i++
+					if (i >= args.size) {
+						System.err.println("Error: --tai-e-rules requires a value")
+						System.exit(1)
+					}
+					taiERulesDir = args[i]
+				}
+				"--tai-e-android-jars" -> {
+					i++
+					if (i >= args.size) {
+						System.err.println("Error: --tai-e-android-jars requires a value")
+						System.exit(1)
+					}
+					taiEAndroidJars = args[i]
+				}
 				else -> result.add(args[i])
 			}
 			i++
 		}
-		return DecxCliOptions(port = port, mcpEnabled = mcpEnabled) to result.toTypedArray()
+		return DecxCliOptions(
+			port = port,
+			mcpEnabled = mcpEnabled,
+			taiEEnabled = taiEEnabled,
+			taiERulesDir = taiERulesDir,
+			taiEAndroidJars = taiEAndroidJars
+		) to result.toTypedArray()
 	}
 
 	private fun printHelp() {

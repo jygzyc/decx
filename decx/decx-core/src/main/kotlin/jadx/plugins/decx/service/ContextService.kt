@@ -16,7 +16,10 @@ import jadx.plugins.decx.utils.DecompileGuard
 import jadx.plugins.decx.utils.ItemKind
 import java.nio.file.Files
 
-class ContextService(override val decompiler: JadxDecompiler) : DecompilerBackedService {
+class ContextService(
+    override val decompiler: JadxDecompiler,
+    private val taiEEngine: ITaiEEngine? = null
+) : DecompilerBackedService {
 
     private data class CalleeSummary(
         val signature: String,
@@ -242,17 +245,54 @@ class ContextService(override val decompiler: JadxDecompiler) : DecompilerBacked
                 ?: return DecxApiResult.fail( AnalysisResultUtils.error(DecxKind.METHOD_CONTEXT, query, DecxError.METHOD_NOT_FOUND, mth))
             val jcls = mthPair.first
             val jmth = mthPair.second
+            val signature = CodeUtils.methodSignature(jmth)
             val decision = DecompileGuard.decompile(jcls, DecompileGuard.Purpose.XREF)
             if (!decision.allowed) {
                 return DecxApiResult.fail(
                     AnalysisResultUtils.error(DecxKind.METHOD_CONTEXT, query, DecxError.DECOMPILATION_SKIPPED, decision.messageFor(jcls.fullName))
                 )
             }
-            val methodNode = jmth.methodNode
-            val xrefMap = CodeUtils.buildUsageQuery(decompiler, jmth)
-            val callerItems = processUsage(jmth, xrefMap.values.flatten().toMutableList())
-            val signature = CodeUtils.methodSignature(jmth)
-            val calleeItems = collectCalleeItems(signature, methodNode)
+            // Tier 1: Tai-e callers (if available)
+            val taiECallers = taiEEngine?.takeIf { it.isReady }?.callersOf(signature)
+            val callerItems: List<Map<String, Any>> = if (!taiECallers.isNullOrEmpty()) {
+                taiECallers.map { edge ->
+                    AnalysisResultUtils.item(
+                        id = "${edge.from}#${edge.line ?: 0}",
+                        kind = ItemKind.XREF,
+                        title = "Caller: ${edge.from}",
+                        content = edge.from,
+                        meta = linkedMapOf(
+                            "owner" to edge.from.substringBeforeLast('.', edge.from),
+                            "member" to edge.from,
+                            "line" to (edge.line ?: 0),
+                            "invoke_type" to edge.invokeType,
+                            "source" to "taie"
+                        )
+                    )
+                }
+            } else {
+                val xrefMap = CodeUtils.buildUsageQuery(decompiler, jmth)
+                processUsage(jmth, xrefMap.values.flatten().toMutableList())
+            }
+            // Tier 1: Tai-e callees (if available, dispatch-resolved)
+            val taiECallees = taiEEngine?.takeIf { it.isReady }?.calleesOf(signature)
+            val calleeItems: List<Map<String, Any>> = if (!taiECallees.isNullOrEmpty()) {
+                taiECallees.mapIndexed { index, edge ->
+                    AnalysisResultUtils.item(
+                        id = "$signature#callee-$index",
+                        kind = ItemKind.XREF,
+                        title = "Callee: ${edge.to}",
+                        content = edge.to,
+                        meta = linkedMapOf(
+                            "owner" to edge.to.substringBeforeLast('.', edge.to),
+                            "invoke_type" to edge.invokeType,
+                            "source" to "taie"
+                        )
+                    )
+                }
+            } else {
+                collectCalleeItems(signature, jmth.methodNode)
+            }
             val signatureItem = AnalysisResultUtils.item(
                 id = signature,
                 kind = ItemKind.SYMBOL,
@@ -301,6 +341,31 @@ class ContextService(override val decompiler: JadxDecompiler) : DecompilerBacked
     fun handleGetMethodXref(mth: String): DecxApiResult {
         val query = mapOf("target" to mth)
         return try {
+            // Tier 1: try Tai-e call-graph callers (dispatch-resolved, whole-program)
+            val taiEItems = taiEEngine?.takeIf { it.isReady }?.let { engine ->
+                val callers = engine.callersOf(mth)
+                if (callers.isNotEmpty()) {
+                    callers.map { edge ->
+                        AnalysisResultUtils.item(
+                            id = "${edge.from}#${edge.line ?: 0}",
+                            kind = ItemKind.XREF,
+                            title = "Caller: ${edge.from}",
+                            content = edge.from,
+                            meta = linkedMapOf(
+                                "owner" to edge.from.substringBeforeLast('.', edge.from),
+                                "member" to edge.from,
+                                "line" to (edge.line ?: 0),
+                                "invoke_type" to edge.invokeType,
+                                "source" to "taie"
+                            )
+                        )
+                    }
+                } else null
+            }
+            if (taiEItems != null) {
+                return DecxApiResult.ok(AnalysisResultUtils.success(DecxKind.METHOD_XREF, query, taiEItems))
+            }
+            // Fallback: JADX useIn-based reverse lookup
             val mthPair = CodeUtils.findMethod(decompiler, mth)
                 ?: return DecxApiResult.fail( AnalysisResultUtils.error(DecxKind.METHOD_XREF, query, DecxError.METHOD_NOT_FOUND, mth))
             val jcls = mthPair.first
@@ -364,10 +429,29 @@ class ContextService(override val decompiler: JadxDecompiler) : DecompilerBacked
         }
     }
 
-    /** Lists direct implementors of the requested interface. */
+    /** Lists implementors of the requested interface (transitive when Tai-e is available). */
     fun handleGetImplementOfInterface(iface: String): DecxApiResult {
         val query = mapOf("target" to iface)
         return try {
+            // Tier 1: Tai-e class hierarchy (transitive, no smali text scan)
+            val taiEItems = taiEEngine?.takeIf { it.isReady }?.let { engine ->
+                val impls = engine.implementorsOf(iface, transitive = true)
+                if (impls.isNotEmpty()) {
+                    impls.map { implName ->
+                        AnalysisResultUtils.item(
+                            id = implName,
+                            kind = ItemKind.SYMBOL,
+                            title = "Implementation: ${implName.substringAfterLast('.')}",
+                            content = "$implName implements $iface",
+                            meta = linkedMapOf("interface" to iface, "source" to "taie")
+                        )
+                    }
+                } else null
+            }
+            if (taiEItems != null) {
+                return DecxApiResult.ok(AnalysisResultUtils.success(DecxKind.IMPLEMENTATIONS, query, taiEItems))
+            }
+            // Fallback: smali text scan (direct implementors only)
             val interfaceClazz = decompiler.searchJavaClassOrItsParentByOrigFullName(iface)
                 ?: return DecxApiResult.fail(AnalysisResultUtils.error(DecxKind.IMPLEMENTATIONS, query, DecxError.INTERFACE_NOT_FOUND, iface))
             val implementingClasses = decompiler.classesWithInners.filter {
@@ -388,10 +472,29 @@ class ContextService(override val decompiler: JadxDecompiler) : DecompilerBacked
         }
     }
 
-    /** Lists direct subclasses for the requested class. */
+    /** Lists subclasses of the requested class (transitive when Tai-e is available). */
     fun handleGetSubclasses(cls: String): DecxApiResult {
         val query = mapOf("target" to cls)
         return try {
+            // Tier 1: Tai-e class hierarchy (transitive, no smali text scan)
+            val taiEItems = taiEEngine?.takeIf { it.isReady }?.let { engine ->
+                val subs = engine.subclassesOf(cls, transitive = true)
+                if (subs.isNotEmpty()) {
+                    subs.map { subName ->
+                        AnalysisResultUtils.item(
+                            id = subName,
+                            kind = ItemKind.SYMBOL,
+                            title = "Subclass: ${subName.substringAfterLast('.')}",
+                            content = "$subName extends $cls",
+                            meta = linkedMapOf("superclass" to cls, "source" to "taie")
+                        )
+                    }
+                } else null
+            }
+            if (taiEItems != null) {
+                return DecxApiResult.ok(AnalysisResultUtils.success(DecxKind.SUB_CLASSES, query, taiEItems))
+            }
+            // Fallback: smali text scan (direct subclasses only)
             val clazz = decompiler.searchJavaClassOrItsParentByOrigFullName(cls)
                 ?: return DecxApiResult.fail(AnalysisResultUtils.error(DecxKind.SUB_CLASSES, query, DecxError.CLASS_NOT_FOUND, cls))
             val subClasses = decompiler.classesWithInners.filter {
