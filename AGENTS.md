@@ -30,6 +30,7 @@ AI Assistant / CLI
 | `decx/decx-core/` | Kotlin, JVM 17 | Shared API, HTTP transport, services, models, utilities |
 | `decx/decx-plugin/` | Kotlin, Shadow JAR | JADX GUI plugin, lifecycle, UI, in-process MCP server management |
 | `decx/decx-server/` | Kotlin, Shadow JAR | Standalone headless server with `DecxServerApp` main class |
+| `decx/decx-taie-engine/` | Kotlin, Shadow JAR | TaiEEngine process: Tai-e analysis (PTA, CG, taint) with JSON-RPC IPC |
 | `decx-cli/` | TypeScript, Node.js 22.5+ | User CLI for session management and analysis commands |
 | `skills/decx-cli/` | Skill `decx-cli` | DECX CLI usage, general analysis, and workflow routing |
 | `skills/decx-app-vulnhunt/` | Skill `decx-app-vulnhunt` | Android app vulnerability hunting workflow |
@@ -55,37 +56,36 @@ AI Assistant / CLI
   `get_all_resources`, `get_resource_file`, `get_strings`
 - Android framework analysis:
   `get_system_service_impl`
-- Tai-e evidence collection (server-only, requires `--tai-e`):
-  `get_vuln_rules`, `investigate`, `get_points_to`, `get_taie_dynamic_receivers`,
-  `get_icc_targets`, `get_callbacks`, `get_call_graph`
+- TaiEEngine taint analysis (requires `--tai-e`):
+  `get_taint_rules`, `investigate`, `investigate_custom`, `get_points_to`,
+  `get_taie_dynamic_receivers`, `get_icc_targets`, `get_callbacks`, `get_call_graph`
 - Health endpoint:
   `GET /health`
 
-### Tai-e static analysis engine
+### TaiEEngine static analysis engine
 
-`decx-server` optionally embeds the [Tai-e](https://github.com/pascal-lab/Tai-e)
-static analysis framework as a background engine for call-graph construction,
-pointer analysis, and Android vulnerability modeling. It is **disabled by
-default** — enable with `--tai-e` on `decx process open`.
+DECX integrates [Tai-e](https://github.com/pascal-lab/Tai-e) as a separate
+JVM process (`decx-taie-engine`) for memory isolation. Tai-e's heap
+(World + PTA + points-to sets) runs in its own `-Xmx4G`, completely separate
+from JADX's heap. This prevents the two heavy analysis engines from
+competing for memory.
 
-When enabled, the engine provides two tiers:
-- **Tier 1 (Call Graph)**: replaces JADX's `useIn` + smali-scan xref with
-  Tai-e's dispatch-resolved whole-program call graph. `get_method_xref`,
-  `get_implement`, `get_sub_classes`, and `get_method_context` return Tai-e
-  results when ready, falling back to JADX otherwise.
-- **Tier 2 (Pointer Analysis + Evidence)**: powers the vuln-hunt endpoints
-  (`get_points_to`, `investigate`, `get_call_graph`, `get_icc_targets`,
-  `get_callbacks`, `get_taie_dynamic_receivers`). These collect structured
-  evidence for AI vulnerability reasoning — the engine does NOT make
-  vulnerability judgments.
+**Architecture**: TaiEEngine only connects to `decx-core`. Core defines the
+`ITaiEEngine` interface and the IPC layer (`TaiEEngineClient`,
+`TaiEEngineProcess`) — both pure Kotlin with zero Tai-e imports.
+`decx-server` and `decx-plugin` use TaiEEngine through `Decx.api(taiEEngine)`,
+identically. The IPC protocol is JSON-RPC 2.0 over stdin/stdout with
+Content-Length framing (same as MCP stdio transport).
 
-Investigation rules (YAML files in `~/.decx/rules/` or `--tai-e-rules <dir>`)
-declare "what evidence to collect" (callers, variable flow, ICC targets,
-dynamic receivers, callbacks). `decx self install` / `decx self update`
-download built-in rules from GitHub releases alongside the server JAR.
+**Three core APIs** (TaintService):
+1. `get_taint_rules` — lists preset rules from `~/.decx/rules/` (id, name,
+   description, parameters)
+2. `investigate` — executes a preset rule by ID, returns source→sink paths
+3. `investigate_custom` — executes an AI-provided inline YAML rule
 
-The `ITaiEEngine` interface in `decx-core` is the contract between core and
-the Tai-e implementation in `decx-server`. The GUI plugin never loads Tai-e.
+Rules use AppShark-style source/sink/sanitizer format with `{{param}}`
+template substitution. When TaiEEngine is unavailable, DECX falls back to
+JADX-only xref (single-level `useIn` + smali scan).
 
 ### Plugin responsibilities
 
