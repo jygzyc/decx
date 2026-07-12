@@ -7,11 +7,13 @@ ktor = "3.4.3"
 mcpKotlinSdk = "0.13.0"
 kotlinxCoroutines = "1.11.0"
 kotlinxSerialization = "1.11.0"
-jackson = "2.22.0"
+jackson = "2.17.2"
 slf4j = "2.0.18"
 logback = "1.5.34"
 assertj = "3.27.7"
 junit = "5.12.1"
+tai-e = "0.5.1"
+jackson-yaml = "2.17.2"
 
 [plugins]
 kotlin-jvm = { id = "org.jetbrains.kotlin.jvm", version.ref = "kotlin" }
@@ -37,3 +39,5 @@ logback-classic = { group = "ch.qos.logback", name = "logback-classic", version.
 assertj-core = { group = "org.assertj", name = "assertj-core", version.ref = "assertj" }
 junit-jupiter = { group = "org.junit.jupiter", name = "junit-jupiter", version.ref = "junit" }
 junit-platform-launcher = { group = "org.junit.platform", name = "junit-platform-launcher" }
+tai-e = { group = "net.pascal-lab", name = "tai-e", version.ref = "tai-e" }
+jackson-dataformat-yaml = { group = "com.fasterxml.jackson.dataformat", name = "jackson-dataformat-yaml", version.ref = "jackson-yaml" }
