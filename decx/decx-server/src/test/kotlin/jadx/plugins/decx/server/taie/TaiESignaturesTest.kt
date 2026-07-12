@@ -34,6 +34,7 @@ class TaiESignaturesTest {
      */
     private val noopLoader = object : JClassLoader {
         override fun loadClass(name: String): JClass = throw UnsupportedOperationException("test loader")
+        override fun loadClass(name: String, allowPhantom: Boolean): JClass = throw UnsupportedOperationException("test loader")
         override fun getLoadedClasses(): Collection<JClass> = emptyList()
     }
 
@@ -55,7 +56,7 @@ class TaiESignaturesTest {
 
     private fun jField(
         cls: JClass, name: String, type: pascal.taie.language.type.Type
-    ): JField = JField(cls, name, emptySet<Modifier>(), type, null, null)
+    ): JField = JField(cls, name, emptySet<Modifier>(), type, null, null, null)
 
     @Test
     fun `simple method with primitive param and return`() {

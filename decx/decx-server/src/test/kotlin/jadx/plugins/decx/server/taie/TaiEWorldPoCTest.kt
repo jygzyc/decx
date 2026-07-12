@@ -1,28 +1,26 @@
 package jadx.plugins.decx.server.taie
 
 import org.assertj.core.api.Assertions.assertThat
-import org.junit.jupiter.api.BeforeAll
 import org.junit.jupiter.api.Test
 import pascal.taie.Main
 import pascal.taie.World
-import pascal.taie.analysis.graph.callgraph.CallGraph
 import pascal.taie.analysis.pta.PointerAnalysis
 import pascal.taie.analysis.pta.PointerAnalysisResult
 import pascal.taie.language.classes.ClassHierarchy
 import pascal.taie.language.classes.JMethod
 import java.io.File
-import javax.tools.ToolProvider
 
 /**
  * Phase 0 PoC: verifies that Tai-e can be embedded in-process inside decx-server
  * and that its analysis results can be bridged to DECX signatures.
  *
- * Tai-e 0.5.1 ships only the Soot frontend, which can parse .java source but
- * with limited Java 8+ support. To avoid frontend parsing issues, we pre-compile
- * the test program to .class bytecode and feed the class directory to Tai-e.
+ * Tai-e 0.5.4 ships the JavaWorldBuilder (ASM + javac frontend), which compiles
+ * .java source at runtime via the JDK's javax.tools.JavaCompiler. This is the
+ * default frontend for non-Android Java programs. The test program
+ * (PocProgram.java) exercises virtual dispatch and data flow.
  *
  * Checklist items verified here:
- *   1. World construction from compiled .class files
+ *   1. World construction from a small Java program
  *   2. PTA produces a CallGraph with real edges (incl. virtual dispatch resolution)
  *   3. Signature bridge (TaiESignatures) produces DECX-compatible IDs
  *   7. Points-to query returns allocation sites
@@ -31,39 +29,16 @@ class TaiEWorldPoCTest {
 
     private val pocDir = File("src/test/resources/taie/poc").absolutePath
 
-    companion object {
-        private lateinit var compiledDir: File
-
-        @BeforeAll
-        @JvmStatic
-        fun compileTestProgram() {
-            // Compile PocProgram.java to a build directory using the system javac.
-            // Tai-e 0.5.1's Soot frontend reads .class bytecode reliably.
-            // NOTE: compiledDir and outputDir must be on the same drive (Windows),
-            // because Tai-e's toSerializedFilePath calls Path.relativize which fails
-            // across different roots (e.g. C: vs E:).
-            val sourceFile = File("src/test/resources/taie/poc/PocProgram.java")
-            compiledDir = File("build/taie-classes").absoluteFile
-            compiledDir.mkdirs()
-            val compiler = ToolProvider.getSystemJavaCompiler()
-            val success = compiler.run(null, null, null,
-                "-source", "8", "-target", "8",
-                "-d", compiledDir.absolutePath,
-                sourceFile.absolutePath)
-            assertThat(success).isEqualTo(0)
-        }
-    }
-
     private fun runPta() {
-        // -pp prepends the current JRE to the classpath (Tai-e 0.5.1 API).
-        // --output-dir redirects Tai-e's output (options.yml, logs) to build dir.
-        // Both paths are under build/ to avoid Windows cross-drive relativize issues.
+        // Tai-e 0.5.4: useCurrentJRE is default when -java omitted, so no -pp needed.
+        // JavaWorldBuilder compiles .java source at runtime.
+        // --output-dir must be same-drive as -cp on Windows (Path.relativize limitation).
         val outputDir = File("build/taie-output").absoluteFile
         outputDir.mkdirs()
         Main.main(
-            "-pp",
+            "--world-builder", "pascal.taie.frontend.java.JavaWorldBuilder",
             "--output-dir", outputDir.absolutePath,
-            "-cp", compiledDir.absolutePath,
+            "-cp", pocDir,
             "-m", "PocProgram",
             "-a", "pta=cs:ci;implicit-entries:false;only-app:true"
         )

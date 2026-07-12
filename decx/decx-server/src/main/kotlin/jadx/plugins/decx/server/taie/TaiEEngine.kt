@@ -87,12 +87,22 @@ class TaiEEngine private constructor(
         outputDir.mkdirs()
 
         val args = buildList {
-            add("-pp") // prepend current JRE to classpath
+            // Tai-e 0.5.4: use the current JRE (avoids java-benchmarks dependency)
+            // and the ASM-based JavaWorldBuilder for .java/.class input.
+            // For Android APKs, SootWorldBuilder is used (forced by -am).
+            if (!isApk) {
+                // JavaWorldBuilder compiles .java via javac at runtime and reads
+                // .class bytecode; faster and more reliable than Soot for Java.
+                add("--world-builder")
+                add("pascal.taie.frontend.java.JavaWorldBuilder")
+            }
+            // useCurrentJRE=true is the default in 0.5.4 when -java is omitted,
+            // but we set it explicitly for clarity and forward-compat.
             add("--output-dir")
             add(outputDir.absolutePath)
 
             if (isApk) {
-                add("-am") // Android mode
+                add("-am") // Android mode (forces SootWorldBuilder)
                 if (androidJarsDir != null) {
                     add("-ajs")
                     add(androidJarsDir)
@@ -100,11 +110,9 @@ class TaiEEngine private constructor(
                 add("-cp")
                 add(inputFile.absolutePath)
             } else {
-                // Java JAR/class mode — treat all classes as application classes
+                // Java JAR/class mode
                 add("-cp")
                 add(inputFile.absolutePath)
-                // Use --input-classes to include all classes from the JAR
-                // (Tai-e will resolve the closed world from the classpath)
             }
 
             // PTA configuration: context-insensitive for speed, app-only scope
