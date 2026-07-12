@@ -97,33 +97,26 @@ object DecxServerApp {
 		println("[+] Warmup completed in ${warmupElapsed}ms")
 
 		// TaiEEngine: optional, runs as a SEPARATE process for memory isolation.
+		// The engine jar is embedded in decx-core's classpath — no external jar needed.
 		// The engine process loads rules from ~/.decx/rules/ automatically.
 		// DECX endpoints use it when ready, fall back to JADX-only xref otherwise.
 		var taiEEngineProcess: TaiEEngineProcess? = null
 		val taiEEngine: ITaiEEngine? = if (options.taiEEnabled) {
 			println("[*] Starting TaiEEngine process...")
 			try {
-				// Locate the TaiEEngine jar (next to decx-server.jar or in build/dist)
-				val engineJar = findTaiEEngineJar()
-				if (engineJar == null) {
-					println("[!] TaiEEngine jar not found, falling back to JADX-only xref")
-					null
-				} else {
-					val rulesDir = options.taiERulesDir
-						?.let { File(it) }
-						?: File(System.getProperty("user.home"), ".decx/rules")
-					val proc = TaiEEngineProcess(
-						engineJarPath = engineJar.absolutePath,
-						apkFile = inputFile,
-						rulesDir = if (rulesDir.isDirectory) rulesDir else null,
-						androidJarsDir = options.taiEAndroidJars,
-						xmx = options.taiEXmx
-					)
-					val client = proc.start()
-					taiEEngineProcess = proc
-					println("[+] TaiEEngine process started (xref will upgrade when ready)")
-					client
-				}
+				val rulesDir = options.taiERulesDir
+					?.let { File(it) }
+					?: File(System.getProperty("user.home"), ".decx/rules")
+				val proc = TaiEEngineProcess.create(
+					apkFile = inputFile,
+					rulesDir = if (rulesDir.isDirectory) rulesDir else null,
+					androidJarsDir = options.taiEAndroidJars,
+					xmx = options.taiEXmx
+				)
+				val client = proc.start()
+				taiEEngineProcess = proc
+				println("[+] TaiEEngine process started (xref will upgrade when ready)")
+				client
 			} catch (e: Throwable) {
 				println("[!] TaiEEngine failed to start, falling back to JADX-only xref: ${e.message}")
 				null
@@ -249,21 +242,6 @@ object DecxServerApp {
 			taiEAndroidJars = taiEAndroidJars,
 			taiEXmx = taiEXmx
 		) to result.toTypedArray()
-	}
-
-	/**
-	 * Locates the decx-taie-engine.jar, which ships alongside decx-server.jar
-	 * in ~/.decx/bin/ or in the build dist directory.
-	 */
-	private fun findTaiEEngineJar(): File? {
-		// Same directory as the decx-server jar
-		val serverJarDir = File(DecxServerApp::class.java.protectionDomain.codeSource?.location?.toURI()?.path ?: ".").parentFile
-		val candidates = listOf(
-			File(serverJarDir, "decx-taie-engine.jar"),
-			File(System.getProperty("user.home"), ".decx/bin/decx-taie-engine.jar"),
-			File("decx/build/dist/decx-taie-engine.jar")
-		)
-		return candidates.firstOrNull { it.exists() }
 	}
 
 	private fun printHelp() {

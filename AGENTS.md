@@ -74,8 +74,13 @@ competing for memory.
 `ITaiEEngine` interface and the IPC layer (`TaiEEngineClient`,
 `TaiEEngineProcess`) — both pure Kotlin with zero Tai-e imports.
 `decx-server` and `decx-plugin` use TaiEEngine through `Decx.api(taiEEngine)`,
-identically. The IPC protocol is JSON-RPC 2.0 over stdin/stdout with
-Content-Length framing (same as MCP stdio transport).
+identically. The engine jar (`decx-taie-engine.jar`) is embedded as a
+classpath resource inside `decx-core` at build time; at runtime
+`TaiEEngineProcess` extracts it to a temp dir and spawns it as a child
+process. There are only **two release artifacts**: `decx-server.jar` and
+the JADX plugin jar — both carry the embedded engine via core.
+The IPC protocol is JSON-RPC 2.0 over stdin/stdout with Content-Length
+framing (same as MCP stdio transport).
 
 **Three core APIs** (TaintService):
 1. `get_taint_rules` — lists preset rules from `~/.decx/rules/` (id, name,

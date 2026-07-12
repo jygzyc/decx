@@ -58,7 +58,6 @@ jobs:
         ls -la decx/build/dist/
         test -f "decx/build/dist/jadx_decx_plugin-${{ steps.version.outputs.version }}.jar"
         test -f "decx/build/dist/decx-server-${{ steps.version.outputs.version }}.jar"
-        test -f "decx/build/dist/decx-taie-engine-${{ steps.version.outputs.version }}.jar"
         test -d "decx/build/dist/rules"
 
     - name: Package rules
@@ -73,7 +72,6 @@ jobs:
         files: |
           decx/build/dist/jadx_decx_plugin-${{ steps.version.outputs.version }}.jar
           decx/build/dist/decx-server-${{ steps.version.outputs.version }}.jar
-          decx/build/dist/decx-taie-engine-${{ steps.version.outputs.version }}.jar
           decx/build/dist/decx-rules-${{ steps.version.outputs.version }}.tar.gz
         body_path: RELEASE.md
         draft: false
@@ -157,7 +155,6 @@ jobs:
         ls -la decx/build/dist/
         test -f "decx/build/dist/jadx_decx_plugin-${{ steps.version.outputs.version }}.jar"
         test -f "decx/build/dist/decx-server-${{ steps.version.outputs.version }}.jar"
-        test -f "decx/build/dist/decx-taie-engine-${{ steps.version.outputs.version }}.jar"
         test -d "decx/build/dist/rules"
 
     - name: Prepare prerelease files
@@ -165,7 +162,6 @@ jobs:
       run: |
         cp "decx/build/dist/jadx_decx_plugin-${{ steps.version.outputs.version }}.jar" ./
         cp "decx/build/dist/decx-server-${{ steps.version.outputs.version }}.jar" ./
-        cp "decx/build/dist/decx-taie-engine-${{ steps.version.outputs.version }}.jar" ./
         cd decx/build/dist && tar -czf ../../../decx-rules-${{ steps.version.outputs.version }}.tar.gz rules/
         ls -la *.jar *.tar.gz
 
