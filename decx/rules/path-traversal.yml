@@ -1,0 +1,21 @@
+# Investigation rule: ContentProvider Path Traversal
+# Collects evidence for path traversal in ContentProvider.openFile.
+# The engine traces the file path parameter's flow to file I/O sinks;
+# the AI determines if the path is insufficiently sanitized.
+id: path_traversal
+description: "Collect evidence for path traversal in ContentProvider.openFile"
+category: path_traversal
+target_sdk: "21:34"
+
+targets:
+  - kind: method
+    signature: "<android.content.ContentProvider: android.os.ParcelFileDescriptor openFile(android.net.Uri,java.lang.String)>"
+
+collect:
+  - kind: callers
+    include_callees: true
+  - kind: variable_flow
+    variable: p0
+    depth: 8
+
+context: []

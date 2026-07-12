@@ -4,9 +4,13 @@ import jadx.api.JadxDecompiler
 import jadx.cli.JadxCLIArgs
 import jadx.plugins.decx.Decx
 import jadx.plugins.decx.DecxConstants
+import jadx.plugins.decx.server.taie.InvestigationRule
+import jadx.plugins.decx.server.taie.RuleLoader
 import jadx.plugins.decx.server.taie.TaiEEngine
+import jadx.plugins.decx.service.VulnHuntService
 import jadx.plugins.decx.utils.PluginUtils
 import jadx.plugins.decx.utils.WarmupUtils
+import java.io.File
 
 /**
  * DECX Server — Java Intelligence Analysis Platform.
@@ -116,7 +120,38 @@ object DecxServerApp {
 			null
 		}
 
-		val api = Decx.api(decompiler, taiEEngine = taiEEngine)
+		// Load investigation rules from ~/.decx/rules/ or --tai-e-rules <dir>
+		val rulesDir = options.taiERulesDir
+			?.let { File(it) }
+			?: File(System.getProperty("user.home"), ".decx/rules")
+		val investigationRules = if (taiEEngine != null && rulesDir.isDirectory) {
+			val loaded = RuleLoader.load(rulesDir)
+			if (loaded.isNotEmpty()) {
+				println("[+] Loaded ${loaded.size} investigation rule(s) from ${rulesDir.absolutePath}")
+			}
+			loaded
+		} else {
+			emptyList()
+		}
+		val vulnHuntRules = investigationRules.map { rule ->
+			VulnHuntService.RuleSummary(rule.id ?: "", rule.description ?: "", rule.category ?: "general", rule.targetSdk)
+		}
+		val ruleExecutor: ((String) -> VulnHuntService.RuleExecution?)? = if (investigationRules.isNotEmpty()) {
+			{ ruleId: String ->
+				investigationRules.find { it.id == ruleId }?.let { rule ->
+					VulnHuntService.RuleExecution(
+						summary = VulnHuntService.RuleSummary(rule.id ?: "", rule.description ?: "", rule.category ?: "general", rule.targetSdk),
+						targets = rule.targets.orEmpty().map { VulnHuntService.TargetSpec(it.kind, it.signature) },
+						collect = rule.collect.orEmpty().map {
+							VulnHuntService.CollectSpec(it.kind, it.variable, it.depth, it.includeCallees, it.fromCallersOf)
+						},
+						context = rule.context?.map { VulnHuntService.ContextSpec(it.kind, it.component) }
+					)
+				}
+			}
+		} else null
+
+		val api = Decx.api(decompiler, taiEEngine = taiEEngine, vulnHuntRules = vulnHuntRules, ruleExecutor = ruleExecutor)
 		val server = Decx.httpServer(api, port)
 		val started = server.start(port)
 		if (!started) {

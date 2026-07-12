@@ -8,6 +8,9 @@ object ItemKind {
     const val SYMBOL = "symbol"
     const val CODE = "code"
     const val XREF = "xref"
+    const val EVIDENCE = "evidence"
+    const val CALL_EDGE = "call_edge"
+    const val VULN_FINDING = "vuln_finding"
 }
 
 object AnalysisResultUtils {

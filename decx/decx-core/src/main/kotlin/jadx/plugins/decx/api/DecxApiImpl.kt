@@ -7,8 +7,10 @@ import jadx.plugins.decx.service.CommonService
 import jadx.plugins.decx.service.DecxService
 import jadx.plugins.decx.service.ITaiEEngine
 import jadx.plugins.decx.service.UiBackedService
+import jadx.plugins.decx.service.VulnHuntService
 import jadx.plugins.decx.utils.AnalysisResultUtils
 import jadx.plugins.decx.utils.CacheUtils
+import jadx.plugins.decx.utils.ItemKind
 
 /**
  * Default implementation of [DecxApi].
@@ -18,13 +20,16 @@ class DecxApiImpl(
     decompiler: JadxDecompiler,
     private val cacheEnabled: Boolean = true,
     uiService: UiBackedService? = null,
-    taiEEngine: ITaiEEngine? = null
+    taiEEngine: ITaiEEngine? = null,
+    vulnHuntRules: List<VulnHuntService.RuleSummary> = emptyList(),
+    private val ruleExecutor: ((String) -> VulnHuntService.RuleExecution?)? = null
 ) : DecxApi {
 
     private val commonService = CommonService(decompiler)
     private val contextService = ContextService(decompiler, taiEEngine)
     private val androidService = AndroidService(decompiler)
-    private val services: List<DecxService> = listOfNotNull(commonService, contextService, androidService, uiService)
+    private val vulnHuntService = VulnHuntService(decompiler, taiEEngine, vulnHuntRules)
+    private val services: List<DecxService> = listOfNotNull(commonService, contextService, androidService, uiService, vulnHuntService)
 
     // ==================== Common Service ====================
 
@@ -163,6 +168,65 @@ class DecxApiImpl(
     override fun getSelectedClass(): DecxApiResult {
         return findUiService()?.handleGetSelectedClass()
             ?: DecxApiResult.fail(AnalysisResultUtils.error(DecxKind.SELECTED_CLASS, emptyMap(), DecxError.NOT_GUI_MODE))
+    }
+
+    // ==================== Vuln Hunt Service ====================
+
+    override fun getVulnRules(): DecxApiResult = vulnHuntService.handleGetRules()
+
+    override fun investigate(ruleId: String): DecxApiResult {
+        val execution = ruleExecutor?.invoke(ruleId)
+            ?: return DecxApiResult.fail(
+                AnalysisResultUtils.error(DecxKind.INVESTIGATE, mapOf("rule_id" to ruleId), DecxError.RESOURCE_NOT_FOUND,
+                    "Rule '$ruleId' not found. Call get_vuln_rules to list available rules.")
+            )
+        return vulnHuntService.handleInvestigate(execution)
+    }
+
+    override fun getPointsTo(mth: String, variable: String): DecxApiResult =
+        vulnHuntService.handlePointsTo(mth, variable)
+
+    override fun getTaieDynamicReceivers(): DecxApiResult =
+        vulnHuntService.handleGetDynamicReceivers()
+
+    override fun getIccTargets(component: String): DecxApiResult =
+        vulnHuntService.handleGetIccTargets(component)
+
+    override fun getCallbacks(component: String): DecxApiResult =
+        vulnHuntService.handleGetCallbacks(component)
+
+    override fun getCallGraph(mth: String, direction: String): DecxApiResult {
+        val query = mapOf("method" to mth, "direction" to direction)
+        val engine = vulnHuntService.getEngine()
+        if (engine == null || !engine.isReady) {
+            return DecxApiResult.fail(
+                AnalysisResultUtils.error(DecxKind.CALL_GRAPH, query, DecxError.SERVICE_ERROR,
+                    if (engine == null) "Tai-e engine not available"
+                    else "Tai-e engine not ready")
+            )
+        }
+        val items = mutableListOf<Map<String, Any>>()
+        if (direction == "callers" || direction == "both") {
+            engine.callersOf(mth).forEachIndexed { i, edge ->
+                items.add(AnalysisResultUtils.item(
+                    id = "$mth#caller-$i", kind = ItemKind.CALL_EDGE,
+                    title = "Caller: ${edge.from}", content = edge.from,
+                    meta = linkedMapOf("direction" to "caller", "from" to edge.from,
+                        "to" to mth, "invoke_type" to edge.invokeType, "line" to (edge.line ?: 0))
+                ))
+            }
+        }
+        if (direction == "callees" || direction == "both") {
+            engine.calleesOf(mth).forEachIndexed { i, edge ->
+                items.add(AnalysisResultUtils.item(
+                    id = "$mth#callee-$i", kind = ItemKind.CALL_EDGE,
+                    title = "Callee: ${edge.to}", content = edge.to,
+                    meta = linkedMapOf("direction" to "callee", "from" to mth,
+                        "to" to edge.to, "invoke_type" to edge.invokeType)
+                ))
+            }
+        }
+        return DecxApiResult.ok(AnalysisResultUtils.success(DecxKind.CALL_GRAPH, query, items))
     }
 
     private fun findUiService(): UiBackedService? {

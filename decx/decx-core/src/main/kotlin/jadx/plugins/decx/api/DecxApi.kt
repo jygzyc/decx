@@ -43,4 +43,20 @@ interface DecxApi {
     // ==================== UI Service ====================
     fun getSelectedText(): DecxApiResult
     fun getSelectedClass(): DecxApiResult
+
+    // ==================== Vuln Hunt Service (Tai-e evidence collection) ====================
+    /** Lists available investigation rules loaded from ~/.decx/rules/. */
+    fun getVulnRules(): DecxApiResult
+    /** Executes an investigation rule by ID, collecting structured evidence. */
+    fun investigate(ruleId: String): DecxApiResult
+    /** Queries the points-to set of a variable in a method (pointer analysis). */
+    fun getPointsTo(mth: String, variable: String): DecxApiResult
+    /** Lists dynamically-registered broadcast receivers (Tai-e Android modeling). */
+    fun getTaieDynamicReceivers(): DecxApiResult
+    /** Lists ICC (inter-component communication) targets for a component. */
+    fun getIccTargets(component: String): DecxApiResult
+    /** Lists registered callbacks (e.g. OnClickListener) for a component. */
+    fun getCallbacks(component: String): DecxApiResult
+    /** Returns call-graph neighbors of a method (callers and/or callees). */
+    fun getCallGraph(mth: String, direction: String): DecxApiResult
 }

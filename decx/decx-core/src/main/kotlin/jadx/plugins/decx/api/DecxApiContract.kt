@@ -28,6 +28,14 @@ object DecxKind {
     const val SYSTEM_SERVICE_IMPL = "system_service_impl"
     const val SELECTED_CLASS = "selected_class"
     const val SELECTED_TEXT = "selected_text"
+    // Tai-e evidence collection / vulnerability investigation
+    const val INVESTIGATE = "investigate"
+    const val VULN_RULES = "vuln_rules"
+    const val DYNAMIC_RECEIVERS_TAIE = "taie_dynamic_receivers"
+    const val ICC_TARGETS = "icc_targets"
+    const val CALLBACKS = "callbacks"
+    const val POINTS_TO = "points_to"
+    const val CALL_GRAPH = "call_graph"
 }
 
 data class DecxRoute(
@@ -112,7 +120,32 @@ object DecxRoutes {
         )
     )
 
-    val groups: List<DecxRouteGroup> = listOf(common, context, android, ui)
+    val vuln = DecxRouteGroup(
+        name = "vuln",
+        routes = listOf(
+            DecxRoute("/api/decx/get_vuln_rules", DecxKind.VULN_RULES) { api, _ -> api.getVulnRules() },
+            DecxRoute("/api/decx/investigate", DecxKind.INVESTIGATE) { api, params ->
+                api.investigate(params.string("rule_id"))
+            },
+            DecxRoute("/api/decx/get_points_to", DecxKind.POINTS_TO) { api, params ->
+                api.getPointsTo(params.string("mth"), params.string("var"))
+            },
+            DecxRoute("/api/decx/get_taie_dynamic_receivers", DecxKind.DYNAMIC_RECEIVERS_TAIE) { api, _ ->
+                api.getTaieDynamicReceivers()
+            },
+            DecxRoute("/api/decx/get_icc_targets", DecxKind.ICC_TARGETS) { api, params ->
+                api.getIccTargets(params.string("component"))
+            },
+            DecxRoute("/api/decx/get_callbacks", DecxKind.CALLBACKS) { api, params ->
+                api.getCallbacks(params.string("component"))
+            },
+            DecxRoute("/api/decx/get_call_graph", DecxKind.CALL_GRAPH) { api, params ->
+                api.getCallGraph(params.string("mth"), params.string("direction").ifBlank { "both" })
+            }
+        )
+    )
+
+    val groups: List<DecxRouteGroup> = listOf(common, context, android, ui, vuln)
     val all: List<DecxRoute> = groups.flatMap { it.routes }
 
     private val routesByPath = all.associateBy { it.path }
