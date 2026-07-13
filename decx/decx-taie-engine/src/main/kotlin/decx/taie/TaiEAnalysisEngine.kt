@@ -54,15 +54,11 @@ class TaiEAnalysisEngine(
             System.err.println("[TaiEEngine] Loaded ${loadedRules.size} rule(s) from ${rulesDir.absolutePath}")
         }
 
-        // For Android APK mode: extract bundled android.jar and set up
-        // java-benchmarks/JREs/ working directory so Tai-e can find JRE classes.
+        // For Android APK mode: extract bundled android.jar.
         val effectiveAndroidJars = if (isApk) {
             androidJarsDir ?: extractBundledAndroidJar()
         } else {
             null
-        }
-        if (isApk) {
-            setupJreWorkDir()
         }
 
         // Build World + run PTA
@@ -380,82 +376,5 @@ class TaiEAnalysisEngine(
         }
     }
 
-    /**
-     * Sets up the java-benchmarks/JREs/ directory that Tai-e's SootWorldBuilder
-     * requires for Android mode. Tai-e needs real JRE .jar files (rt.jar etc.)
-     * matching the APK's target Java version, not JDK 9+ module images.
-     *
-     * Downloads the JRE jars from pascal-lab/java-benchmarks on first run
-     * (cached in temp dir, ~70MB one-time download). On subsequent runs the
-     * cache is reused.
-     */
-    private fun setupJreWorkDir() {
-        try {
-            // Check if already set up in working directory
-            val localJres = File("java-benchmarks/JREs")
-            if (localJres.isDirectory && localJres.listFiles()?.isNotEmpty() == true) {
-                System.err.println("[TaiEEngine] JREs already available at ${localJres.absolutePath}")
-                return
-            }
-
-            // Download JRE jars to a cache dir, then symlink/copy into working dir
-            val cacheDir = File(System.getProperty("java.io.tmpdir"), "decx-taie-cache/JREs")
-            if (!cacheDir.isDirectory || cacheDir.listFiles()?.isEmpty() == true) {
-                System.err.println("[TaiEEngine] Downloading JRE jars (one-time, ~70MB)...")
-                downloadJreJars(cacheDir)
-            }
-
-            // Link each jre1.<version> from cache into working directory
-            localJres.mkdirs()
-            cacheDir.listFiles()?.forEach { versionDir ->
-                if (versionDir.isDirectory && versionDir.name.startsWith("jre1.")) {
-                    val link = File(localJres, versionDir.name)
-                    if (!link.exists()) {
-                        try {
-                            Files.createSymbolicLink(link.toPath(), versionDir.toPath())
-                        } catch (_: Exception) {
-                            // Fallback: copy jar files
-                            versionDir.copyRecursively(link, overwrite = true)
-                        }
-                    }
-                }
-            }
-            System.err.println("[TaiEEngine] JREs ready at ${localJres.absolutePath}")
-        } catch (e: Exception) {
-            System.err.println("[TaiEEngine] Failed to set up JREs: ${e.message}")
-        }
-    }
-
-    /**
-     * Downloads JRE jars from pascal-lab/java-benchmarks GitHub repo.
-     * Only downloads the directories needed (jre1.8 is the most common for Android).
-     */
-    private fun downloadJreJars(targetDir: File) {
-        // Download individual jar files from GitHub raw content.
-        // We focus on jre1.8 (most Android apps) and jre1.11 (newer apps).
-        val baseUrl = "https://raw.githubusercontent.com/pascal-lab/java-benchmarks/main/JREs"
-        for (ver in listOf(8, 11, 17)) {
-            val verDir = File(targetDir, "jre1.$ver")
-            verDir.mkdirs()
-            val jars = listOf("rt.jar", "jce.jar", "jsse.jar", "charsets.jar", "resources.jar")
-            for (jar in jars) {
-                val target = File(verDir, jar)
-                if (target.exists() && target.length() > 0) continue
-                try {
-                    val url = java.net.URI("$baseUrl/jre1.$ver/$jar").toURL()
-                    java.net.HttpURLConnection.HTTP_OK
-                    val conn = url.openConnection() as java.net.HttpURLConnection
-                    conn.connectTimeout = 30000
-                    conn.readTimeout = 60000
-                    if (conn.responseCode == 200) {
-                        Files.copy(conn.inputStream, target.toPath(), StandardCopyOption.REPLACE_EXISTING)
-                        System.err.println("[TaiEEngine]   Downloaded $jar (${target.length() / 1024}KB)")
-                    }
-                    conn.disconnect()
-                } catch (e: Exception) {
-                    System.err.println("[TaiEEngine]   Failed to download $jar: ${e.message}")
-                }
-            }
-        }
-    }
 }
+
