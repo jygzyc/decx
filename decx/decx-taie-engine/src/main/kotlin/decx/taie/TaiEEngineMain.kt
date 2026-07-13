@@ -66,6 +66,7 @@ object TaiEEngineMain {
             System.err.println("[TaiEEngine] Ready — accepting requests")
         } catch (e: Throwable) {
             System.err.println("[TaiEEngine] Initialization failed: ${e.message}")
+            e.printStackTrace(System.err)
             sendNotification("error", gson.toJsonTree(mapOf(
                 "message" to (e.message ?: "unknown")
             )).asJsonObject)

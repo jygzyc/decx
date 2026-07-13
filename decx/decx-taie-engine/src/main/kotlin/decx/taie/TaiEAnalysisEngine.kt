@@ -66,6 +66,16 @@ class TaiEAnalysisEngine(
                     add("-ajs")
                     add(androidJarsDir)
                 }
+                // Android mode needs JRE — point to the running JDK's home
+                // with explicit -java version (Tai-e requires both together).
+                val javaHome = System.getProperty("java.home")
+                val javaVersion = System.getProperty("java.specification.version").replace("1.", "")
+                if (javaHome != null) {
+                    add("-java")
+                    add(javaVersion)
+                    add("--jre-dir")
+                    add(javaHome)
+                }
                 add("-cp")
                 add(inputFile.absolutePath)
             } else {
