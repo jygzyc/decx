@@ -252,11 +252,26 @@ class TaiEAnalysisEngine(
      */
     @Suppress("UNCHECKED_CAST")
     private fun extractTaintFlows(ptaResult: PointerAnalysisResult) {
+        // List all available result keys for debugging
+        val resultKeys = try {
+            val method = ptaResult.javaClass.methods.find { it.name == "getResult" && it.parameterCount == 1 }
+            // Can't easily enumerate; try by direct key
+            System.err.println("[TaiEEngine] Checking TaintAnalysis result on PTA result object: ${ptaResult.javaClass.name}")
+        } catch (_: Exception) {}
+
         val rawResult = try {
             ptaResult.getResult<Any>(TaintAnalysis::class.java.name)
         } catch (e: Exception) {
-            System.err.println("[TaiEEngine] No taint analysis result: ${e.message}")
-            return
+            System.err.println("[TaiEEngine] TaintAnalysis result not found on PTA result: ${e.message}")
+            // Try World as fallback
+            try {
+                World.get().getResult<Any>(TaintAnalysis::class.java.name).also {
+                    System.err.println("[TaiEEngine] Found on World instead!")
+                }
+            } catch (e2: Exception) {
+                System.err.println("[TaiEEngine] TaintAnalysis result not found anywhere: ${e2.message}")
+                return
+            }
         }
         if (rawResult == null) {
             System.err.println("[TaiEEngine] Taint analysis returned null — TaintAnalysis plugin may not have run")
