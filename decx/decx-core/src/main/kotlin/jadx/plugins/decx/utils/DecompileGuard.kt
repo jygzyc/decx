@@ -148,7 +148,14 @@ object DecompileGuard {
 
     private fun availableHeapBytes(): Long {
         val runtime = Runtime.getRuntime()
-        return runtime.maxMemory() - runtime.totalMemory() + runtime.freeMemory()
+        var available = runtime.maxMemory() - runtime.totalMemory() + runtime.freeMemory()
+        // If below threshold, try GC once before giving up — disk-backed cache
+        // entries and soft-reachable objects may be reclaimed.
+        if (available < minFreeHeapBytes) {
+            System.gc()
+            available = runtime.maxMemory() - runtime.totalMemory() + runtime.freeMemory()
+        }
+        return available
     }
 
     private fun intProperty(name: String, defaultValue: Int): Int {

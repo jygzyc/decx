@@ -11,6 +11,9 @@ dependencies {
     implementation(libs.jadx.cli) {
         isChanging = false
     }
+    implementation(libs.jadx.gui) {
+        isChanging = false
+    }
     implementation(libs.kotlin.reflect)
     implementation(libs.gson)
     implementation(libs.slf4j.api)

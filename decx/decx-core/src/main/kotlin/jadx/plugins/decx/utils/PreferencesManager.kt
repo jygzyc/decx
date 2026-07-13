@@ -49,6 +49,9 @@ object PreferencesManager {
         setupCodeCache(decompiler)
     }
 
+    /** Returns the current cache mode ("disk" or "memory"). */
+    fun getCacheMode(): String = configLock.read { config.cache }
+
     private fun setupCodeCache(decompiler: JadxDecompiler) {
         val cache = configLock.read { config.cache }
         val cacheDir = getCacheDir()

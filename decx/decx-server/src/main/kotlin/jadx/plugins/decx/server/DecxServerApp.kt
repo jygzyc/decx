@@ -75,6 +75,9 @@ object DecxServerApp {
 		val decompiler: JadxDecompiler
 		try {
 			decompiler = JadxDecompiler(jadxArgs)
+			// Enable disk-backed code cache to reduce heap usage for large APKs.
+			// Decompiled source strings spill to ~/.decx/cache/ instead of staying in heap.
+			jadx.plugins.decx.utils.PreferencesManager.initialize(decompiler)
 			decompiler.load()
 		} catch (e: Exception) {
 			System.err.println("Error: Failed to initialize decompiler: ${e.message}")
@@ -84,6 +87,9 @@ object DecxServerApp {
 
 		println("[*] Loading classes...")
 		val classCount = decompiler.classesWithInners?.size ?: 0
+		// Report cache mode for user awareness
+		val cacheMode = jadx.plugins.decx.utils.PreferencesManager.getCacheMode()
+		println("[+] Code cache: $cacheMode ${if (cacheMode == "disk") "(decompiled sources spill to ~/.decx/cache/)" else ""}")
 		if (classCount == 0) {
 			System.err.println("Error: No classes found in ${inputFile.name}")
 			System.exit(1)

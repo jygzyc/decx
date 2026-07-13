@@ -13,6 +13,14 @@ object WarmupUtils {
     private const val MAX_THREADS = 4
     private const val DEFAULT_TIMEOUT_SECONDS = 250L
 
+    /**
+     * Warmup target count, overridable via -Ddecx.warmup.targetCount.
+     * Set to 0 to disable warmup entirely (useful when memory is tight
+     * or when TaiEEngine is enabled and competes for heap).
+     */
+    private val targetCount: Int = System.getProperty("decx.warmup.targetCount")
+        ?.toIntOrNull() ?: DEFAULT_TARGET_COUNT
+
     private val sdkPackagePrefixes = listOf(
         "android.support.",
         "androidx.",
@@ -24,8 +32,9 @@ object WarmupUtils {
 
     fun selectWarmupClasses(
         decompiler: JadxDecompiler,
-        targetCount: Int = DEFAULT_TARGET_COUNT
+        targetCount: Int = this.targetCount
     ): List<JavaClass> {
+        if (targetCount <= 0) return emptyList() // warmup disabled
         val classes = decompiler.classesWithInners ?: emptyList()
         if (classes.isEmpty()) return emptyList()
 
