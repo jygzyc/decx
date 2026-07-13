@@ -252,22 +252,30 @@ class TaiEAnalysisEngine(
      */
     @Suppress("UNCHECKED_CAST")
     private fun extractTaintFlows(ptaResult: PointerAnalysisResult) {
-        val flows = try {
-            World.get().getResult<Set<pascal.taie.analysis.pta.plugin.taint.TaintFlow>>(
-                TaintAnalysis::class.java.name
-            )
-        } catch (_: Exception) {
-            System.err.println("[TaiEEngine] No taint analysis result (TaintAnalysis plugin not active)")
+        val rawResult = try {
+            ptaResult.getResult<Any>(TaintAnalysis::class.java.name)
+        } catch (e: Exception) {
+            System.err.println("[TaiEEngine] No taint analysis result: ${e.message}")
             return
         }
+        if (rawResult == null) {
+            System.err.println("[TaiEEngine] Taint analysis returned null — TaintAnalysis plugin may not have run")
+            return
+        }
+        val flows = rawResult as? Set<*>
+        if (flows == null) {
+            System.err.println("[TaiEEngine] Taint analysis result type unexpected: ${rawResult.javaClass.name}")
+            return
+        }
+        System.err.println("[TaiEEngine] Found ${flows.size} taint flow(s) from TaintAnalysis")
 
         // Group flows by which rule's source/sink they match
         val byRule = mutableMapOf<String, MutableList<TaintResult.TaintPath>>()
 
         for (flow in flows) {
-            // Match this flow back to the originating rule via DecxTaintConfigProvider
-            val ruleId = DecxTaintConfigProvider.matchFlowToRule(flow) ?: "unknown"
-            val flowStr = flow.toString()
+            val taintFlow = flow as pascal.taie.analysis.pta.plugin.taint.TaintFlow
+            val ruleId = DecxTaintConfigProvider.matchFlowToRule(taintFlow) ?: "unknown"
+            val flowStr = taintFlow.toString()
             val path = TaintResult.TaintPath(
                 ruleId = ruleId,
                 source = flowStr.substringBefore(" -> "),
@@ -323,7 +331,7 @@ class TaiEAnalysisEngine(
 
             // Extract flows for this custom rule
             val flows = try {
-                World.get().getResult<Set<pascal.taie.analysis.pta.plugin.taint.TaintFlow>>(
+                result.getResult<Set<pascal.taie.analysis.pta.plugin.taint.TaintFlow>>(
                     TaintAnalysis::class.java.name
                 )
             } catch (_: Exception) { return emptyList() }

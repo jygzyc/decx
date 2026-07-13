@@ -34,10 +34,12 @@ class DecxTaintConfigProvider(
 
     override fun sources(): List<Source> {
         val rules = activeRules()
+        System.err.println("[DecxTaintProvider] sources() called, ${rules.size} active rule(s)")
         val sources = mutableListOf<Source>()
         for (rule in rules) {
             for (spec in rule.source.orEmpty()) {
                 val methods = MethodFinder.resolveMethods(spec.method, hierarchy)
+                System.err.println("[DecxTaintProvider]   source '${spec.kind}' pattern '${spec.method}' -> ${methods.size} method(s)")
                 for (method in methods) {
                     when (spec.kind) {
                         "return" -> {
@@ -69,10 +71,12 @@ class DecxTaintConfigProvider(
 
     override fun sinks(): List<Sink> {
         val rules = activeRules()
+        System.err.println("[DecxTaintProvider] sinks() called, ${rules.size} active rule(s)")
         val sinks = mutableListOf<Sink>()
         for (rule in rules) {
             for (spec in rule.sink.orEmpty()) {
                 val methods = MethodFinder.resolveMethods(spec.method, hierarchy)
+                System.err.println("[DecxTaintProvider]   sink pattern '${spec.method}' taint_check=${spec.taintCheck} -> ${methods.size} method(s)")
                 for (m in methods) {
                     for (taintCheck in spec.taintCheck) {
                         val index = parsePosition(taintCheck)
