@@ -3,21 +3,33 @@ package decx.taie
 import pascal.taie.World
 import pascal.taie.analysis.pta.PointerAnalysis
 import pascal.taie.analysis.pta.PointerAnalysisResult
-import java.io.InputStream
-import java.nio.file.Files
-import java.nio.file.StandardCopyOption
+import pascal.taie.analysis.pta.plugin.taint.CallSource
+import pascal.taie.analysis.pta.plugin.taint.IndexRef
+import pascal.taie.analysis.pta.plugin.taint.Sink
+import pascal.taie.analysis.pta.plugin.taint.Source
+import pascal.taie.analysis.pta.plugin.taint.TaintAnalysis
+import pascal.taie.analysis.pta.plugin.taint.TaintConfig
+import pascal.taie.analysis.pta.plugin.taint.TaintConfigProvider
+import pascal.taie.analysis.pta.plugin.util.InvokeUtils
 import pascal.taie.ir.stmt.Invoke
 import pascal.taie.language.classes.ClassHierarchy
 import pascal.taie.language.classes.JMethod
+import pascal.taie.language.type.TypeSystem
 import java.io.File
+import java.io.InputStream
+import java.nio.file.Files
+import java.nio.file.StandardCopyOption
 
 /**
  * Core Tai-e analysis engine: World construction, PTA, call-graph queries,
  * and rule-based taint analysis.
  *
+ * Taint analysis is performed by Tai-e's TaintAnalysis plugin, which is
+ * integrated into the PTA pass. Rules are converted to TaintConfigProvider
+ * and passed to PTA at initialization time. After PTA completes, taint flows
+ * are extracted and stored per-rule for on-demand querying.
+ *
  * This runs inside the TaiEEngine process (decx-taie-engine module).
- * It is NOT visible to decx-core — all communication goes through
- * TaiEEngineMain's JSON-RPC protocol.
  */
 class TaiEAnalysisEngine(
     private val inputFile: File,
@@ -38,21 +50,26 @@ class TaiEAnalysisEngine(
 
     private var loadedRules: List<VulnRule> = emptyList()
 
+    /** Taint flows from preset rules, keyed by rule ID. */
+    private var taintFlowsByRule: Map<String, List<TaintResult.TaintPath>> = emptyMap()
+
     val isReady: Boolean get() = ready
     val isAnalysisReady: Boolean get() = analysisReady
 
     /**
-     * Initializes the engine: builds World, runs PTA, loads rules.
-     * This is a blocking call — may take minutes for large APKs.
+     * Initializes the engine: loads rules, builds World, runs PTA with taint analysis.
+     * All preset rules are registered as a TaintConfigProvider before PTA starts,
+     * so source→sink taint flows are computed during the PTA pass itself.
      */
     fun initialize() {
         outputDir.mkdirs()
 
-        // Load rules first (fast, no Tai-e dependency)
+        // Load rules first and register them with the TaintConfigProvider
         if (rulesDir != null && rulesDir.isDirectory) {
             loadedRules = RuleLoader.load(rulesDir)
             System.err.println("[TaiEEngine] Loaded ${loadedRules.size} rule(s) from ${rulesDir.absolutePath}")
         }
+        DecxTaintConfigProvider.presetRules = loadedRules
 
         // For Android APK mode: extract bundled android.jar.
         val effectiveAndroidJars = if (isApk) {
@@ -61,7 +78,16 @@ class TaiEAnalysisEngine(
             null
         }
 
-        // Build World + run PTA
+        // Build World + run PTA with taint analysis enabled.
+        // The DecxTaintConfigProvider converts all loaded rules into
+        // Tai-e Source/Sink objects for the TaintAnalysis plugin.
+        val ptaOptions = if (loadedRules.isNotEmpty()) {
+            "cs:ci;implicit-entries:false;only-app:true;time-limit:600;" +
+                "taint-config-providers:[decx.taie.DecxTaintConfigProvider]"
+        } else {
+            "cs:ci;implicit-entries:false;only-app:true;time-limit:600"
+        }
+
         val args = buildList {
             if (!isApk) {
                 add("--world-builder")
@@ -83,17 +109,23 @@ class TaiEAnalysisEngine(
                 add(inputFile.absolutePath)
             }
 
-            // Memory-conservative PTA config
             add("-a")
-            add("pta=cs:ci;implicit-entries:false;only-app:true;time-limit:600")
+            add("pta=$ptaOptions")
         }
 
         pascal.taie.Main.main(*args.toTypedArray())
 
         val result: PointerAnalysisResult = World.get().getResult(PointerAnalysis.ID)
         ptaResult = result
+
+        // Extract taint flows from PTA result (if taint analysis was enabled)
+        if (loadedRules.isNotEmpty()) {
+            extractTaintFlows(result)
+        }
+
         ready = true
         analysisReady = true
+        System.err.println("[TaiEEngine] Initialization complete, ${taintFlowsByRule.values.sumOf { it.size }} taint flow(s) found")
     }
 
     // ------------------------------------------------------------------
@@ -200,110 +232,118 @@ class TaiEAnalysisEngine(
 
     /** Interface 2: execute a preset rule by ID */
     fun investigate(ruleId: String, params: Map<String, String>): List<TaintResult.TaintPath> {
-        val rule = loadedRules.find { it.id == ruleId }
-            ?: return emptyList()
-        val resolved = rule.resolveParams(params)
-        return executeRule(resolved)
+        // Taint flows for preset rules are precomputed during PTA initialization.
+        return taintFlowsByRule[ruleId] ?: emptyList()
     }
 
     /** Interface 3: execute a custom inline rule */
     fun investigateCustom(ruleYaml: String, params: Map<String, String>): List<TaintResult.TaintPath> {
+        // Custom rules require re-running PTA with the new taint config.
+        // This is expensive but correct — the TaintAnalysis plugin must run
+        // during PTA to track variable-level data flow.
         val rule = RuleLoader.parseYaml(ruleYaml) ?: return emptyList()
-        val resolved = rule.resolveParams(params)
-        return executeRule(resolved.copy(id = rule.id ?: "custom"))
-    }
-
-    // ------------------------------------------------------------------
-    // Rule execution
-    // ------------------------------------------------------------------
-
-    private fun executeRule(rule: VulnRule): List<TaintResult.TaintPath> {
-        val ch = hierarchy() ?: return emptyList()
-        val pta = ptaResult ?: return emptyList()
-        val cg = pta.callGraph
-
-        val paths = mutableListOf<TaintResult.TaintPath>()
-
-        // Resolve source methods from patterns
-        val sourceMethods = rule.source.orEmpty().flatMap { spec ->
-            MethodFinder.resolveMethods(spec.method, ch)
-        }.distinct()
-
-        // Resolve sink methods from patterns
-        val sinkMethods = rule.sink.orEmpty().flatMap { spec ->
-            MethodFinder.resolveMethods(spec.method, ch)
-        }.distinct()
-
-        if (sourceMethods.isEmpty() || sinkMethods.isEmpty()) return emptyList()
-
-        // For each source, find callers and trace to sinks via call graph
-        // This is a simplified taint analysis using the PTA call graph:
-        // for each source method, find all callers; for each caller, check if
-        // any sink method is reachable within trace_depth.
-        val traceDepth = rule.traceDepth ?: 10
-
-        for (source in sourceMethods) {
-            val sourceSig = TaiESignatures.toDecxMethodId(source)
-            val callers = cg.getCallersOf(source)
-
-            for (invoke in callers) {
-                val caller = invoke.container
-                val callerSig = TaiESignatures.toDecxMethodId(caller)
-
-                // Check if this caller (or its callees within traceDepth) reaches a sink
-                val reachable = bfsReachable(caller, sinkMethods.toSet(), traceDepth, cg)
-                for (sinkMethod in reachable) {
-                    val sinkSig = TaiESignatures.toDecxMethodId(sinkMethod)
-                    paths.add(TaintResult.TaintPath(
-                        ruleId = rule.id ?: "custom",
-                        source = sourceSig,
-                        sink = sinkSig,
-                        steps = listOf(
-                            TaintResult.TaintStep(
-                                method = callerSig,
-                                line = invoke.lineNumber.takeIf { it > 0 } ?: 0,
-                                desc = "calls $sourceSig"
-                            )
-                        )
-                    ))
-                }
-            }
-        }
-
-        return paths.distinct()
+        val resolved = rule.resolveParams(params).copy(id = "custom")
+        return rerunWithRule(resolved)
     }
 
     /**
-     * BFS from [start] to find any of [targets] within [maxDepth] call-graph edges.
+     * Extracts taint flows from the PTA result, groups them by rule ID.
+     * Called after PTA completes (taint analysis runs as a PTA plugin).
      */
-    private fun bfsReachable(
-        start: JMethod,
-        targets: Set<JMethod>,
-        maxDepth: Int,
-        cg: pascal.taie.analysis.graph.callgraph.CallGraph<Invoke, JMethod>
-    ): Set<JMethod> {
-        val found = mutableSetOf<JMethod>()
-        val visited = mutableSetOf<JMethod>()
-        val queue = ArrayDeque<Pair<JMethod, Int>>()
-        queue.addLast(start to 0)
-        visited.add(start)
-
-        while (queue.isNotEmpty()) {
-            val (method, depth) = queue.removeFirst()
-            if (method in targets) {
-                found.add(method)
-            }
-            if (depth >= maxDepth) continue
-
-            val callees = runCatching { cg.getCalleesOfM(method) }.getOrElse { emptySet() }
-            for (callee in callees) {
-                if (callee !in visited) {
-                    visited.add(callee)
-                    queue.addLast(callee to depth + 1)
-                }
-            }
+    @Suppress("UNCHECKED_CAST")
+    private fun extractTaintFlows(ptaResult: PointerAnalysisResult) {
+        val flows = try {
+            World.get().getResult<Set<pascal.taie.analysis.pta.plugin.taint.TaintFlow>>(
+                TaintAnalysis::class.java.name
+            )
+        } catch (_: Exception) {
+            System.err.println("[TaiEEngine] No taint analysis result (TaintAnalysis plugin not active)")
+            return
         }
-        return found
+
+        // Group flows by which rule's source/sink they match
+        val byRule = mutableMapOf<String, MutableList<TaintResult.TaintPath>>()
+
+        for (flow in flows) {
+            // Match this flow back to the originating rule via DecxTaintConfigProvider
+            val ruleId = DecxTaintConfigProvider.matchFlowToRule(flow) ?: "unknown"
+            val flowStr = flow.toString()
+            val path = TaintResult.TaintPath(
+                ruleId = ruleId,
+                source = flowStr.substringBefore(" -> "),
+                sink = flowStr.substringAfter(" -> ", flowStr),
+                steps = listOf(TaintResult.TaintStep(
+                    method = flowStr,
+                    line = 0,
+                    desc = flowStr
+                ))
+            )
+            byRule.getOrPut(ruleId) { mutableListOf() }.add(path)
+        }
+
+        taintFlowsByRule = byRule
+        System.err.println("[TaiEEngine] Extracted ${flows.size} taint flow(s) across ${byRule.size} rule(s)")
+    }
+
+    /**
+     * Re-runs PTA with a single custom rule as the taint config.
+     * Resets World first, then runs PTA + TaintAnalysis with the custom rule.
+     */
+    private fun rerunWithRule(rule: VulnRule): List<TaintResult.TaintPath> {
+        // Store the custom rule for the TaintConfigProvider to pick up
+        DecxTaintConfigProvider.customRule = rule
+
+        try {
+            World.reset()
+            val effectiveAndroidJars = if (isApk) {
+                androidJarsDir ?: extractBundledAndroidJar()
+            } else null
+
+            val args = buildList {
+                if (!isApk) {
+                    add("--world-builder")
+                    add("pascal.taie.frontend.java.JavaWorldBuilder")
+                }
+                add("--output-dir")
+                add(File(outputDir, "custom-${System.currentTimeMillis()}").absolutePath)
+                if (isApk) {
+                    add("-am")
+                    if (effectiveAndroidJars != null) { add("-ajs"); add(effectiveAndroidJars) }
+                    add("-cp"); add(inputFile.absolutePath)
+                } else {
+                    add("-cp"); add(inputFile.absolutePath)
+                }
+                add("-a")
+                add("pta=cs:ci;implicit-entries:false;only-app:true;time-limit:600;" +
+                    "taint-config-providers:[decx.taie.DecxTaintConfigProvider]")
+            }
+
+            pascal.taie.Main.main(*args.toTypedArray())
+            val result: PointerAnalysisResult = World.get().getResult(PointerAnalysis.ID)
+
+            // Extract flows for this custom rule
+            val flows = try {
+                World.get().getResult<Set<pascal.taie.analysis.pta.plugin.taint.TaintFlow>>(
+                    TaintAnalysis::class.java.name
+                )
+            } catch (_: Exception) { return emptyList() }
+
+            return flows.map { flow ->
+                val flowStr = flow.toString()
+                TaintResult.TaintPath(
+                    ruleId = "custom",
+                    source = flowStr.substringBefore(" -> "),
+                    sink = flowStr.substringAfter(" -> ", flowStr),
+                    steps = listOf(TaintResult.TaintStep(
+                        method = flowStr,
+                        line = 0,
+                        desc = flowStr
+                    ))
+                )
+            }
+        } finally {
+            DecxTaintConfigProvider.customRule = null
+        }
     }
 
     // ------------------------------------------------------------------
