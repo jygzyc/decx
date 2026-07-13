@@ -33,6 +33,7 @@ var/
 # Node
 node_modules/
 dist/
+package-lock.json
 
 # Virtual Environment
 .env
@@ -75,3 +76,5 @@ CLAUDE.md
 .codegraph/
 .omo
 .env
+.zcode
+decx/java-benchmarks/
