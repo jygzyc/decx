@@ -1,0 +1,21 @@
+id: ssl_bypass
+name: "SSL Certificate Validation Bypass"
+description: >-
+  Custom TrustManager or HostnameVerifier that accepts all certificates
+  / hostnames, enabling man-in-the-middle attacks. The source is the
+  return value of checkServerTrusted (should throw on invalid cert)
+  or the return of verify() (should return false on mismatch).
+severity: high
+trace_depth: 5
+source:
+  - kind: param
+    method: "<javax.net.ssl.X509TrustManager: void checkServerTrusted(java.security.cert.X509Certificate[],java.lang.String)>"
+    position: "p0"
+  - kind: param
+    method: "<javax.net.ssl.HostnameVerifier: boolean verify(java.lang.String,javax.net.ssl.SSLSession)>"
+    position: "p0"
+sink:
+  - method: "<javax.net.ssl.HttpsURLConnection: void setDefaultHostnameVerifier(javax.net.ssl.HostnameVerifier)>"
+    taint_check: ["p0"]
+  - method: "<javax.net.ssl.SSLContext: void init(javax.net.ssl.KeyManager[],javax.net.ssl.TrustManager[],java.security.SecureRandom)>"
+    taint_check: ["p1"]

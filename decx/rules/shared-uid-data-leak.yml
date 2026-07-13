@@ -1,0 +1,17 @@
+id: file_world_readable
+name: "World-Readable File Creation"
+description: >-
+  File created with world-readable / world-writable permissions via
+  openFileOutput with MODE_WORLD_READABLE or MODE_WORLD_WRITEABLE,
+  or SharedPreferences with MODE_WORLD_READABLE. Allows other apps
+  to read sensitive data.
+severity: medium
+trace_depth: 5
+source:
+  - kind: return
+    method: "<android.content.Context: java.io.FileInputStream openFileInput(java.lang.String)>"
+  - kind: return
+    method: "<android.content.Context: java.io.FileOutputStream openFileOutput(java.lang.String,int)>"
+sink:
+  - method: "<java.io.File: void <init>(java.lang.String)>"
+    taint_check: ["p0"]

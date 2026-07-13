@@ -1,0 +1,44 @@
+id: imei_leak
+name: "IMEI / Device ID Leak"
+description: >-
+  Device identifiers (IMEI, serial, MAC address) flow to sensitive sinks
+  such as Log.d, sendBroadcast, or network sockets. This is a compliance
+  / privacy issue: leaking persistent device identifiers.
+severity: medium
+trace_depth: 12
+source:
+  - kind: return
+    method: "<android.telephony.TelephonyManager: java.lang.String getDeviceId()>"
+  - kind: return
+    method: "<android.telephony.TelephonyManager: java.lang.String getDeviceId(int)>"
+  - kind: return
+    method: "<android.telephony.TelephonyManager: java.lang.String getImei()>"
+  - kind: return
+    method: "<android.telephony.TelephonyManager: java.lang.String getImei(int)>"
+  - kind: return
+    method: "<android.telephony.TelephonyManager: java.lang.String getMeid()>"
+  - kind: return
+    method: "<android.telephony.TelephonyManager: java.lang.String getMeid(int)>"
+  - kind: return
+    method: "<android.telephony.TelephonyManager: java.lang.String getSubscriberId()>"
+  - kind: return
+    method: "<android.telephony.TelephonyManager: java.lang.String getLine1Number()>"
+  - kind: return
+    method: "<android.net.wifi.WifiInfo: java.lang.String getMacAddress()>"
+  - kind: return
+    method: "<android.bluetooth.BluetoothAdapter: java.lang.String getAddress()>"
+sink:
+  - method: "<android.util.Log: int d(java.lang.String,java.lang.String)>"
+    taint_check: ["p1"]
+  - method: "<android.util.Log: int e(java.lang.String,java.lang.String)>"
+    taint_check: ["p1"]
+  - method: "<android.util.Log: int i(java.lang.String,java.lang.String)>"
+    taint_check: ["p1"]
+  - method: "<android.util.Log: int w(java.lang.String,java.lang.String)>"
+    taint_check: ["p1"]
+  - method: "<android.util.Log: int v(java.lang.String,java.lang.String)>"
+    taint_check: ["p1"]
+  - method: "<android.content.Context: void sendBroadcast(android.content.Intent)>"
+    taint_check: ["p0"]
+  - method: "<java.net.Socket: java.io.OutputStream getOutputStream()>"
+    taint_check: ["@this"]
