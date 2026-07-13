@@ -57,7 +57,7 @@ tasks.register<Copy>("dist") {
     from("${project(":decx-plugin").projectDir}/build/dist")
     from("${project(":decx-server").projectDir}/build/dist")
     // Include built-in taint analysis rules in the dist output
-    from("$rootDir/../rules") {
+    from("$rootDir/rules") {
         into("rules")
     }
     into(layout.buildDirectory.dir("dist"))
