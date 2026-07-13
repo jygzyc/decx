@@ -91,7 +91,7 @@ class DecxTaintConfigProvider(
         return sinks
     }
 
-    override fun callSiteMode(): Boolean = true
+    override fun callSiteMode(): Boolean = false
 
     companion object {
         @Volatile var presetRules: List<VulnRule> = emptyList()

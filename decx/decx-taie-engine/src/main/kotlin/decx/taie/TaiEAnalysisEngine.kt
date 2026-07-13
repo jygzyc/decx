@@ -82,7 +82,7 @@ class TaiEAnalysisEngine(
         // The DecxTaintConfigProvider converts all loaded rules into
         // Tai-e Source/Sink objects for the TaintAnalysis plugin.
         val ptaOptions = if (loadedRules.isNotEmpty()) {
-            "cs:ci;implicit-entries:false;only-app:true;time-limit:600;" +
+            "cs:ci;implicit-entries:false;time-limit:600;" +
                 "taint-config-providers:[decx.taie.DecxTaintConfigProvider]"
         } else {
             "cs:ci;implicit-entries:false;only-app:true;time-limit:600"
