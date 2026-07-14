@@ -50,17 +50,11 @@ jobs:
     - name: Download Android platform jars
       run: |
         mkdir -p decx/platforms
-        # Download platform jars from DECX platforms release
-        # (maintained separately — a one-time upload of android-14..34 stubs)
-        curl -sL "$(curl -s https://api.github.com/repos/jygzyc/decx/releases/tags/platforms \
-          | python3 -c 'import sys,json; assets=json.load(sys.stdin).get("assets",[]); print(next((a["browser_download_url"] for a in assets if "platforms" in a["name"]), ""))')" \
-          -o /tmp/platforms.tar.gz
-        if [ -s /tmp/platforms.tar.gz ]; then
-          tar -xzf /tmp/platforms.tar.gz -C decx/platforms/
-          echo "Downloaded platform jars"
-        else
-          echo "No platforms release found — using bundled fallback"
-        fi
+        # Clone AppShark's bundled platform jars (standard Google android.jar stubs per API level)
+        git clone --depth 1 --filter=blob:none --sparse https://github.com/bytedance/appshark.git /tmp/appshark
+        cd /tmp/appshark && git sparse-checkout set config/tools/platforms
+        cp -r /tmp/appshark/config/tools/platforms/* ${{ github.workspace }}/decx/platforms/
+        echo "Downloaded $(ls -d decx/platforms/android-* | wc -l) platform versions"
 
     - name: Build with Gradle
       run: ./gradlew dist
