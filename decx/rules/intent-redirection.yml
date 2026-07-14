@@ -1,11 +1,12 @@
 id: intent_redirection
 name: "Intent Redirection"
-description: "Parcelable extra from getParcelableExtra flows to startActivity"
+description: "Untrusted Intent (from getIntent/getParcelableExtra) flows to startActivity/sendBroadcast"
 severity: high
 trace_depth: 6
 source:
   return:
-    - "<android.content.Intent: android.os.Parcelable getParcelable*(java.lang.String)>"
+    - "<android.app.Activity: android.content.Intent getIntent()>"
+    - "<android.content.Intent: android.os.Parcelable getParcelableExtra(java.lang.String)>"
     - "<android.os.Bundle: android.os.Parcelable getParcelable(java.lang.String)>"
 sink:
   "<android.app.Activity: void startActivity(android.content.Intent)>":
