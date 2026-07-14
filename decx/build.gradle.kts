@@ -60,5 +60,12 @@ tasks.register<Copy>("dist") {
     from("$rootDir/rules") {
         into("rules")
     }
+    // Include Android platform jars if available (populated by CI or manual copy)
+    val platformsDir = file("$rootDir/platforms")
+    if (platformsDir.isDirectory) {
+        from(platformsDir) {
+            into("platforms")
+        }
+    }
     into(layout.buildDirectory.dir("dist"))
 }

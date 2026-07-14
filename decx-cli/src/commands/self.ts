@@ -9,7 +9,7 @@ import * as path from "path";
 import { fileURLToPath } from "url";
 import { Formatter } from "../utils/formatter.js";
 import { Manager } from "../core/config.js";
-import { checkForServerUpdate, installDecxServer, installDecxRules, type InstallDecxServerResult, type InstallDecxRulesResult } from "../core/installer.js";
+import { checkForServerUpdate, installDecxServer, installDecxRules, installDecxPlatforms, type InstallDecxServerResult, type InstallDecxRulesResult, type InstallDecxPlatformsResult } from "../core/installer.js";
 import { DecxError, ServerError, withErrorHandler } from "../utils/errors.js";
 import { VERSION } from "../core/version.js";
 
@@ -150,11 +150,13 @@ export async function executeSelfInstall(
   deps: {
     installDecxServerFn?: (prerelease?: boolean) => Promise<InstallDecxServerResult>;
     installDecxRulesFn?: (prerelease?: boolean) => Promise<InstallDecxRulesResult>;
+    installDecxPlatformsFn?: (prerelease?: boolean) => Promise<InstallDecxPlatformsResult>;
     manager?: ServerVersionManager;
   } = {}
 ): Promise<{ ok: true; version: string; path: string; message: string }> {
   const installDecxServerFn = deps.installDecxServerFn ?? installDecxServer;
   const installDecxRulesFn = deps.installDecxRulesFn ?? installDecxRules;
+  const installDecxPlatformsFn = deps.installDecxPlatformsFn ?? installDecxPlatforms;
   const manager = deps.manager ?? Manager.get();
   const result = await installDecxServerFn(prerelease);
 
@@ -172,6 +174,16 @@ export async function executeSelfInstall(
     }
   } catch {
     // Non-fatal: rules installation is best-effort
+  }
+
+  // Also install Android platform jars (best-effort)
+  try {
+    const platformsResult = await installDecxPlatformsFn(prerelease);
+    if (!platformsResult.ok) {
+      // Non-fatal: platforms may not exist in older releases
+    }
+  } catch {
+    // Non-fatal: platforms installation is best-effort
   }
 
   return {
@@ -235,6 +247,19 @@ export function makeSelfCommand(): Command {
         }
       } catch (err) {
         console.error(`  Rules update failed: ${err}`);
+      }
+
+      // Update Android platform jars (best-effort)
+      console.error("  Updating Android platforms...");
+      try {
+        const platformsResult = await installDecxPlatforms(opts.prerelease);
+        if (platformsResult.ok) {
+          console.error(`  ${platformsResult.message}`);
+        } else {
+          console.error(`  Platforms update skipped: ${platformsResult.message}`);
+        }
+      } catch (err) {
+        console.error(`  Platforms update failed: ${err}`);
       }
 
       // Update CLI

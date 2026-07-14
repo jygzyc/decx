@@ -333,3 +333,115 @@ export async function installDecxRules(
     return { ok: false, message: `Rules installation failed: ${err}` };
   }
 }
+
+// ---------------------------------------------------------------------------
+// Android platform jars installation (~/.decx/platforms/)
+// ---------------------------------------------------------------------------
+
+const PLATFORMS_DIR = decxPath("platforms");
+const DECX_PLATFORMS_HOME: string | undefined = process.env.DECX_PLATFORMS_HOME;
+
+export type InstallDecxPlatformsResult =
+  | { ok: true; message: string; dir: string }
+  | { ok: false; message: string };
+
+/**
+ * Find the Android platform jars directory.
+ * Priority: DECX_PLATFORMS_HOME env > ~/.decx/platforms/
+ */
+export function findDecxPlatformsDir(): string | null {
+  if (DECX_PLATFORMS_HOME) {
+    if (existsSync(DECX_PLATFORMS_HOME)) return DECX_PLATFORMS_HOME;
+  }
+  if (existsSync(PLATFORMS_DIR)) return PLATFORMS_DIR;
+  return null;
+}
+
+export function selectPlatformsAsset(assets: ReleaseAsset[]): ReleaseAsset | undefined {
+  return assets.find((asset) => asset.name.includes("platforms") && asset.name.endsWith(".tar.gz"));
+}
+
+/**
+ * Download and extract Android platform jars (android-14 through android-36)
+ * from a GitHub release. Extracted to ~/.decx/platforms/.
+ * Soot/Tai-e automatically selects the correct android-<N>/android.jar
+ * based on the APK's targetSdkVersion.
+ */
+export async function installDecxPlatforms(
+  prerelease: boolean = false,
+  options: InstallDecxServerOptions = {}
+): Promise<InstallDecxPlatformsResult> {
+  const {
+    fetchImpl = DEFAULT_FETCH,
+    downloadWithProgressImpl = downloadWithProgress,
+    logger = console,
+  } = options;
+
+  const platformsDir = DECX_PLATFORMS_HOME || PLATFORMS_DIR;
+
+  try {
+    logger.error(`  Fetching latest ${prerelease ? "prerelease" : "release"} info for platforms...`);
+
+    const endpoint = prerelease
+      ? "https://api.github.com/repos/jygzyc/decx/releases?per_page=10"
+      : "https://api.github.com/repos/jygzyc/decx/releases/latest";
+
+    const res = await fetchImpl(endpoint, {
+      headers: { "Accept": "application/vnd.github+json" },
+    });
+    if (!res.ok) {
+      return { ok: false, message: `GitHub API error: HTTP ${res.status}` };
+    }
+
+    let release: ReleaseSummary;
+    if (prerelease) {
+      const releases = await res.json() as Array<ReleaseSummary & { prerelease: boolean }>;
+      const pre = releases.find((r) => r.prerelease);
+      if (!pre) return { ok: false, message: "No prerelease found" };
+      release = pre;
+    } else {
+      release = await res.json() as ReleaseSummary;
+    }
+
+    const asset = selectPlatformsAsset(release.assets);
+    if (!asset) {
+      return { ok: false, message: `No platforms tarball found in release ${release.tag_name}` };
+    }
+
+    mkdirSync(platformsDir, { recursive: true });
+
+    const tmpPath = path.join(platformsDir, ".platforms.tmp.tar.gz");
+    const downloadRes = await fetchImpl(asset.browser_download_url, { redirect: "follow" });
+    if (!downloadRes.ok || !downloadRes.body) {
+      return { ok: false, message: `Download failed: HTTP ${downloadRes.status}` };
+    }
+
+    const totalSize = Number(downloadRes.headers.get("content-length") || 0);
+    await downloadWithProgressImpl(downloadRes.body, tmpPath, totalSize, {
+      label: asset.name,
+    });
+
+    // Extract the tarball directly into platforms dir
+    const { execFileSync } = await import("child_process");
+    try {
+      execFileSync("tar", ["-xzf", tmpPath, "-C", platformsDir], { stdio: "pipe" });
+    } catch (err) {
+      return { ok: false, message: `Failed to extract platforms: ${err}` };
+    }
+
+    try { unlinkSync(tmpPath); } catch { /* ignore */ }
+
+    // Count installed versions
+    const { readdirSync } = await import("fs");
+    const versions = readdirSync(platformsDir).filter(d => d.startsWith("android-"));
+    logger.error(`  Installed ${versions.length} platform version(s) to ${platformsDir}`);
+
+    return {
+      ok: true,
+      message: `Installed Android platforms to ${platformsDir}`,
+      dir: platformsDir,
+    };
+  } catch (err) {
+    return { ok: false, message: `Platforms installation failed: ${err}` };
+  }
+}

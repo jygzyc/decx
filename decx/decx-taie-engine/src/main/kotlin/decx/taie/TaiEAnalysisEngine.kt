@@ -71,9 +71,10 @@ class TaiEAnalysisEngine(
         }
         DecxTaintConfigProvider.presetRules = loadedRules
 
-        // For Android APK mode: extract bundled android.jar.
+        // For Android APK mode: resolve platform jars directory.
+        // Priority: explicit --android-jars > ~/.decx/platforms/ > bundled android.jar
         val effectiveAndroidJars = if (isApk) {
-            androidJarsDir ?: extractBundledAndroidJar()
+            androidJarsDir ?: locatePlatformJars()
         } else {
             null
         }
@@ -396,13 +397,41 @@ class TaiEAnalysisEngine(
      * symlinks for common API levels (21-34) all pointing to the same jar.
      * Returns the parent "platforms" directory path (for Tai-e's -ajs).
      */
+    /**
+     * Locates the Android platform jars directory for Tai-e's -ajs option.
+     * Soot reads the APK's targetSdkVersion and looks for
+     * <dir>/android-<N>/android.jar.
+     *
+     * Priority:
+     *   1. ~/.decx/platforms/ (populated by `decx self install` from GitHub Release)
+     *   2. Bundled android.jar from engine resources (fallback, single version)
+     */
+    private fun locatePlatformJars(): String? {
+        // 1. Check ~/.decx/platforms/ (or DECX_HOME/platforms/)
+        val decxHome = System.getenv("DECX_HOME") ?: File(System.getProperty("user.home"), ".decx").absolutePath
+        val userPlatforms = File(decxHome, "platforms")
+        if (userPlatforms.isDirectory) {
+            val hasJars = userPlatforms.listFiles()?.any { it.isDirectory && File(it, "android.jar").exists() } == true
+            if (hasJars) {
+                System.err.println("[TaiEEngine] Using platform jars from $decxHome/platforms/")
+                return userPlatforms.absolutePath
+            }
+        }
+
+        // 2. Fallback: extract bundled android.jar and create symlinked platform dirs
+        System.err.println("[TaiEEngine] ~/.decx/platforms/ not found, using bundled android.jar")
+        return extractBundledAndroidJar()
+    }
+
+    /**
+     * Extracts the bundled android.jar from classpath resources as fallback.
+     */
     private fun extractBundledAndroidJar(): String? {
         return try {
             val cacheDir = File(System.getProperty("java.io.tmpdir"), "decx-taie-cache")
             val platformsDir = File(cacheDir, "platforms")
             platformsDir.mkdirs()
 
-            // Extract the base android.jar if not cached
             val baseJar = File(cacheDir, "android-base.jar")
             if (!baseJar.exists() || baseJar.length() == 0L) {
                 val resource: InputStream = javaClass.getResourceAsStream("/android-platforms/android.jar")
@@ -413,7 +442,7 @@ class TaiEAnalysisEngine(
             }
 
             // Create platform dirs for common API levels (Soot picks one by targetSdk)
-            for (apiLevel in 21..34) {
+            for (apiLevel in 14..36) {
                 val versionDir = File(platformsDir, "android-$apiLevel")
                 val jarLink = File(versionDir, "android.jar")
                 if (jarLink.exists()) continue
@@ -421,7 +450,6 @@ class TaiEAnalysisEngine(
                 try {
                     Files.createSymbolicLink(jarLink.toPath(), baseJar.toPath())
                 } catch (_: Exception) {
-                    // Symlinks may fail on Windows without privileges — copy instead
                     if (!jarLink.exists()) {
                         Files.copy(baseJar.toPath(), jarLink.toPath(), StandardCopyOption.REPLACE_EXISTING)
                     }
