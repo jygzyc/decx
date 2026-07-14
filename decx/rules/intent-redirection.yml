@@ -1,22 +1,16 @@
 id: intent_redirection
 name: "Intent Redirection"
-description: >-
-  Intent redirection: untrusted Parcelable extra (from getParcelableExtra)
-  is used as the Intent argument to startActivity/setBroadcast, allowing
-  a malicious app to hijack the redirect.
+description: "Parcelable extra from getParcelableExtra flows to startActivity"
 severity: high
 trace_depth: 6
 source:
-  - kind: return
-    method: "<android.content.Intent: android.os.Parcelable getParcelableExtra(java.lang.String)>"
-  - kind: return
-    method: "<android.os.Bundle: android.os.Parcelable getParcelable(java.lang.String)>"
+  return:
+    - "<android.content.Intent: android.os.Parcelable getParcelable*(java.lang.String)>"
+    - "<android.os.Bundle: android.os.Parcelable getParcelable(java.lang.String)>"
 sink:
-  - method: "<android.app.Activity: void startActivity(android.content.Intent)>"
+  "<android.app.Activity: void startActivity(android.content.Intent)>":
     taint_check: ["p0"]
-  - method: "<android.app.Activity: void startActivityForResult(android.content.Intent,int)>"
+  "<android.app.Activity: void startActivityForResult(android.content.Intent,int)>":
     taint_check: ["p0"]
-  - method: "<android.app.Activity: void startActivity(android.content.Intent,android.os.Bundle)>"
-    taint_check: ["p0"]
-  - method: "<android.content.Context: void sendBroadcast(android.content.Intent)>"
+  "<android.content.Context: void sendBroadcast(android.content.Intent)>":
     taint_check: ["p0"]

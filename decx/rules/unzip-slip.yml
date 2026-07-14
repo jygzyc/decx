@@ -1,23 +1,17 @@
 id: zip_slip
 name: "ZIP Slip"
-description: >-
-  ZIP Slip / path traversal during archive extraction:
-  ZipEntry.getName() (which can contain ../) flows to file path
-  construction (File, FileOutputStream, FileWriter), allowing
-  writing outside the intended extraction directory.
+description: "ZipEntry.getName() flows to file path construction"
 severity: high
 trace_depth: 8
 source:
-  - kind: return
-    method: "<java.util.zip.ZipEntry: java.lang.String getName()>"
+  return:
+    - "<java.util.zip.ZipEntry: java.lang.String getName()>"
 sink:
-  - method: "<java.io.File: void <init>(java.lang.String)>"
+  "<java.io.File: void <init>(java.lang.String)>":
     taint_check: ["p0"]
-  - method: "<java.io.File: void <init>(java.io.File,java.lang.String)>"
+  "<java.io.File: void <init>(java.io.File,java.lang.String)>":
     taint_check: ["p1"]
-  - method: "<java.io.FileOutputStream: void <init>(java.lang.String)>"
+  "<java.io.FileOutputStream: void <init>(java.lang.String)>":
     taint_check: ["p0"]
-  - method: "<java.io.FileOutputStream: void <init>(java.io.File)>"
-    taint_check: ["p0"]
-  - method: "<java.io.FileWriter: void <init>(java.lang.String)>"
+  "<java.io.FileWriter: void <init>(java.lang.String)>":
     taint_check: ["p0"]

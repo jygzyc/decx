@@ -220,12 +220,7 @@ class TaiEAnalysisEngine(
                 id = rule.id ?: "",
                 name = rule.name ?: "",
                 description = rule.description ?: "",
-                parameters = rule.parameters?.map { p ->
-                    TaintResult.RuleParameter(
-                        name = p.name, type = p.type, description = p.description,
-                        required = p.required, defaultValue = p.defaultValue
-                    )
-                }
+                parameters = null
             )
         }
     }
@@ -337,7 +332,7 @@ class TaiEAnalysisEngine(
                     add("-cp"); add(inputFile.absolutePath)
                 }
                 add("-a")
-                add("pta=cs:ci;implicit-entries:false;only-app:true;time-limit:600;" +
+                add("pta=cs:ci;implicit-entries:false;time-limit:600;" +
                     "taint-config-providers:[decx.taie.DecxTaintConfigProvider]")
             }
 

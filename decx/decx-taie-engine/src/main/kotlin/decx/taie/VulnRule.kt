@@ -4,41 +4,37 @@ import com.fasterxml.jackson.annotation.JsonIgnoreProperties
 import com.fasterxml.jackson.annotation.JsonProperty
 
 /**
- * An AppShark-style taint analysis rule in YAML format.
+ * AppShark-aligned taint analysis rule in YAML format.
  *
  * Rules define source methods (where tainted data originates), sink methods
- * (where tainted data is consumed/dangerous), and optional sanitizers (methods
- * that "clean" the taint). The TaiEEngine executes the rule by running PTA +
- * taint propagation and returns source→sink paths.
+ * (where tainted data is consumed/dangerous), optional sanitizers (methods
+ * that "clean" the taint), and library taint transfers (modeling opaque
+ * container semantics like Intent/Bundle/Map).
  *
- * Rules support parameterization via `{{param_name}}` template placeholders.
- * When executing via the `investigate` API, callers provide parameter values
- * that are substituted into the rule before analysis.
+ * The engine converts rules to Tai-e Source/Sink/Transfer objects via
+ * DecxTaintConfigProvider and runs Tai-e's TaintAnalysis plugin.
  *
- * YAML format:
+ * YAML format (aligned with AppShark):
  * ```yaml
  * id: intent_redirection
  * name: "Intent Redirection"
- * description: "Detect intent redirection via Parcelable extras"
+ * description: "Parcelable extra to startActivity"
  * severity: high
- * category: intent_redirection
- * trace_depth: 10
- * parameters:
- *   - name: source_method
- *     type: method_signature
- *     description: "Method whose return value is the taint source"
- *     required: true
+ * trace_depth: 6
  * source:
- *   - kind: return
- *     method: "<android.os.BaseBundle: android.os.Parcelable getParcelable(java.lang.String)>"
+ *   return:
+ *     - "<android.content.Intent: android.os.Parcelable getParcelable*(java.lang.String)>"
+ *   param:
+ *     "<com.example.Foo: void bar(java.lang.String)>": ["p0"]
+ *   new_instance:
+ *     - "android.content.Intent"
  * sink:
- *   - method: "<android.app.Activity: void startActivity(android.content.Intent)>"
+ *   "<android.app.Activity: void startActivity(android.content.Intent)>":
  *     taint_check: ["p0"]
- *     param_type: ["android.content.Intent"]
  * sanitizer:
- *   - name: null_check
- *     method: "<java.lang.Object: boolean equals(java.lang.Object)>"
- *     taint_check: ["p0"]
+ *   null_check:
+ *     "<java.lang.Object: boolean equals(java.lang.Object)>":
+ *       taint_check: ["p0"]
  * ```
  */
 @JsonIgnoreProperties(ignoreUnknown = true)
@@ -49,69 +45,99 @@ data class VulnRule(
     @JsonProperty("severity") val severity: String? = "medium",
     @JsonProperty("category") val category: String? = "general",
     @JsonProperty("trace_depth") val traceDepth: Int? = 10,
-    @JsonProperty("parameters") val parameters: List<RuleParameter>? = null,
-    @JsonProperty("source") val source: List<SourceSpec>? = null,
-    @JsonProperty("sink") val sink: List<SinkSpec>? = null,
-    @JsonProperty("sanitizer") val sanitizer: List<SanitizerSpec>? = null
+    @JsonProperty("prim_type_as_taint") val primTypeAsTaint: Boolean? = false,
+    @JsonProperty("source") val source: VulnSource? = null,
+    @JsonProperty("sink") val sink: Map<String, VulnSink>? = null,
+    @JsonProperty("sanitizer") val sanitizer: Map<String, Map<String, VulnSinkBody>>? = null,
+    @JsonProperty("entry") val entry: VulnEntry? = null
 ) {
 
+    /**
+     * Source specification aligned with AppShark's SourceBody.
+     * Supports 7 source kinds matching AppShark.
+     */
     @JsonIgnoreProperties(ignoreUnknown = true)
-    data class RuleParameter(
-        @JsonProperty("name") val name: String,
-        @JsonProperty("type") val type: String,
-        @JsonProperty("description") val description: String,
-        @JsonProperty("required") val required: Boolean,
-        @JsonProperty("default_value") val defaultValue: String? = null
-    )
-
-    @JsonIgnoreProperties(ignoreUnknown = true)
-    data class SourceSpec(
-        @JsonProperty("kind") val kind: String,        // "return" | "param" | "field" | "new_instance"
-        @JsonProperty("method") val method: String,
-        @JsonProperty("position") val position: String? = null  // for "param" kind: "p0", "p1", etc.
-    )
-
-    @JsonIgnoreProperties(ignoreUnknown = true)
-    data class SinkSpec(
-        @JsonProperty("method") val method: String,
-        @JsonProperty("taint_check") val taintCheck: List<String>,  // "p0".."pN" | "p*" | "@this" | "return"
-        @JsonProperty("param_type") val paramType: List<String>? = null
-    )
-
-    @JsonIgnoreProperties(ignoreUnknown = true)
-    data class SanitizerSpec(
-        @JsonProperty("name") val name: String,
-        @JsonProperty("method") val method: String,
-        @JsonProperty("taint_check") val taintCheck: List<String>? = null
+    data class VulnSource(
+        /** Return-type sources: list of method signature patterns (wildcards supported) */
+        @JsonProperty("return") val returnSources: List<String>? = null,
+        /** Param sources: method signature → list of param positions ("p0", "p1", "p*") */
+        @JsonProperty("param") val paramSources: Map<String, List<String>>? = null,
+        /** Static field sources: list of field signature patterns */
+        @JsonProperty("static_field") val staticFieldSources: List<String>? = null,
+        /** Instance field sources: list of field signature patterns */
+        @JsonProperty("field") val fieldSources: List<String>? = null,
+        /** New instance sources: list of class names */
+        @JsonProperty("new_instance") val newInstanceSources: List<String>? = null,
+        /** Constant string sources: list of glob patterns */
+        @JsonProperty("const_string") val constStringSources: List<String>? = null,
+        /** Use JS interface: all @JavascriptInterface method params are sources */
+        @JsonProperty("use_js_interface") val useJSInterface: Boolean? = null
     )
 
     /**
-     * Substitutes {{param}} placeholders in all method signatures with actual
-     * values from [params]. Returns a new rule with substituted signatures.
+     * Sink specification aligned with AppShark's SinkBody.
+     * Keyed by method signature pattern.
+     */
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    data class VulnSink(
+        @JsonProperty("taint_check") val taintCheck: List<String>? = null,
+        @JsonProperty("not_taint") val notTaint: List<String>? = null,
+        @JsonProperty("library_only") val libraryOnly: Boolean? = null,
+        @JsonProperty("taint_param_type") val taintParamType: List<String>? = null
+    )
+
+    /**
+     * Sanitizer body (same shape as VulnSink for taint_check).
+     * Used inside the sanitizer map: { group_name: { method_sig: VulnSinkBody } }
+     */
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    data class VulnSinkBody(
+        @JsonProperty("taint_check") val taintCheck: List<String>? = null,
+        @JsonProperty("not_taint") val notTaint: List<String>? = null,
+        @JsonProperty("taint_param_type") val taintParamType: List<String>? = null
+    )
+
+    /**
+     * Entry point specification aligned with AppShark's Entry.
+     */
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    data class VulnEntry(
+        @JsonProperty("methods") val methods: List<String>? = null,
+        @JsonProperty("components") val components: List<String>? = null,
+        @JsonProperty("exported_compos") val exportedCompos: Boolean? = null
+    )
+
+    /**
+     * Substitutes {{param}} placeholders in all method signatures.
      */
     fun resolveParams(params: Map<String, String>): VulnRule {
-        fun substitute(s: String): String {
-            var result = s
-            params.forEach { (key, value) ->
-                result = result.replace("{{$key}}", value)
+        if (params.isEmpty()) return this
+        fun sub(s: String): String {
+            var r = s
+            params.forEach { (k, v) -> r = r.replace("{{$k}}", v) }
+            return r
+        }
+        fun subList(l: List<String>?) = l?.map(::sub)
+        fun subMapKeys(m: Map<String, List<String>>?) = m?.mapKeys { (k, _) -> sub(k) }?.mapValues { (_, v) -> v.map(::sub) }
+        fun subSinkKeys(m: Map<String, VulnSink>?) = m?.mapKeys { (k, _) -> sub(k) }?.mapValues { (_, v) ->
+            v.copy(taintCheck = subList(v.taintCheck), notTaint = subList(v.notTaint), taintParamType = v.taintParamType?.map(::sub))
+        }
+        fun subSanitizer(m: Map<String, Map<String, VulnSinkBody>>?) = m?.mapValues { (_, inner) ->
+            inner.mapKeys { (k, _) -> sub(k) }.mapValues { (_, v) ->
+                v.copy(taintCheck = subList(v.taintCheck), notTaint = subList(v.notTaint), taintParamType = v.taintParamType?.map(::sub))
             }
-            return result
         }
         return copy(
-            source = source?.map { it.copy(method = substitute(it.method), position = it.position?.let(::substitute)) },
-            sink = sink?.map { spec ->
-                spec.copy(
-                    method = substitute(spec.method),
-                    taintCheck = spec.taintCheck.map(::substitute),
-                    paramType = spec.paramType?.map(::substitute)
-                )
-            },
-            sanitizer = sanitizer?.map { spec ->
-                spec.copy(
-                    method = substitute(spec.method),
-                    taintCheck = spec.taintCheck?.map(::substitute)
-                )
-            }
+            source = source?.copy(
+                returnSources = subList(source.returnSources),
+                paramSources = subMapKeys(source.paramSources),
+                staticFieldSources = subList(source.staticFieldSources),
+                fieldSources = subList(source.fieldSources),
+                newInstanceSources = subList(source.newInstanceSources),
+                constStringSources = subList(source.constStringSources)
+            ),
+            sink = subSinkKeys(sink),
+            sanitizer = subSanitizer(sanitizer)
         )
     }
 }

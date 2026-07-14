@@ -1,0 +1,11 @@
+id: file_world_readable
+name: "World-Readable File"
+description: "Sensitive file operations with world-readable permissions"
+severity: medium
+trace_depth: 5
+source:
+  return:
+    - "<android.content.Context: java.io.FileOutputStream openFileOutput(java.lang.String,int)>"
+sink:
+  "<java.io.File: void <init>(java.lang.String)>":
+    taint_check: ["p0"]

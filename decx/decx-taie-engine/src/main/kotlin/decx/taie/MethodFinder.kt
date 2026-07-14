@@ -90,7 +90,7 @@ object MethodFinder {
         if (!matchWildcard(method.name, parts.methodName)) return false
 
         // Return type: wildcard or match
-        if (parts.returnType != "*" && parts.returnType != "*") {
+        if (parts.returnType != "*") {
             if (!matchWildcard(method.returnType.toString(), parts.returnType)) return false
         }
 

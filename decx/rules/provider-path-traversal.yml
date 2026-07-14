@@ -1,20 +1,13 @@
 id: provider_path_traversal
 name: "ContentProvider Path Traversal"
-description: >-
-  ContentProvider.openFile(Uri) receives untrusted Uri input that can
-  contain ../ path traversal sequences. If the Uri's path is used to
-  construct a File object without canonicalization, an attacker can
-  read arbitrary files via content:// URIs.
+description: "ContentProvider.openFile(Uri) param flows to File/ParcelFileDescriptor.open"
 severity: high
 trace_depth: 14
 source:
-  - kind: param
-    method: "<android.content.ContentProvider: android.os.ParcelFileDescriptor openFile(android.net.Uri,java.lang.String)>"
-    position: "p0"
+  param:
+    "<android.content.ContentProvider: android.os.ParcelFileDescriptor openFile(android.net.Uri,java.lang.String)>": ["p0"]
 sink:
-  - method: "<android.os.ParcelFileDescriptor: android.os.ParcelFileDescriptor open(java.io.File,int)>"
+  "<android.os.ParcelFileDescriptor: android.os.ParcelFileDescriptor open(java.io.File,int)>":
     taint_check: ["p0"]
-  - method: "<java.io.File: void <init>(java.lang.String)>"
-    taint_check: ["p0"]
-  - method: "<java.io.FileInputStream: void <init>(java.lang.String)>"
+  "<java.io.File: void <init>(java.lang.String)>":
     taint_check: ["p0"]

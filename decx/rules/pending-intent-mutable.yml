@@ -1,25 +1,15 @@
 id: pending_intent_mutable
 name: "Mutable PendingIntent"
-description: >-
-  PendingIntent is created with FLAG_MUTABLE, allowing a malicious app
-  that receives the PendingIntent to modify the underlying Intent's
-  extras and action. Source: new Intent() (attacker-influenced).
-  Sink: PendingIntent.getActivity/getBroadcast/getService where p2
-  (the Intent) is tainted AND p3 (flags) does not contain FLAG_IMMUTABLE.
-  Note: the bitmask check on p3 is not directly supported by the current
-  engine; this rule flags all PendingIntent creations with a tainted
-  Intent. AI should verify FLAG_IMMUTABLE manually.
+description: "PendingIntent created with attacker-influenced Intent"
 severity: medium
 trace_depth: 8
 source:
-  - kind: new_instance
-    method: "<android.content.Intent: void <init>()>"
+  new_instance:
+    - "android.content.Intent"
 sink:
-  - method: "<android.app.PendingIntent: android.app.PendingIntent getActivity(android.content.Context,int,android.content.Intent,int)>"
+  "<android.app.PendingIntent: android.app.PendingIntent getActivity(android.content.Context,int,android.content.Intent,int)>":
     taint_check: ["p2"]
-  - method: "<android.app.PendingIntent: android.app.PendingIntent getActivities(android.content.Context,int,android.content.Intent[],int)>"
+  "<android.app.PendingIntent: android.app.PendingIntent getBroadcast(android.content.Context,int,android.content.Intent,int)>":
     taint_check: ["p2"]
-  - method: "<android.app.PendingIntent: android.app.PendingIntent getBroadcast(android.content.Context,int,android.content.Intent,int)>"
-    taint_check: ["p2"]
-  - method: "<android.app.PendingIntent: android.app.PendingIntent getService(android.content.Context,int,android.content.Intent,int)>"
+  "<android.app.PendingIntent: android.app.PendingIntent getService(android.content.Context,int,android.content.Intent,int)>":
     taint_check: ["p2"]
