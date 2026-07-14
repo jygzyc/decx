@@ -4,6 +4,7 @@ import pascal.taie.analysis.pta.plugin.taint.CallSource
 import pascal.taie.analysis.pta.plugin.taint.FieldSource
 import pascal.taie.analysis.pta.plugin.taint.IndexRef
 import pascal.taie.analysis.pta.plugin.taint.ParamSanitizer
+import pascal.taie.analysis.pta.plugin.taint.ParamSource
 import pascal.taie.analysis.pta.plugin.taint.Sink
 import pascal.taie.analysis.pta.plugin.taint.Source
 import pascal.taie.analysis.pta.plugin.taint.TaintConfigProvider
@@ -56,7 +57,10 @@ class DecxTaintConfigProvider(
                 }
             }
 
-            // 2. param sources
+            // 2. param sources — use ParamSource (not CallSource!)
+            // ParamSource injects taint on the method's parameter itself,
+            // triggered when the method becomes reachable in the CG.
+            // CallSource injects taint at call sites — wrong for params.
             src.paramSources?.forEach { (pattern, positions) ->
                 val methods = MethodFinder.resolveMethods(pattern, hierarchy)
                 System.err.println("[DecxTaintProvider]   source 'param' '$pattern' positions=$positions -> ${methods.size}")
@@ -64,7 +68,7 @@ class DecxTaintConfigProvider(
                     for (pos in positions) {
                         val idx = parsePosition(pos, m)
                         if (idx >= 0 && idx < m.paramCount) {
-                            sources.add(CallSource(m,
+                            sources.add(ParamSource(m,
                                 IndexRef(IndexRef.Kind.VAR, idx, null),
                                 m.getParamType(idx)))
                             methodToRule[m] = rule.id ?: "unknown"
