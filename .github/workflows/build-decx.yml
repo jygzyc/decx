@@ -47,15 +47,6 @@ jobs:
     - name: Setup Gradle
       uses: gradle/actions/setup-gradle@v6
 
-    - name: Download Android platform jars
-      run: |
-        mkdir -p decx/platforms
-        # Clone AppShark's bundled platform jars (standard Google android.jar stubs per API level)
-        git clone --depth 1 --filter=blob:none --sparse https://github.com/bytedance/appshark.git /tmp/appshark
-        cd /tmp/appshark && git sparse-checkout set config/tools/platforms
-        cp -r /tmp/appshark/config/tools/platforms/* ${{ github.workspace }}/decx/platforms/
-        echo "Downloaded $(ls -d decx/platforms/android-* | wc -l) platform versions"
-
     - name: Build with Gradle
       run: ./gradlew dist
       working-directory: decx
