@@ -18,7 +18,7 @@ description: Framework Binder PoC routing for service calls and race drivers.
 - interface descriptor
 - method or transact code
 - parameter types and values
-- identity/guard fact ids
+- identity/guard references
 - successSignal
 
 ## Implementation Slots

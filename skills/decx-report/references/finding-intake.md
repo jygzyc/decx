@@ -1,7 +1,7 @@
 # Report Finding Intake
 
-1. Read finalized finding Facts.
-2. Re-check entry→impact path using the core finding consumer contract.
+1. Read finalized finding writeups.
+2. Re-verify each finding's entry→impact path against current code.
 3. Build one issue model per finding.
 
 Issue model fields:
@@ -17,6 +17,5 @@ Issue model fields:
 - impact
 - composition
 - remediation
-- residualOpenIntents
 
 Do not render a finding whose required model fields are missing.

@@ -1,22 +1,17 @@
 ---
 name: poc-workflow
-description: PoC DAG intake, spec, and optional build/deploy flow.
+description: PoC finding intake, spec, and optional build/deploy flow.
 ---
 
 # PoC Workflow Reference
 
 ## Read Finding
 
-```bash
-node skills/decx-analysis-core/scripts/decx-graph.mjs facts <graph-dir> --kind app-finding
-node skills/decx-analysis-core/scripts/decx-graph.mjs facts <graph-dir> --kind framework-finding
-node skills/decx-analysis-core/scripts/decx-graph.mjs path <graph-dir> --from <entry_fact> --to <impact_fact>
-node skills/decx-analysis-core/scripts/decx-graph.mjs ancestors <graph-dir> --from <impact_fact>
-```
+Read one finalized finding writeup. Confirm its entry→impact path and that all referenced evidence artifacts are available.
 
 ## Re-check
 
-Stop if entry→impact path is missing, evidence artifacts are unreadable, or PoC Spec fields cannot be filled from accepted facts.
+Stop if the entry→impact path is missing, evidence artifacts are unreadable, or PoC Spec fields cannot be filled from the finding.
 
 ## Build Flow
 

@@ -12,7 +12,7 @@ Runs `decx` CLI commands for Android/Java target analysis. Targets include APK, 
 
 ## Routing Gate
 
-Use only for DECX CLI command execution: session lifecycle, code/manifest inspection, or adb-backed device queries. Do not use for vulnerability analysis, chain tracing, report writing, PoC construction, or generic Android security advice. Route those to `decx-app-vulnhunt`, `decx-framework-vulnhunt`, `decx-report`, `decx-poc`, or external security guidance respectively.
+Use only for DECX CLI command execution: session lifecycle, code/manifest inspection, or adb-backed device queries. Do not use for vulnerability analysis, chain tracing, report writing, PoC construction, or generic Android security advice. Route those to `decx-vulnhunt`, `decx-report`, `decx-poc`, or external security guidance respectively.
 
 ## Command Selection
 

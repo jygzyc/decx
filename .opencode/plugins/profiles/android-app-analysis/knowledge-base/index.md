@@ -4,8 +4,8 @@ Use this index to load the smallest useful knowledge topic. Knowledge is a lead;
 
 | Topic | Load when | Source basis |
 |---|---|---|
-| `app` | APK, exported component, provider, WebView, PendingIntent, broadcast, URI grant, object parsing, archive loading, or cross-app channel analysis | `skills/decx-app-vulnhunt/references` |
-| `framework` | Android framework service, Binder, system identity, cross-user, PendingIntent, provider proxy, transition, race, validation gap, or native service analysis | `skills/decx-framework-vulnhunt/references` |
+| `app` | APK, exported component, provider, WebView, PendingIntent, broadcast, URI grant, object parsing, archive loading, or cross-app channel analysis | `skills/decx-vulnhunt/references/app-chains.md`, `skills/decx-vulnhunt/references/patterns/app_*.md` |
+| `framework` | Android framework service, Binder, system identity, cross-user, PendingIntent, provider proxy, transition, race, validation gap, or native service analysis | `skills/decx-vulnhunt/references/framework-chains.md`, `skills/decx-vulnhunt/references/patterns/framework_*.md` |
 | `evidence` | Candidate promotion, finding gate, severity, report confidence, or rejection decision | app/framework risk-rating references |
 | `poc_report` | Building PoC or report from accepted graph facts | `skills/decx-poc/references`, `skills/decx-report/references` |
 

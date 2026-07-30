@@ -9,7 +9,7 @@ Source templates only. Do not store generated build/cache output here.
 
 ## Edit Rules
 
-- Replace placeholders only from accepted DAG evidence or PoC Spec.
+- Replace placeholders only from the finalized finding writeup or PoC Spec.
 - Keep one exploit id per finding.
 - Add helper components only when the finalized finding requires them.
 - Do not commit generated `.gradle/`, `build/`, or output APK files.

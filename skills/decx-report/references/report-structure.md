@@ -14,5 +14,3 @@ Each finding has four sections:
 2. Issue explanation
 3. Composition analysis
 4. Remediation
-
-Residual open intents go in a separate residual section and must not be rendered as findings.

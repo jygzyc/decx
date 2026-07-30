@@ -11,9 +11,9 @@
 
 ## 问题总览
 
-| ID | 风险 | 标题 | 入口事实 | 影响事实 |
+| ID | 风险 | 标题 | 入口 | 影响 |
 |---|---|---|---|---|
-| `{{issue.id}}` | `{{issue.rating}}` | `{{issue.title}}` | `{{issue.entryFact}}` | `{{issue.impactFact}}` |
+| `{{issue.id}}` | `{{issue.rating}}` | `{{issue.title}}` | `{{issue.entry}}` | `{{issue.impact}}` |
 
 ## {{issue.id}} {{issue.title}}
 
@@ -39,9 +39,3 @@
 ### 4. 安全建议与修复
 
 `{{issue.remediation}}`
-
-## 残余 Open Intents
-
-| Intent | Phase | Goal | Status |
-|---|---|---|---|
-| `{{intent.id}}` | `{{intent.phase}}` | `{{intent.goal}}` | `{{intent.status}}` |

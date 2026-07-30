@@ -32,8 +32,7 @@ AI Assistant / CLI
 | `decx/decx-server/` | Kotlin, Shadow JAR | Standalone headless server with `DecxServerApp` main class |
 | `decx-cli/` | TypeScript, Node.js 22.5+ | User CLI for session management and analysis commands |
 | `skills/decx-cli/` | Skill `decx-cli` | DECX CLI usage, general analysis, and workflow routing |
-| `skills/decx-app-vulnhunt/` | Skill `decx-app-vulnhunt` | Android app vulnerability hunting workflow |
-| `skills/decx-framework-vulnhunt/` | Skill `decx-framework-vulnhunt` | Android framework vulnerability hunting workflow |
+| `skills/decx-vulnhunt/` | Skill `decx-vulnhunt` | Android vulnerability hunting workflow (App + Framework tracks) |
 | `skills/decx-report/` | Skill `decx-report` | Report generation from finalized DECX analysis graph findings |
 | `skills/decx-poc/` | Skill `decx-poc` | PoC app construction workflow |
 | `skills/decx-poc/assets/poc-template-app/` | Android template | Source-of-truth minimal Android PoC app scaffold |
@@ -113,8 +112,8 @@ Notable details:
 ### Skill workflow details
 
 - Skill architecture and authoring rules are defined in `skills/AGENTS.md`.
-- DECX analysis skills share `skills/decx-analysis-core/`, a minimal SQLite Fact/Intent/Hint DAG protocol. Each analysis session gets one `decx-analysis.db` under `.decx-analysis/<session>/`. App hunts initialize with `--kind android_app`; framework hunts initialize with `--kind android_framework`. Facts are accepted evidence, Intents are concrete analysis tasks, and Hints are human-authored guidance. Chains are derived from the Fact→Intent→Fact DAG. Intent execution uses `start --by <generator-id>` with a renewable lease for parallel work. The shared graph CLI is `skills/decx-analysis-core/scripts/decx-graph.mjs`.
-- `skills/decx-report/` (`decx-report`) owns report templates and consumes finalized DECX analysis graph findings; app/framework vuln-hunt skills should not duplicate report templates.
+- Vulnerability hunting is the `decx-vulnhunt` skill with App and Framework tracks sharing one methodology, evidence gates, and rating authority; report/PoC skills consume its finalized finding writeups.
+- `skills/decx-report/` (`decx-report`) owns report templates and consumes finalized DECX finding writeups; vuln-hunt skills should not duplicate report templates.
 - `skills/decx-poc/scripts/setup-poc.mjs` copies `skills/decx-poc/assets/poc-template-app/` into `poc-<target>/app/` and `skills/decx-poc/assets/poc-template-server/` into `poc-<target>/server/`
 - The PoC app template keeps a dynamic button registry in `ExploitRegistry` and also accepts browser-driven `poc-<target>://run/trigger?exploit=<id>` launches through `PoCActivity`.
 

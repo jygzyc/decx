@@ -257,7 +257,7 @@
     <!-- ═══════ 3. Composition — cross-finding composition analysis ═══════ -->
     <!--
       Every finding MUST have this section.
-      When no accepted composition fact/intent supports composition, show the no-composition notice.
+      When no composition evidence supports composition, show the no-composition notice.
       Otherwise show composition analysis (组合分析 + 效果比较表 + 完整攻击路径 + 真实影响).
     -->
     <section>
@@ -317,21 +317,6 @@
       <div class="fix">{{issue.remediation}}</div>
     </section>
 
-    <!-- ═══════ Residual ═══════ -->
-    <section>
-      <h2>残余 Open Intents</h2>
-      <table>
-        <thead><tr><th>Intent</th><th>Phase</th><th>Goal</th><th>Status</th></tr></thead>
-        <tbody>
-          <tr>
-            <td>{{intent.id}}</td>
-            <td>{{intent.phase}}</td>
-            <td>{{intent.goal}}</td>
-            <td>{{intent.status}}</td>
-          </tr>
-        </tbody>
-      </table>
-    </section>
   </main>
 </body>
 </html>

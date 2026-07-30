@@ -78,8 +78,6 @@ Every case follows this structure:
 | Skill | Scope |
 |---|---|
 | `decx-cli` | DECX CLI command usage. Independent, no cross-skill routing. |
-| `decx-analysis-core` | Shared Fact/Intent/Hint DAG protocol and planner/generator/evaluator orchestration for DECX analysis skills. |
-| `decx-app-vulnhunt` | APK app-layer vulnerability hunting. Uses `decx-analysis-core`; keeps APP routing and evidence gates locally. |
-| `decx-framework-vulnhunt` | Framework/Binder vulnerability hunting. Uses `decx-analysis-core`; keeps framework routing and evidence gates locally. |
-| `decx-report` | Report generation from finalized finding Facts in the shared DAG. |
-| `decx-poc` | PoC construction from one finalized finding Fact. |
+| `decx-vulnhunt` | Android vulnerability hunting method (App + Framework tracks): surface collection, pattern routing, evidence gates, risk rating. |
+| `decx-report` | Report generation from finalized finding writeups. |
+| `decx-poc` | PoC construction from one finalized finding writeup. |

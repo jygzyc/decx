@@ -52,10 +52,9 @@ The `skills/` directory contains:
 | Skill | Use |
 |---|---|
 | `decx-cli` | DECX CLI usage, general code navigation, source lookup, xrefs, manifest/resource inspection, and workflow routing |
-| `decx-app-vulnhunt` | APK app-layer vulnerability hunting with the SQLite blackboard workflow |
-| `decx-framework-vulnhunt` | Android framework and Binder/service vulnerability hunting on processed framework bundles |
-| `decx-poc` | Build a focused Android PoC app and optional helper server from one finalized blackboard finding or selected graph path |
-| `decx-report` | Generate HTML/Markdown reports from finalized blackboard findings |
+| `decx-vulnhunt` | Android vulnerability hunting (App + Framework tracks): exported components, WebView/Provider/Service/Receiver, Binder/system services, AIDL |
+| `decx-poc` | Build a focused Android PoC app and optional helper server from one finalized finding writeup |
+| `decx-report` | Generate HTML/Markdown reports from finalized finding writeups |
 
 ### JADX Plugin
 
@@ -88,11 +87,11 @@ decx process close --port 25419
 Typical skill sequence:
 
 - `decx-cli` for exploration, evidence gathering, and routing
-- `decx-app-vulnhunt` or `decx-framework-vulnhunt` for focused vulnerability hunting
-- `decx-report` for generating reports from finalized blackboard findings
-- `decx-poc` for turning one finalized blackboard finding or selected graph path into a buildable PoC
+- `decx-vulnhunt` for focused vulnerability hunting (App or Framework track)
+- `decx-report` for generating reports from finalized finding writeups
+- `decx-poc` for turning one finalized finding writeup into a buildable PoC
 
-Vulnerability hunting skills write analysis state to `.decx-analysis/<target>/decx-analysis.db`. App hunts initialize the blackboard with `--kind android_app`; framework hunts use `--kind android_framework`. The blackboard stores facts, intents, events, links, and chains that downstream report and PoC skills consume.
+Vulnerability hunting keeps notes and finalized finding writeups under `.decx-analysis/<target>/`. Downstream report and PoC skills consume those finding writeups.
 
 Useful command groups:
 

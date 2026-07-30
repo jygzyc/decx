@@ -19,7 +19,7 @@ session_context=$(cat <<'EOF'
 You have DECX skills installed.
 
 Use `decx-cli` first for any DECX-related task.
-Route to `decx-app-vulnhunt`, `decx-framework-vulnhunt`, `decx-poc`, or `decx-report` as needed.
+Route to `decx-vulnhunt`, `decx-poc`, or `decx-report` as needed.
 If the work can be split, use `decx-subagent`.
 
 DECX rules:

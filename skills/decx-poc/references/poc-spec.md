@@ -6,8 +6,8 @@ Build one spec before writing code.
 
 - findingId
 - targetKind
-- entryFact
-- impactFact
+- entry
+- impact
 - trigger
 - controllableInput
 - guardOutcome
@@ -21,7 +21,7 @@ Build one spec before writing code.
 
 ## Rules
 
-- Every field must come from accepted DAG facts or evidence artifacts.
+- Every field must come from the finalized finding writeup or its evidence artifacts.
 - Stop before project creation if any required field is missing.
 - One spec maps to one exploit id.
 - Do not infer helper components or acquisition steps.

@@ -11,9 +11,9 @@
 
 ## Findings Summary
 
-| ID | Risk | Title | Entry Fact | Impact Fact |
+| ID | Risk | Title | Entry | Impact |
 |---|---|---|---|---|
-| `{{issue.id}}` | `{{issue.rating}}` | `{{issue.title}}` | `{{issue.entryFact}}` | `{{issue.impactFact}}` |
+| `{{issue.id}}` | `{{issue.rating}}` | `{{issue.title}}` | `{{issue.entry}}` | `{{issue.impact}}` |
 
 ## {{issue.id}} {{issue.title}}
 
@@ -39,9 +39,3 @@
 ### 4. Remediation
 
 `{{issue.remediation}}`
-
-## Residual Open Intents
-
-| Intent | Phase | Goal | Status |
-|---|---|---|---|
-| `{{intent.id}}` | `{{intent.phase}}` | `{{intent.goal}}` | `{{intent.status}}` |

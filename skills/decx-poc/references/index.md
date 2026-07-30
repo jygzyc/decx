@@ -4,7 +4,7 @@ Use after `poc-spec.md` is complete. Select exactly one primary reference.
 
 ## Input
 
-Findings come from accepted `app-finding` / `framework-finding` Facts in the shared `decx-analysis-core` DAG.
+Findings are finalized analysis writeups from `decx-vulnhunt`.
 
 ## Load Order
 
