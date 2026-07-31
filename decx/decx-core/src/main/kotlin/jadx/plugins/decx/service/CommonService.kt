@@ -8,6 +8,8 @@ import jadx.plugins.decx.api.DecxApiResult
 import jadx.plugins.decx.utils.AnalysisResultUtils
 import jadx.plugins.decx.utils.CodeUtils
 import jadx.plugins.decx.utils.DecompileGuard
+import jadx.plugins.decx.utils.SymbolIndex
+import jadx.plugins.decx.utils.RouteTelemetry
 import jadx.plugins.decx.utils.ItemKind
 import java.util.regex.PatternSyntaxException
 
@@ -19,8 +21,7 @@ class CommonService(override val decompiler: JadxDecompiler) : DecompilerBackedS
         return try {
             val compiled = filter.compile()
                 ?: return DecxApiResult.fail(AnalysisResultUtils.error(DecxKind.CLASSES, query, DecxError.INVALID_PARAMETER, "invalid filter regex"))
-            val classes = decompiler.classesWithInners
-                .map { it.fullName }
+            val classes = SymbolIndex.classNames(decompiler)
                 .filter { className -> compiled.matches(className) }
                 .let { classNames -> filter.limit(classNames) }
             val items = classes.map { cls ->
@@ -50,17 +51,20 @@ class CommonService(override val decompiler: JadxDecompiler) : DecompilerBackedS
                 ?: return DecxApiResult.fail(AnalysisResultUtils.error(DecxKind.SEARCH_GLOBAL, query, DecxError.INVALID_PARAMETER, "invalid filter regex"))
             val classes = decompiler.classesWithInners
                 .filter { clazz -> filters.matches(clazz.fullName) }
+            RouteTelemetry.currentSetTotal(classes.size.toLong())
             var skipped = 0
             val matches = mutableListOf<Map<String, Any>>()
             for (clazz in classes) {
+                RouteTelemetry.currentIncrementScanned()
                 try {
-                    val decision = DecompileGuard.decompile(clazz, DecompileGuard.Purpose.JAVA)
+                    val decision = DecompileGuard.source(clazz, DecompileGuard.Purpose.JAVA)
                     if (!decision.allowed) {
                         skipped += 1
                         continue
                     }
-                    val code = clazz.code ?: ""
+                    val code = decision.code ?: ""
                     if (matcher.matches(clazz.fullName) || matcher.matches(code)) {
+                        RouteTelemetry.currentIncrementMatches()
                         matches += AnalysisResultUtils.item(
                             id = clazz.fullName,
                             kind = ItemKind.SYMBOL,
@@ -176,9 +180,10 @@ class CommonService(override val decompiler: JadxDecompiler) : DecompilerBackedS
                 return DecxApiResult.fail( AnalysisResultUtils.error(DecxKind.SEARCH_METHOD, query, DecxError.EMPTY_SEARCH_KEY))
             }
             val lowerMethodName = mth.lowercase()
-            val mths = decompiler.classesWithInners?.flatMap { clazz ->
-                clazz.methods.filter { method -> method.fullName.lowercase().contains(lowerMethodName) }
-            } ?: emptyList()
+            val mths = SymbolIndex.methods(decompiler)
+                .parallelStream()
+                .filter { method -> method.fullName.lowercase().contains(lowerMethodName) }
+                .collect(java.util.stream.Collectors.toList())
             val items = mths.map { method ->
                 val sig = CodeUtils.methodSignature(method)
                 AnalysisResultUtils.item(

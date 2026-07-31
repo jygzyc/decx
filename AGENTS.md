@@ -66,7 +66,7 @@ The JADX plugin does more than just expose the server:
 - Starts the embedded DECX HTTP server
 - Starts and stops the in-process Kotlin MCP HTTP server on `serverPort + 1`
 - Provides UI and restart hooks through `DecxUIManager`
-- Performs decompiler warmup in the background for faster later queries
+- Caches decompiled source on demand via `DecompileGuard` (compressed) for fast repeat queries; no background warmup
 
 ### CLI responsibilities
 
@@ -293,9 +293,11 @@ Port coordination matters:
 | `decx/decx-core/src/main/kotlin/jadx/plugins/decx/server/DecxMcpServer.kt` | In-process Kotlin MCP server lifecycle |
 | `decx/decx-core/src/main/kotlin/jadx/plugins/decx/server/McpHttpServer.kt` | Ktor CIO Streamable HTTP transport for MCP |
 | `decx/decx-core/src/main/kotlin/jadx/plugins/decx/server/McpToolRegistry.kt` | MCP tool surface, backed by DecxRoutes |
-| `decx/decx-core/src/main/kotlin/jadx/plugins/decx/utils/DecompileGuard.kt` | Guarded decompilation and high-memory skip logging |
+| `decx/decx-core/src/main/kotlin/jadx/plugins/decx/utils/DecompileGuard.kt` | Guarded decompilation, high-memory skip, and compressed source cache |
+| `decx/decx-core/src/main/kotlin/jadx/plugins/decx/utils/SymbolIndex.kt` | Lazy class/method name inventory for `get_classes`/`search_method` |
+| `decx/decx-core/src/main/kotlin/jadx/plugins/decx/utils/RouteTelemetry.kt` | In-flight + per-endpoint latency telemetry via `/health` and logs |
 | `decx/decx-plugin/src/main/kotlin/jadx/plugins/decx/DecxPlugin.kt` | JADX plugin entry point |
-| `decx/decx-plugin/src/main/kotlin/jadx/plugins/decx/lifecycle/PluginLifecycleManager.kt` | Startup sequencing and warmup |
+| `decx/decx-plugin/src/main/kotlin/jadx/plugins/decx/lifecycle/PluginLifecycleManager.kt` | Startup sequencing |
 | `decx/decx-plugin/src/main/kotlin/jadx/plugins/decx/ui/DecxUIManager.kt` | Plugin UI and restart actions |
 | `decx/decx-server/src/main/kotlin/jadx/plugins/decx/server/DecxServerApp.kt` | Headless entry point |
 | `decx-cli/src/index.ts` | CLI command registration |

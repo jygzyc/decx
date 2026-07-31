@@ -21,9 +21,8 @@ import jadx.plugins.decx.service.UiBackedService
 object Decx {
     fun api(
         decompiler: JadxDecompiler,
-        cacheEnabled: Boolean = true,
         uiService: UiBackedService? = null
-    ): DecxApi = DecxApiImpl(decompiler, cacheEnabled, uiService)
+    ): DecxApi = DecxApiImpl(decompiler, uiService)
 
     fun httpServer(api: DecxApi, port: Int = DecxConstants.DEFAULT_PORT): DecxServer =
         DecxServer(api, port)

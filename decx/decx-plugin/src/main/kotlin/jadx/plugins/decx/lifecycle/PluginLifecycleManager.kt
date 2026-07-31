@@ -8,7 +8,6 @@ import jadx.plugins.decx.service.UIService
 import jadx.plugins.decx.api.DecxError
 import jadx.plugins.decx.utils.LogUtils
 import jadx.plugins.decx.utils.PreferencesManager
-import jadx.plugins.decx.utils.WarmupUtils
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 
@@ -54,27 +53,10 @@ class PluginLifecycleManager(
                 val server = Decx.httpServer(api, port)
                 server.start()
                 onReady(server, api)
-
-                warmupDecompilation(decompiler)
             }
         } catch (e: Exception) {
             LogUtils.error(DecxError.SERVER_INTERNAL_ERROR, "Failed to initialize components", e)
             throw e
         }
-    }
-
-    private fun warmupDecompilation(decompiler: jadx.api.JadxDecompiler) {
-        Thread({
-            try {
-                val classes = WarmupUtils.selectWarmupClasses(decompiler)
-                if (classes.isEmpty()) return@Thread
-
-                LogUtils.debug("Warmup classes count: ${classes.size}")
-                val elapsed = WarmupUtils.warmup(classes, logProgress = { message -> LogUtils.info(message) })
-                LogUtils.info("Warmup completed in ${elapsed}ms, decompiler engine ready")
-            } catch (e: Exception) {
-                LogUtils.debug("Warmup failed: ${e.message}")
-            }
-        }, "Decx-Warmup").apply { isDaemon = true }.start()
     }
 }

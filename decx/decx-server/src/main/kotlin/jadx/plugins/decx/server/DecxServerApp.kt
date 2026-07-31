@@ -5,7 +5,6 @@ import jadx.cli.JadxCLIArgs
 import jadx.plugins.decx.Decx
 import jadx.plugins.decx.DecxConstants
 import jadx.plugins.decx.utils.PluginUtils
-import jadx.plugins.decx.utils.WarmupUtils
 
 /**
  * DECX Server — Java Intelligence Analysis Platform.
@@ -87,11 +86,6 @@ object DecxServerApp {
 			return
 		}
 		println("[+] Loaded $classCount classes")
-
-		println("[*] Warming up decompiler engine...")
-		val toWarmup = WarmupUtils.selectWarmupClasses(decompiler)
-		val warmupElapsed = WarmupUtils.warmup(toWarmup, logProgress = { message -> println("[*] $message") })
-		println("[+] Warmup completed in ${warmupElapsed}ms")
 
 		val api = Decx.api(decompiler)
 		val server = Decx.httpServer(api, port)
