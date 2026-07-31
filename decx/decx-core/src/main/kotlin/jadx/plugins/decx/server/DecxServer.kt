@@ -65,11 +65,14 @@ class DecxServer(
         }
 
         return try {
-            app = Javalin.create { cfg ->
-                cfg.showJavalinBanner = false
-            }.start(overridePort)
             routeHandler = RouteHandler(api)
-            configureRoutes()
+            app = Javalin.create { config ->
+                config.startup.showJavalinBanner = false
+                config.routes.get("/health") { ctx -> handleHealthCheck(ctx) }
+                DecxRoutes.all.forEach { route ->
+                    config.routes.post(route.path) { ctx -> handleRoute(ctx, route.path) }
+                }
+            }.start(overridePort)
             started = true
 
             LogUtils.info("Server started on port $overridePort")
@@ -154,15 +157,6 @@ class DecxServer(
      * Expose the underlying [DecxApi] for direct access without going through HTTP.
      */
     fun getApi(): DecxApi = api
-
-    private fun configureRoutes() {
-        app?.apply {
-            get("/health") { ctx -> handleHealthCheck(ctx) }
-            DecxRoutes.all.forEach { route ->
-                post(route.path) { ctx -> handleRoute(ctx, route.path) }
-            }
-        }
-    }
 
     private fun handleRoute(ctx: Context, path: String) {
         var future: Future<Map<String, Any>>? = null
