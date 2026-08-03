@@ -78,8 +78,8 @@ Agent 驱动分析时，先用 CLI 创建会话，再让已安装技能接管具
 decx process open target.apk --name target
 decx code classes --limit 50
 decx code search-global "WebView" --limit 20
-decx ard exported-components
-decx ard app-deeplinks
+decx android exported-components
+decx android deep-links
 decx process close target
 decx process close --port 25419
 ```
@@ -98,20 +98,20 @@ decx process close --port 25419
 | 需求 | 命令 |
 |---|---|
 | 会话管理 | `decx process open <file>`、`decx process list`、`decx process check`、`decx process close [name] [--port <port>]` |
-| 代码分析 | `decx code classes`、`class-source`、`method-source`、`method-context`、`search-global`、`search-class`、`xref-method`、`xref-class`、`xref-field`、`implement`、`subclass` |
-| APK 分析 | `decx ard app-manifest`、`main-activity`、`app-application`、`exported-components`、`app-deeplinks`、`app-receivers`、`get-aidl`、`all-resources`、`resource-file`、`strings` |
-| Framework 分析 | `decx ard framework collect`、`process <oem>`、`run`、`open [jar]`，以及 `system-service-impl <interface>` |
-| 设备辅助 | `decx ard system-services`、`decx ard perm-info <permission>` |
+| 代码分析 | `decx code classes`、`class-source`、`method-source`、`method-context`、`search-global`、`search-class`、`xref-method`、`xref-class`、`xref-field`、`implementations`、`subclasses` |
+| APK 分析 | `decx android manifest`、`launcher-activity`、`application`、`exported-components`、`deep-links`、`dynamic-receivers`、`aidl-interfaces`、`resources`、`resource-file`、`strings` |
+| Framework 分析 | `decx android framework collect`、`process [oem]`、`run`、`open [jar]`，以及 `framework-service-implementation <interface>` |
+| 设备辅助 | `decx android device system-services`、`decx android device permission-info <permission>` |
 | CLI/server 管理 | `decx self install`、`decx self update` |
 
 注意：
 
-- 基于会话的 `code` 和 `ard` 命令支持 `--page <n>`，也可用 `-s, --session <name>` 或 `-P, --port <port>` 指向指定会话。
+- 基于会话的 `code` 和 `android` 命令支持 `--page <n>`，也可用 `-s, --session <name>` 或 `--port <port>` 指向指定会话。
 - `decx code class-source` 支持用 `--limit <n>` 最多返回 N 行源码。
 - `decx process open <file>` 会透传标准 `jadx-cli` 参数，默认启用 `--show-bad-code` 和 `--no-imports`，并会移除 `--deobf`，因为 DECX 分析需要保留原始名称。
-- `decx ard all-resources` 支持用 `--include`、`--no-regex` 按文件名过滤。
-- `system-services` 和 `perm-info` 是 adb 命令，使用 `--serial` / `--adb-path`，不使用 `-P <port>`。
-- `decx ard framework run` 默认从已连接设备收集、处理、打包并打开最终 framework JAR；`process <oem>` 用于处理本地 framework dump。
+- `decx android resources` 支持用 `--include`、`--no-regex` 按文件名过滤。
+- `decx android device system-services` 和 `permission-info` 是 adb 命令，使用 `--serial` / `--adb-path`，不使用 `--port <port>`。
+- `decx android framework run` 默认从已连接设备收集、处理、打包并打开最终 framework JAR；`process [oem]` 用于处理本地 framework dump，省略 OEM 时会尝试从 `.artifact.json` 或已连接设备解析。
 
 ### 插件 + MCP
 

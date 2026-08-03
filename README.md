@@ -78,8 +78,8 @@ For agent-driven analysis, use the CLI to create a session and let the installed
 decx process open target.apk --name target
 decx code classes --limit 50
 decx code search-global "WebView" --limit 20
-decx ard exported-components
-decx ard app-deeplinks
+decx android exported-components
+decx android deep-links
 decx process close target
 decx process close --port 25419
 ```
@@ -98,20 +98,20 @@ Useful command groups:
 | Need | Commands |
 |---|---|
 | Session lifecycle | `decx process open <file>`, `decx process list`, `decx process check`, `decx process close [name] [--port <port>]` |
-| Code analysis | `decx code classes`, `class-source`, `method-source`, `method-context`, `search-global`, `search-class`, `xref-method`, `xref-class`, `xref-field`, `implement`, `subclass` |
-| APK analysis | `decx ard app-manifest`, `main-activity`, `app-application`, `exported-components`, `app-deeplinks`, `app-receivers`, `get-aidl`, `all-resources`, `resource-file`, `strings` |
-| Framework analysis | `decx ard framework collect`, `process <oem>`, `run`, `open [jar]`, plus `system-service-impl <interface>` |
-| Live device helpers | `decx ard system-services`, `decx ard perm-info <permission>` |
+| Code analysis | `decx code classes`, `class-source`, `method-source`, `method-context`, `search-global`, `search-class`, `xref-method`, `xref-class`, `xref-field`, `implementations`, `subclasses` |
+| APK analysis | `decx android manifest`, `launcher-activity`, `application`, `exported-components`, `deep-links`, `dynamic-receivers`, `aidl-interfaces`, `resources`, `resource-file`, `strings` |
+| Framework analysis | `decx android framework collect`, `process [oem]`, `run`, `open [jar]`, plus `framework-service-implementation <interface>` |
+| Live device helpers | `decx android device system-services`, `decx android device permission-info <permission>` |
 | CLI/server management | `decx self install`, `decx self update` |
 
 Notes:
 
-- Session-backed `code` and `ard` commands support `--page <n>` and can target a session with `-s, --session <name>` or a port with `-P, --port <port>`.
+- Session-backed `code` and `android` commands support `--page <n>` and can target a session with `-s, --session <name>` or a port with `--port <port>`.
 - `decx code class-source` supports `--limit <n>` to return at most N source lines.
 - `decx process open <file>` passes standard `jadx-cli` flags through, enables `--show-bad-code` and `--no-imports` by default, and strips `--deobf` because DECX analysis requires original names.
-- `decx ard all-resources` supports file-name filtering with `--include` and `--no-regex`.
-- `system-services` and `perm-info` are adb-backed commands. They use `--serial` / `--adb-path`, not `-P <port>`.
-- `decx ard framework run` collects from the connected device, processes, packs, and opens the final framework JAR by default; `process <oem>` is for local framework dumps.
+- `decx android resources` supports file-name filtering with `--include` and `--no-regex`.
+- `decx android device system-services` and `permission-info` are adb-backed commands. They use `--serial` / `--adb-path`, not `--port <port>`.
+- `decx android framework run` collects from the connected device, processes, packs, and opens the final framework JAR by default; `process [oem]` is for local framework dumps and can resolve OEM from `.artifact.json` or a connected device when omitted.
 
 ### Plugin + MCP
 

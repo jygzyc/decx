@@ -47,9 +47,9 @@ AI Assistant / CLI
 - Common code analysis:
   `get_classes`, `get_class_context`, `get_class_source`, `search_global_key`, `search_class_key`,
   `search_method`, `get_method_source`, `get_method_context`, `get_method_cfg`, `get_method_xref`, `get_field_xref`,
-  `get_class_xref`, `get_implement`, `get_sub_classes`
+  `get_class_xref`, `get_implementations`, `get_subclasses`
 - Android app analysis:
-  `get_aidl`, `get_app_manifest`, `get_main_activity`, `get_application`,
+  `get_aidl_interfaces`, `get_app_manifest`, `get_main_activity`, `get_application`,
   `get_exported_components`, `get_deep_links`, `get_dynamic_receivers`,
   `get_all_resources`, `get_resource_file`, `get_strings`
 - Android framework analysis:
@@ -75,16 +75,18 @@ Current top-level commands are:
 
 - `decx process`
 - `decx code`
-- `decx ard`
+- `decx android`
 - `decx self`
 
 Notable details:
 
 - `decx process open <file>` launches `java -jar decx-server.jar ...`
 - `decx process open <file>` starts the JVM with `-Xmx` set to 2/3 of machine memory rounded down
-- `decx process open <file>` is also reused by `decx ard framework open` and `decx ard framework run`
+- `decx process open <file>` is also reused by `decx android framework open` and `decx android framework run`
 - Standard `jadx-cli` flags are passed through by `process open`
-- `process open` enables `--show-bad-code` by default unless the flag is already present in passthrough args
+- `process open` auto-injects `--show-bad-code`, `--no-imports`, and `-Pdex-input.verify-checksum=no` (each skipped if already present), and intentionally strips `--deobf` because DECX relies on original symbol names
+- No DECX command binds `-P` to `--port`; `-P<key>=<value>` tokens are forwarded to jadx-cli by `process open` as JADX project properties. Use `--port` everywhere for the server port
+- When `--port` is omitted, `process open` auto-assigns a free random port in `30000–40000` (checked for availability, retried on collision); the chosen port is recorded on the session
 - CLI sessions are tracked locally and can be reused by session name and file hash
 - `decx process close` can close by session name, by `--port <port>`, or all sessions with `--all`
 - CLI data defaults to `~/.decx`; set `DECX_HOME` to redirect config, sessions, logs, tmp files, output, and installed server JARs
@@ -92,23 +94,23 @@ Notable details:
 - `decx self install` installs or updates `decx-server.jar`
 - `decx self update` updates both the server JAR and the currently installed npm CLI package
 - `decx-cli` builds runtime JavaScript as two bundles: `dist/index.js` for the CLI and `dist/sdk/index.js` for SDK imports; packaged native tools are stored as `dist/bin.tar.gz` and extracted to cache at runtime
-- `decx ard framework` provides framework collection and preprocessing subcommands:
-  `collect`, `process`, `pack`, `run`, `open`, `tools`
-- `decx ard` also includes adb-backed inspection commands:
-  `system-services`, `perm-info`
+- `decx android framework` provides framework collection and preprocessing subcommands:
+  `collect`, `process`, `run`, `open`
+- `decx android device` provides adb-backed inspection commands:
+  `system-services`, `permission-info`
 - Framework processing is implemented in native TypeScript under `decx-cli/src/android/`
 - ADB interaction is centralized in `decx-cli/src/android/adb.ts`
-- `decx ard system-services` returns structured JSON for live Binder/system services and supports `--serial`, `--adb-path`, and `--grep`
-- `decx ard perm-info <permission>` returns one structured JSON object for a permission and supports `--serial` and `--adb-path`
+- `decx android device system-services` returns structured JSON for live Binder/system services and supports `--serial`, `--adb-path`, and `--grep`
+- `decx android device permission-info <permission>` returns one structured JSON object for a permission and supports `--serial` and `--adb-path`
 - `get_classes` accepts a `filter` object with `limit`, regex-enabled `includes`/`excludes`, and optional `regex=false`
 - `get_class_source` accepts an optional `filter.limit` to return at most N source lines
-- `get_aidl` and `get_dynamic_receivers` accept the same regex-enabled `filter` object for package filtering
+- `get_aidl_interfaces` and `get_dynamic_receivers` accept the same regex-enabled `filter` object for package filtering
 - `get_exported_components` accepts regex-enabled `includes`/`excludes` and optional `regex=false`
 - `get_all_resources` accepts `filter.includes` and optional `regex=false` for resource file-name filtering
 - `search_global_key` accepts a `search` object with `limit`, `includes`, `excludes`, `caseSensitive`, and `regex`
 - `search_class_key` greps within one class and requires a `grep` object with `limit`, `caseSensitive`, and `regex`
 - Framework build metadata is stored per-output-directory under `.artifact.json`; legacy `.meta.json` is no longer used
-- `decx ard framework open` / `run` ultimately create normal process sessions via `decx process open`; framework artifacts are not stored as a separate session kind
+- `decx android framework open` / `run` ultimately create normal process sessions via `decx process open`; framework artifacts are not stored as a separate session kind
 ### Skill workflow details
 
 - Skill architecture and authoring rules are defined in `skills/AGENTS.md`.
@@ -150,11 +152,11 @@ npm install
 npm run build
 npm test
 npm run lint
+npm run typecheck
 npm run dev
 ```
 
-Do not document or rely on `npm run typecheck` unless you add that script first.
-`decx-cli/package.json` does not currently define it.
+`npm run build` type-checks (via `tsc --noEmit` behind the build script) and emits a compact runtime bundle under `dist/`. `npm run typecheck` runs `tsc --noEmit` standalone for CI/local checks.
 
 ## Technology And Style Notes
 
@@ -303,7 +305,7 @@ Port coordination matters:
 | `decx-cli/src/index.ts` | CLI command registration |
 | `decx-cli/src/commands/process.ts` | Session lifecycle and server spawning |
 | `decx-cli/src/commands/code.ts` | Common code-analysis commands |
-| `decx-cli/src/commands/ard.ts` | Android-analysis commands |
+| `decx-cli/src/commands/android.ts` | Android-analysis commands |
 | `decx-cli/src/commands/self.ts` | CLI/server self-management |
 
 ## Agent Guidance For This Repo
