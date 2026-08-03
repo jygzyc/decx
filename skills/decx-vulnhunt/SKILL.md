@@ -18,7 +18,7 @@ Route reports to `decx-report`, PoC work to `decx-poc`, raw CLI usage to `decx-c
 | Target | Open command | Surface | Track |
 |---|---|---|---|
 | APK / DEX | `decx process open` | exported components, deep links, AIDL, dynamic receivers, WebView, providers, services | App |
-| processed framework JAR | `decx ard framework open` | Binder services, AIDL methods, system service implementations | Framework |
+| processed framework JAR | `decx android framework open` | Binder services, AIDL methods, system service implementations | Framework |
 
 Pick one track per target. Load `references/app-chains.md` (App) or `references/framework-chains.md` (Framework) for composite chains and single-pattern routing.
 
