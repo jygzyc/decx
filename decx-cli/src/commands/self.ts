@@ -12,6 +12,7 @@ import { Manager } from "../core/config.js";
 import { checkForServerUpdate, installDecxServer, type InstallDecxServerResult } from "../core/installer.js";
 import { DecxError, ServerError, withErrorHandler } from "../utils/errors.js";
 import { VERSION } from "../core/version.js";
+import { installSkills, parseSkillClients } from "../core/skills-installer.js";
 
 interface CliPackageMetadata {
   name: string;
@@ -86,7 +87,8 @@ export function resolveNpmUpdateCommand(
   const platform = deps.platform ?? process.platform;
   const exists = deps.exists ?? existsSync;
   const updateArgs = buildCliUpdateArgs(packageName);
-  const nodeDir = path.dirname(execPath);
+  const pathApi = platform === "win32" ? path.win32 : path.posix;
+  const nodeDir = pathApi.dirname(execPath);
 
   if (env.npm_execpath && exists(env.npm_execpath)) {
     const args = [env.npm_execpath, ...updateArgs];
@@ -100,8 +102,8 @@ export function resolveNpmUpdateCommand(
 
   const npmBinName = platform === "win32" ? "npm.cmd" : "npm";
   const candidates = [
-    path.join(nodeDir, npmBinName),
-    platform === "win32" ? path.join(nodeDir, "npm") : undefined,
+    pathApi.join(nodeDir, npmBinName),
+    platform === "win32" ? pathApi.join(nodeDir, "npm") : undefined,
     "/opt/homebrew/bin/npm",
     "/usr/local/bin/npm",
     "/usr/bin/npm",
@@ -142,6 +144,10 @@ export async function executeSelfInstall(
   };
 }
 
+function collectClient(value: string, previous: string[]): string[] {
+  return [...previous, value];
+}
+
 export function makeSelfCommand(): Command {
   const cmd = new Command("self");
   cmd.description("Install and update the bundled decx-server.jar and npm CLI package");
@@ -154,6 +160,21 @@ export function makeSelfCommand(): Command {
     .action(withErrorHandler(async (opts) => {
       const fmt = new Formatter();
       fmt.output(await executeSelfInstall(opts.prerelease));
+    }));
+
+  const skills = cmd
+    .command("skills")
+    .summary("Install DECX skills for AI coding clients")
+    .description("Download and manage DECX workflow skills from GitHub.");
+
+  skills
+    .command("install")
+    .summary("Download or refresh DECX skills")
+    .description(`Download DECX skills into DECX_HOME/skills and link them for selected clients. Codex, Claude Code, and Cursor use dedicated directories; every other client uses ~/.agents/skills. With no --client, ~/.agents/skills is used.`)
+    .option("-c, --client <client>", "Target client (repeatable or comma-separated; defaults to ~/.agents/skills)", collectClient, [])
+    .action(withErrorHandler(async (opts: { client: string[] }) => {
+      const fmt = new Formatter();
+      fmt.output(installSkills(parseSkillClients(opts.client)));
     }));
 
   cmd

@@ -28,22 +28,20 @@ DECX (Decompiler + X) 是一个基于 JADX 反编译器的智能代码分析平�
 
 ### CLI 和 AI 技能
 
-给 AI 使用时，先安装 CLI 和 DECX server JAR，再把仓库内置技能暴露给 Agent：
+给 AI 使用时，安装 CLI 和 DECX server JAR，再从 GitHub 为指定 Agent 下载 DECX 技能：
 
 ```bash
 npm install -g @jygzyc/decx-cli
 decx self install
-git clone https://github.com/jygzyc/decx ~/.decx/source
-mkdir -p ~/.agents
-ln -s ~/.decx/source/skills ~/.agents/skills
+decx self skills install --client opencode --client codex
 ```
 
-如果你的 Agent 使用其他目录，把 `~/.agents/skills` 换成对应路径：
+技能会先下载到 `~/.decx/skills`（或 `$DECX_HOME/skills`），再软链接到所选客户端目录：
 
 | Agent | 链接目标 |
 |---|---|
 | Claude Code | `~/.claude/skills` |
-| Opencode | `~/.config/opencode/skills` |
+| Opencode | `~/.agents/skills` |
 | Codex | `~/.codex/skills` |
 | 通用 Agent 配置 | `~/.agents/skills` |
 
@@ -102,7 +100,7 @@ decx process close --port 25419
 | APK 分析 | `decx android manifest`、`launcher-activity`、`application`、`exported-components`、`deep-links`、`dynamic-receivers`、`aidl-interfaces`、`resources`、`resource-file`、`strings` |
 | Framework 分析 | `decx android framework collect`、`process [oem]`、`run`、`open [jar]`，以及 `framework-service-implementation <interface>` |
 | 设备辅助 | `decx android device system-services`、`decx android device permission-info <permission>` |
-| CLI/server 管理 | `decx self install`、`decx self update` |
+| CLI/server/skills 管理 | `decx self install`、`decx self skills install`、`decx self update` |
 
 注意：
 

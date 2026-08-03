@@ -28,22 +28,20 @@ DECX (Decompiler + X) is a smart code analysis platform built on the JADX decomp
 
 ### CLI And AI Skills
 
-For AI-assisted CLI work, install the CLI, install the DECX server JAR, then expose the bundled skills to your agent:
+For AI-assisted CLI work, install the CLI and server JAR, then download the DECX skills for your agent:
 
 ```bash
 npm install -g @jygzyc/decx-cli
 decx self install
-git clone https://github.com/jygzyc/decx ~/.decx/source
-mkdir -p ~/.agents
-ln -s ~/.decx/source/skills ~/.agents/skills
+decx self skills install --client opencode --client codex
 ```
 
-Replace `~/.agents/skills` with the skills directory expected by your agent:
+Skills are downloaded to `~/.decx/skills` (or `$DECX_HOME/skills`) and linked into the selected client directories:
 
 | Agent | Link target |
 |---|---|
 | Claude Code | `~/.claude/skills` |
-| Opencode | `~/.config/opencode/skills` |
+| Opencode | `~/.agents/skills` |
 | Codex | `~/.codex/skills` |
 | Common agent setup | `~/.agents/skills` |
 
@@ -102,7 +100,7 @@ Useful command groups:
 | APK analysis | `decx android manifest`, `launcher-activity`, `application`, `exported-components`, `deep-links`, `dynamic-receivers`, `aidl-interfaces`, `resources`, `resource-file`, `strings` |
 | Framework analysis | `decx android framework collect`, `process [oem]`, `run`, `open [jar]`, plus `framework-service-implementation <interface>` |
 | Live device helpers | `decx android device system-services`, `decx android device permission-info <permission>` |
-| CLI/server management | `decx self install`, `decx self update` |
+| CLI/server/skills management | `decx self install`, `decx self skills install`, `decx self update` |
 
 Notes:
 

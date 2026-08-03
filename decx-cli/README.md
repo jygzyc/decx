@@ -37,6 +37,7 @@ decx process status [name]         # Check server status
 
 ```bash
 decx self install [-p]          # Install decx-server.jar (-p for prerelease)
+decx self skills install [-c codex] # Install skills; defaults to ~/.agents/skills
 decx self update [-p]           # Update decx-server.jar and the currently installed npm CLI package
 ```
 

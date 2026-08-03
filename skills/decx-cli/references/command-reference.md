@@ -143,6 +143,7 @@ Framework common options (`collect`, `process`, `run`):
 |--------|---------|
 | `decx self install` | Install `decx-server.jar` |
 | `decx self install -p` | Install prerelease server |
+| `decx self skills install -c <client>` | Download skills from GitHub; Codex, Claude Code, and Cursor use dedicated directories, while every other or omitted client uses `~/.agents/skills` |
 | `decx self update` | Update CLI and server |
 | `decx self update -p` | Update with prerelease server |
 

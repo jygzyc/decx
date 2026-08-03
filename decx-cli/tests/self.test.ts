@@ -1,5 +1,5 @@
 import { jest } from "@jest/globals";
-import { mkdirSync, writeFileSync } from "fs";
+import { existsSync, lstatSync, mkdirSync, writeFileSync } from "fs";
 import * as path from "path";
 import {
   buildCliUpdateArgs,
@@ -9,6 +9,7 @@ import {
 } from "../src/commands/self.js";
 import { VERSION } from "../src/core/version.js";
 import { resetTestDir, testPath } from "./test-paths.js";
+import { installSkills, parseSkillClients, skillClientDirectory } from "../src/core/skills-installer.js";
 
 describe("self command metadata", () => {
   it("uses npm env package name and project version from VERSION", () => {
@@ -82,6 +83,33 @@ describe("self command metadata", () => {
       "@custom/decx-cli@latest",
     ]);
     expect(cmd.env.PATH?.split(path.delimiter)[0]).toBe("/node/bin");
+  });
+
+  it("uses dedicated clients explicitly and maps all other or empty selections to agents", () => {
+    expect(parseSkillClients(["opencode,codex", "claude", "other-client"])).toEqual([
+      "agents",
+      "codex",
+      "claude-code",
+    ]);
+    expect(parseSkillClients([])).toEqual(["agents"]);
+    expect(parseSkillClients(["unknown"])).toEqual(["agents"]);
+  });
+
+  it("installs downloaded skills into each selected client directory", () => {
+    const root = resetTestDir("tmp", "self-skills");
+    const sourceDir = path.join(root, "source");
+    const home = path.join(root, "home");
+    mkdirSync(path.join(sourceDir, "decx-cli"), { recursive: true });
+    mkdirSync(path.join(sourceDir, "not-a-skill"), { recursive: true });
+    writeFileSync(path.join(sourceDir, "decx-cli", "SKILL.md"), "# DECX CLI\n");
+
+    const result = installSkills(["agents", "codex"], { sourceDir, home });
+
+    expect(result.skills).toEqual(["decx-cli"]);
+    expect(result.sourcePath).toBe(path.join(home, ".decx", "skills"));
+    expect(existsSync(path.join(result.sourcePath, "decx-cli", "SKILL.md"))).toBe(true);
+    expect(lstatSync(path.join(skillClientDirectory("agents", home), "decx-cli")).isSymbolicLink()).toBe(true);
+    expect(lstatSync(path.join(skillClientDirectory("codex", home), "decx-cli")).isSymbolicLink()).toBe(true);
   });
 
   it("updates stored server version and returns a real install path on self install", async () => {
