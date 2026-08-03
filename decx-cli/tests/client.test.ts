@@ -100,7 +100,7 @@ describe("DecxClient", () => {
         "searchClassKey", "searchMethod",
         "getMethodSource", "getMethodContext", "getMethodCfg",
         "getMethodXref", "getFieldXref", "getClassXref",
-        "getImplement", "getSubClasses",
+        "getImplementations", "getSubclasses",
         "getAppManifest", "getMainActivity", "getApplication",
         "getExportedComponents", "getDeepLinks",
         "getSystemServiceImpl",

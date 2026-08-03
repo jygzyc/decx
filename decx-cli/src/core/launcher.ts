@@ -9,13 +9,13 @@ import { createServer } from "net";
 import { existsSync, mkdirSync, openSync, closeSync, readFileSync } from "fs";
 import { hashFile } from "../utils/hash.js";
 import { FileError, ProcessError, ServerError } from "../utils/errors.js";
+import type { Session } from "./types.js";
 import { findDecxServerJar } from "./installer.js";
-import { isSessionAlive } from "./session.js";
 import { logCliEvent } from "../utils/logger.js";
 import { decxPath } from "./paths.js";
 import { Manager } from "./config.js";
 import { resolveFileInput } from "./file-input.js";
-import { MAX_SERVER_PORT, MIN_SERVER_PORT, parseServerPort } from "./ports.js";
+import { MAX_SERVER_PORT, RANDOM_PORT_RANGE_MAX, RANDOM_PORT_RANGE_MIN, parseServerPort } from "./ports.js";
 
 export interface OpenAnalysisTargetOptions {
   port?: string;
@@ -49,6 +49,53 @@ export function buildDecxServerJavaArgs(
   return args;
 }
 
+export interface OpenReuseInput {
+  fileHash: string;
+  fileName: string;
+  force: boolean;
+  aliveSessions: Session[];
+  existingByName: Session | null;
+}
+
+export type OpenReuseDecision =
+  | { action: "reuse"; session: Session }
+  | { action: "error"; message: string }
+  | { action: "spawn"; removeStaleName?: string };
+
+/**
+ * Decide what `process open` should do with a file whose sha256 is `fileHash`:
+ * reuse an already-loaded session, refuse on a name collision with a different
+ * file, or spawn a fresh server (optionally clearing a stale same-name record).
+ * Pure — no I/O — so it can be unit-tested.
+ */
+export function decideOpenReuse(input: OpenReuseInput): OpenReuseDecision {
+  const { fileHash, fileName, force, aliveSessions, existingByName } = input;
+
+  if (!force) {
+    // Reuse any alive session that already holds this exact file (by sha256),
+    // regardless of the session name.
+    const reuse = aliveSessions.find((s) => s.hash === fileHash);
+    if (reuse) return { action: "reuse", session: reuse };
+
+    // A record under the requested name already exists for a *different* file:
+    // refuse to shadow it so the name keeps pointing at one APK.
+    if (existingByName && existingByName.hash !== fileHash) {
+      return {
+        action: "error",
+        message:
+          `Session '${fileName}' already exists for a different APK (hash: ${existingByName.hash}). ` +
+          `Use --force to overwrite, or --name to choose a different session name.`,
+      };
+    }
+
+    // Stale record under the same name (same hash, dead process) → clear before re-spawn.
+    return { action: "spawn", removeStaleName: existingByName?.name };
+  }
+
+  // --force bypasses reuse; createSession overwrites any same-name record.
+  return { action: "spawn" };
+}
+
 export function normalizeJadxPassthroughArgs(args: string[] = []): string[] {
   const result = args.filter((arg) => arg !== "--deobf");
   if (!result.includes("--show-bad-code")) {
@@ -74,43 +121,33 @@ async function canBindPort(port: number): Promise<boolean> {
   });
 }
 
-async function reserveRandomPort(): Promise<number> {
-  return new Promise((resolve, reject) => {
-    const server = createServer();
-
-    server.once("error", reject);
-    server.listen({ port: 0, host: "127.0.0.1", exclusive: true }, () => {
-      const address = server.address();
-      server.close(() => {
-        if (address && typeof address === "object") {
-          resolve(address.port);
-        } else {
-          reject(new ProcessError("Failed to allocate a random port"));
-        }
-      });
-    });
-  });
+function randomPortInRange(min: number, max: number): number {
+  return Math.floor(Math.random() * (max - min + 1)) + min;
 }
 
 export async function selectAvailableServerPort(
-  preferredPort: number,
+  preferredPort: number | undefined,
   mcp: boolean = false,
 ): Promise<number> {
-  preferredPort = parseServerPort(preferredPort);
-
-  if (await isServerPortAvailable(preferredPort, mcp)) {
-    return preferredPort;
-  }
-
-  for (let i = 0; i < 20; i++) {
-    const port = await reserveRandomPort();
-    if (port < MIN_SERVER_PORT) continue;
+  // Honor an explicitly requested port when it is free.
+  if (preferredPort !== undefined) {
+    const port = parseServerPort(preferredPort);
     if (await isServerPortAvailable(port, mcp)) {
       return port;
     }
   }
 
-  throw new ProcessError("Failed to find an available random port");
+  // Otherwise pick a random port in the default range until one is free.
+  for (let i = 0; i < 100; i++) {
+    const port = randomPortInRange(RANDOM_PORT_RANGE_MIN, RANDOM_PORT_RANGE_MAX);
+    if (await isServerPortAvailable(port, mcp)) {
+      return port;
+    }
+  }
+
+  throw new ProcessError(
+    `Failed to find an available port in [${RANDOM_PORT_RANGE_MIN}, ${RANDOM_PORT_RANGE_MAX}]`,
+  );
 }
 
 export async function isServerPortAvailable(
@@ -129,7 +166,7 @@ export async function openAnalysisTarget(
   opts: OpenAnalysisTargetOptions = {},
 ): Promise<Record<string, unknown>> {
   const mgr = Manager.get();
-  const requestedPort = parseServerPort(opts.port ?? mgr.server.defaultPort);
+  const requestedPort = opts.port !== undefined ? parseServerPort(opts.port) : undefined;
 
   const jarPath = findDecxServerJar();
   if (!jarPath) {
@@ -143,28 +180,25 @@ export async function openAnalysisTarget(
 
   const fileName = opts.name || path.basename(resolvedFile, path.extname(resolvedFile));
   const fileHash = await hashFile(resolvedFile);
-  const existingSession = mgr.getSession(fileName);
 
-  if (existingSession && !opts.force) {
-    if (existingSession.hash === fileHash && isSessionAlive(existingSession)) {
-      logCliEvent({ command: "process", action: "open", session: existingSession.name, reused: true, pid: existingSession.pid, port: existingSession.port });
-      return { name: existingSession.name, hash: existingSession.hash, pid: existingSession.pid, port: existingSession.port, file: resolvedFile, reused: true };
-    }
-    if (existingSession.hash !== fileHash) {
-      throw new ProcessError(
-        `Session '${fileName}' already exists for a different APK (hash: ${existingSession.hash}). ` +
-        `Use --force to overwrite, or --name to choose a different session name.`,
-      );
-    }
-    mgr.removeSession(fileName);
+  const decision = decideOpenReuse({
+    fileHash,
+    fileName,
+    force: opts.force ?? false,
+    aliveSessions: mgr.listAliveSessions(),
+    existingByName: mgr.getSession(fileName),
+  });
+
+  if (decision.action === "reuse") {
+    const reuse = decision.session;
+    logCliEvent({ command: "process", action: "open", session: reuse.name, reused: true, pid: reuse.pid, port: reuse.port });
+    return { name: reuse.name, hash: reuse.hash, pid: reuse.pid, port: reuse.port, file: resolvedFile, reused: true };
   }
-
-  if (!opts.force) {
-    for (const session of mgr.listAliveSessions()) {
-      if (session.hash === fileHash && session.name !== fileName) {
-        throw new ProcessError(`Already open as session '${session.name}'. Use --force to open again.`);
-      }
-    }
+  if (decision.action === "error") {
+    throw new ProcessError(decision.message);
+  }
+  if (decision.removeStaleName) {
+    mgr.removeSession(decision.removeStaleName);
   }
 
   const port = await selectAvailableServerPort(requestedPort, opts.mcp ?? false);
@@ -343,7 +377,7 @@ export function extractPassthroughArgs(argv: readonly string[] = process.argv): 
   if (openIdx === -1) return [];
 
   const raw = cmdArgs.slice(openIdx + 1);
-  const decxFlagsWithValue = ["-P", "--port", "-n", "--name"];
+  const decxFlagsWithValue = ["--port", "-n", "--name"];
   const decxFlags = ["--force", "--mcp", "--no-mcp"];
 
   const result: string[] = [];

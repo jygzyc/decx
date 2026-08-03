@@ -246,11 +246,45 @@ export async function resolveFrameworkJarPath(
     }
     throw new FileError(
       `No generated framework jar found for OEM '${oem}' at ${layout.jarPath}. ` +
-      `Run 'decx ard framework process ${oem}' or provide a jar path.`,
+      `Run 'decx android framework process ${oem}' or provide a jar path.`,
       layout.jarPath,
     );
   }
   return layout.jarPath;
+}
+
+export async function resolveProcessOem(
+  options: FrameworkCommandOptions,
+  detectOem: (opts: Pick<FrameworkCommandOptions, "adbPath" | "serial">) => Promise<FrameworkOem> = detectConnectedFrameworkOem,
+): Promise<FrameworkOem> {
+  // 1. Explicit positional/value wins (supports the pure-offline case).
+  if (options.oem) {
+    return normalizeOem(options.oem);
+  }
+
+  // 2. Reuse the OEM persisted by a prior `collect`/`run` at this output dir.
+  const layout = resolveFrameworkLayout(options);
+  const artifact = readFrameworkArtifact(layout.artifactPath);
+  if (artifact?.oem) {
+    try {
+      return normalizeOem(artifact.oem);
+    } catch {
+      // Stored OEM is unrecognized; keep falling back.
+    }
+  }
+
+  // 3. Last resort: auto-detect from a connected device.
+  try {
+    return await detectOem(options);
+  } catch {
+    // fall through to the explicit error below
+  }
+
+  throw new FileError(
+    "Framework OEM could not be resolved. Pass it explicitly " +
+    "(`decx android framework process <oem>`), point at a collected output with `--out-dir`, " +
+    "or connect a device for auto-detection.",
+  );
 }
 
 export async function runFrameworkPipeline(

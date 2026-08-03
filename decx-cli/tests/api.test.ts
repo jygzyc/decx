@@ -466,10 +466,10 @@ describe("DECX API integration (Sieve APK)", () => {
             });
         });
 
-        // getImplement
-        describe("getImplement", () => {
+        // getImplementations
+        describe("getImplementations", () => {
             beforeAll(() => {
-                mockResponse("/api/decx/get_implement", {
+                mockResponse("/api/decx/get_implementations", {
                     ok: true,
                     kind: "implementations",
                     query: { target: "android.content.ContentProvider" },
@@ -483,18 +483,18 @@ describe("DECX API integration (Sieve APK)", () => {
             });
 
             it("returns success envelope with implementation items", async () => {
-                const res = await client.getImplement("android.content.ContentProvider");
+                const res = await client.getImplementations("android.content.ContentProvider");
                 expectSuccessEnvelope(res);
                 expect(res.kind).toBe("implementations");
             });
         });
 
-        // getSubClasses
-        describe("getSubClasses", () => {
+        // getSubclasses
+        describe("getSubclasses", () => {
             beforeAll(() => {
-                mockResponse("/api/decx/get_sub_classes", {
+                mockResponse("/api/decx/get_subclasses", {
                     ok: true,
-                    kind: "sub_classes",
+                    kind: "subclasses",
                     query: { target: "android.app.Activity" },
                     summary: { total: 2, returned: 2, truncated: false },
                     items: [
@@ -507,9 +507,9 @@ describe("DECX API integration (Sieve APK)", () => {
             });
 
             it("returns success envelope with subclass items", async () => {
-                const res = await client.getSubClasses("android.app.Activity");
+                const res = await client.getSubclasses("android.app.Activity");
                 expectSuccessEnvelope(res);
-                expect(res.kind).toBe("sub_classes");
+                expect(res.kind).toBe("subclasses");
             });
         });
     });
@@ -750,7 +750,7 @@ describe("DECX API integration (Sieve APK)", () => {
         // getAidlInterfaces
         describe("getAidlInterfaces", () => {
             beforeAll(() => {
-                mockResponse("/api/decx/get_aidl", {
+                mockResponse("/api/decx/get_aidl_interfaces", {
                     ok: true,
                     kind: "aidl_interfaces",
                     query: {},

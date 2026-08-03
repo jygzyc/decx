@@ -5,17 +5,13 @@ import { fileURLToPath } from "url";
 import { execFileSync, spawnSync } from "child_process";
 import { FileError } from "../utils/errors.js";
 import { decxPath } from "../core/paths.js";
-import type {
-  FrameworkToolsCheck,
-  FrameworkToolPaths,
-  ToolCheckResult,
-} from "./types.js";
+import type { FrameworkToolPaths } from "./types.js";
 
 const archiveCacheKeys = new Map<string, string>();
 
 function assertSupportedFrameworkPlatform(): void {
   if (process.platform === "win32") {
-    throw new FileError("Windows is not supported for 'decx ard framework' yet.");
+    throw new FileError("Windows is not supported for 'decx android framework' yet.");
   }
 }
 
@@ -133,36 +129,6 @@ export function resolveFrameworkTools(adbPath?: string): FrameworkToolPaths {
     adb: resolveAdb(adbPath),
     debugfs,
     erofsExtractor: resolveErofsExtractor(),
-  };
-}
-
-function makeToolCheck(pathValue: string | null, detail: string): ToolCheckResult {
-  return {
-    ok: pathValue !== null,
-    path: pathValue,
-    detail,
-  };
-}
-
-export function checkFrameworkTools(adbPath?: string): FrameworkToolsCheck {
-  if (process.platform === "win32") {
-    return {
-      adb: makeToolCheck(adbPath ?? null, "Windows is not supported for 'decx ard framework' yet."),
-      debugfs: makeToolCheck(null, "Windows is not supported for 'decx ard framework' yet."),
-      erofsExtractor: makeToolCheck(null, "Windows is not supported for 'decx ard framework' yet."),
-    };
-  }
-
-  const adbResolved = adbPath ?? (commandExists("adb") ? "adb" : null);
-  const debugfs = resolveDebugfs();
-  const erofs = (commandExists("fsck.erofs") ? "fsck.erofs" : null)
-    ?? (commandExists("extract.erofs") ? "extract.erofs" : null)
-    ?? resolvePackagedErofsExtractor();
-
-  return {
-    adb: makeToolCheck(adbResolved, adbResolved ? "adb is available" : "adb not found"),
-    debugfs: makeToolCheck(debugfs, debugfs ? "debugfs is available" : "debugfs not found"),
-    erofsExtractor: makeToolCheck(erofs, erofs ? "EROFS extractor is available" : "EROFS extractor not found"),
   };
 }
 

@@ -4,6 +4,7 @@ import {
   collectFramework,
   openFrameworkJar,
   resolveFrameworkJarPath,
+  resolveProcessOem,
   runFrameworkPipeline,
   summarizeFrameworkArtifact,
   summarizeFrameworkJarPath,
@@ -11,9 +12,9 @@ import {
 import { Formatter } from "../utils/formatter.js";
 import { withErrorHandler } from "../utils/errors.js";
 import { logCliEvent } from "../utils/logger.js";
-import { addFrameworkCommonOptions } from "./ard-shared.js";
+import { addFrameworkCommonOptions } from "./android-shared.js";
 
-export function registerArdFrameworkCommands(cmd: Command): void {
+export function registerAndroidFrameworkCommands(cmd: Command): void {
   const framework = cmd
     .command("framework")
     .summary("Collect, process, pack, and open Android framework artifacts")
@@ -30,7 +31,7 @@ export function registerArdFrameworkCommands(cmd: Command): void {
       const { oem, layout, result } = await collectFramework(opts);
       const artifact = summarizeFrameworkArtifact(layout, oem);
       logCliEvent({
-        command: "ard",
+        command: "android",
         action: "framework_collect",
         ...artifact,
         sourceDir: layout.sourceDir,
@@ -44,16 +45,17 @@ export function registerArdFrameworkCommands(cmd: Command): void {
 
   addFrameworkCommonOptions(
     framework
-      .command("process <oem>")
+      .command("process [oem]")
       .summary("Process local framework sources and pack framework_<brand>_<vendor>.jar")
-      .description("Process a local framework source directory for the specified OEM identifier, then pack a DECX-readable framework jar.")
+      .description("Process a local framework source directory and pack a DECX-readable framework jar. When <oem> is omitted it is resolved from the .artifact.json at --out-dir, or from a connected device as a last resort.")
   )
-    .action(withErrorHandler(async (oem: string, opts) => {
+    .action(withErrorHandler(async (oem: string | undefined, opts) => {
       const fmt = new Formatter();
-      const result = await buildFramework({ ...opts, oem });
-      const artifact = summarizeFrameworkArtifact(result.layout, oem);
+      const resolvedOem = await resolveProcessOem({ ...opts, oem });
+      const result = await buildFramework({ ...opts, oem: resolvedOem });
+      const artifact = summarizeFrameworkArtifact(result.layout, resolvedOem);
       logCliEvent({
-        command: "ard",
+        command: "android",
         action: "framework_process",
         ...artifact,
         sourceDir: result.layout.sourceDir,
@@ -73,14 +75,14 @@ export function registerArdFrameworkCommands(cmd: Command): void {
       .description("Run the full device framework pipeline: collect files, process them, pack framework_<brand>_<vendor>.jar, and open it unless --no-open is used.")
       .option("--no-open", "Only build the framework jar; do not start a DECX session")
       .option("-n, --name <name>", "Session name to use when opening the generated framework jar")
-      .option("-P, --port <port>", "DECX HTTP server port to bind when opening the generated framework jar")
+      .option("--port <port>", "DECX HTTP server port to bind when opening the generated framework jar")
   )
     .action(withErrorHandler(async (opts) => {
       const fmt = new Formatter();
       const result = await runFrameworkPipeline({ ...opts, noOpen: opts.open === false });
       const artifact = summarizeFrameworkJarPath(result.pack.jarPath);
       logCliEvent({
-        command: "ard",
+        command: "android",
         action: "framework_run",
         ...(artifact ?? { jarPath: result.pack.jarPath }),
         sourceDir: result.layout.sourceDir,
@@ -102,7 +104,7 @@ export function registerArdFrameworkCommands(cmd: Command): void {
       .summary("Open a generated or explicit framework jar in DECX")
       .description("Open the latest generated framework jar, or the provided jar path, as a normal DECX process session.")
       .option("-n, --name <name>", "Session name used by -s/--session")
-      .option("-P, --port <port>", "DECX HTTP server port to bind")
+      .option("--port <port>", "DECX HTTP server port to bind")
   )
     .action(withErrorHandler(async (jar: string | undefined, opts) => {
       const fmt = new Formatter();
@@ -110,7 +112,7 @@ export function registerArdFrameworkCommands(cmd: Command): void {
       const open = await openFrameworkJar(resolvedJar, opts);
       const artifact = summarizeFrameworkJarPath(resolvedJar);
       logCliEvent({
-        command: "ard",
+        command: "android",
         action: "framework_open",
         ...(artifact ?? { jarPath: resolvedJar }),
       });

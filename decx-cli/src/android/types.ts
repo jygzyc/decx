@@ -110,14 +110,3 @@ export interface FrameworkArtifactRecord {
   updatedAt: number;
 }
 
-export interface ToolCheckResult {
-  ok: boolean;
-  path: string | null;
-  detail: string;
-}
-
-export interface FrameworkToolsCheck {
-  adb: ToolCheckResult;
-  debugfs: ToolCheckResult;
-  erofsExtractor: ToolCheckResult;
-}

@@ -20,7 +20,7 @@ decx <command> [options]
 |---------|-------------|
 | `decx process` | Manage DECX server processes |
 | `decx self` | Install and update decx-server.jar |
-| `decx ard` | Android specific analysis |
+| `decx android` | Android specific analysis |
 | `decx code` | Common code analysis |
 
 ### process
@@ -44,32 +44,34 @@ decx self update [-p]           # Update decx-server.jar and the currently insta
 
 | Option | Description |
 |--------|-------------|
-| `-P, --port <port>` | Server port |
+| `--port <port>` | Server port (omit to auto-assign a free random port in 30000–40000) |
 | `--force` | Force start even if session exists |
 | `-n, --name <name>` | Custom session name |
 
-All standard [jadx-cli options](https://github.com/skylot/jadx) are passed through directly. `decx process open` enables `--show-bad-code` by default, and common passthrough options also include `--deobf`, `--no-res`, `-j`/`--threads-count`, `--no-imports`, `--no-debug-info`, `--escape-unicode`, `--log-level`.
+All standard [jadx-cli options](https://github.com/skylot/jadx) are passed through directly, including JADX `-P<key>=<value>` project properties. `decx process open` enables `--show-bad-code` by default, and common passthrough options also include `--deobf`, `--no-res`, `-j`/`--threads-count`, `--no-imports`, `--no-debug-info`, `--escape-unicode`, `--log-level`.
 
-### ard
+> **`-P` is not a port shortcut.** DECX uses `--port` everywhere for the server port, reserving `-P` for JADX `-P<key>=<value>` project properties (forwarded by `process open`). The properties DECX itself needs, such as `-Pdex-input.verify-checksum=no`, are injected automatically.
+
+### android
 
 ```bash
-decx ard app-manifest                    # Get AndroidManifest.xml
-decx ard main-activity                   # Get main activity name
-decx ard app-application                 # Get Application class name
-decx ard exported-components [--type <pattern>] [--no-regex] # List exported components
-decx ard app-deeplinks                   # List deep link schemes
-decx ard app-receivers [--limit <n>] [--include-package <pattern>] [--exclude-package <pattern>] [--no-regex] # List dynamic broadcast receivers
-decx ard system-service-impl <interface> # Find system service implementations
-decx ard system-services [--serial <serial>] [--grep <kw>] # List Android system services as structured JSON
-decx ard perm-info <permission> [--serial <serial>]        # Show structured permission details
-decx ard all-resources [--include <pattern>] [--no-regex] # List resource file names
-decx ard resource-file <res>             # Get resource file content
-decx ard strings                         # Get strings.xml content
-decx ard get-aidl [--limit <n>] [--include-package <pattern>] [--exclude-package <pattern>] [--no-regex] # Get AIDL interfaces
-decx ard framework collect               # Collect framework files from the connected device
-decx ard framework process <oem>         # Process local framework source files and pack the framework jar
-decx ard framework run                   # Collect, process, pack, and optionally open
-decx ard framework open [jar]            # Open the generated framework jar or a provided JAR
+decx android manifest                    # Get AndroidManifest.xml
+decx android launcher-activity            # Get launcher activity name
+decx android application                 # Get Application class name
+decx android exported-components [--type <pattern>] [--no-regex] # List exported components
+decx android deep-links                   # List deep link schemes
+decx android dynamic-receivers [--limit <n>] [--include-package <pattern>] [--exclude-package <pattern>] [--no-regex] # List dynamic broadcast receivers
+decx android framework-service-implementation <interface> # Find system service implementations
+decx android device system-services [--serial <serial>] [--grep <kw>] # List Android system services as structured JSON
+decx android device permission-info <permission> [--serial <serial>]        # Show structured permission details
+decx android resources [--include <pattern>] [--no-regex] # List resource file names
+decx android resource-file <res>             # Get resource file content
+decx android strings                         # Get strings.xml content
+decx android aidl-interfaces [--limit <n>] [--include-package <pattern>] [--exclude-package <pattern>] [--no-regex] # Get AIDL interfaces
+decx android framework collect               # Collect framework files from the connected device
+decx android framework process [oem]         # Process local framework sources; OEM can be inferred
+decx android framework run                   # Collect, process, pack, and optionally open
+decx android framework open [jar]            # Open the generated framework jar or a provided JAR
 ```
 
 **ADB-backed command output**
@@ -94,7 +96,7 @@ decx ard framework open [jar]            # Open the generated framework jar or a
 }
 ```
 
-`perm-info` returns one parsed permission object instead of raw shell text:
+`permission-info` returns one parsed permission object instead of raw shell text:
 
 ```json
 {
@@ -109,14 +111,14 @@ decx ard framework open [jar]            # Open the generated framework jar or a
 Examples:
 
 ```bash
-decx ard system-services --serial emulator-5554
-decx ard system-services --serial emulator-5554 --grep permission
-decx ard perm-info android.permission.DUMP --serial emulator-5554
+decx android device system-services --serial emulator-5554
+decx android device system-services --serial emulator-5554 --grep permission
+decx android device permission-info android.permission.DUMP --serial emulator-5554
 ```
 
-### ard framework
+### android framework
 
-`decx ard framework` integrates the archived preprocessor workflow into the native CLI.
+`decx android framework` integrates the archived preprocessor workflow into the native CLI.
 It supports both end-to-end collection from a connected Android device and offline
 processing of an existing local framework dump.
 
@@ -126,12 +128,12 @@ are managed exactly like any other DECX session through `decx process list`,
 `decx process status`, and `decx process close`.
 
 ```bash
-decx ard framework run
-decx ard framework run --no-open
-decx ard framework collect --serial emulator-5554
-decx ard framework process google --out-dir ~/.decx/output/framework/google
-decx ard framework open
-decx ard framework open ~/.decx/output/framework/google/framework_google_pixel.jar
+decx android framework run
+decx android framework run --no-open
+decx android framework collect --serial emulator-5554
+decx android framework process google --out-dir ~/.decx/output/framework/google
+decx android framework open
+decx android framework open ~/.decx/output/framework/google/framework_google_pixel.jar
 decx process list
 decx process close framework_google_pixel
 decx process close --port 25419
@@ -153,7 +155,7 @@ decx process close --port 25419
 |--------|-------------|
 | `--no-open` | Do not open the generated framework jar after packing |
 | `-n, --name <name>` | Custom DECX session name when opening the jar |
-| `-P, --port <port>` | Server port when opening the jar |
+| `--port <port>` | Server port when opening the jar |
 
 **Artifact naming**
 
@@ -165,7 +167,7 @@ framework_<brand>_<vendor>.jar
 
 Artifact segments are resolved like this:
 
-1. `brand` is the detected device OEM for `collect/run`, or the explicit `oem` passed to `process`
+1. `brand` is the detected device OEM for `collect/run`, or the resolved `oem` used by `process`
 2. `vendor` comes from the persisted `.artifact.json` record
 3. During `framework collect` / `framework run`, vendor is resolved from:
    `adb shell getprop ro.product.model`
@@ -176,7 +178,7 @@ Artifact segments are resolved like this:
 
 **Platform notes**
 
-- Windows is not supported for `decx ard framework` yet
+- Windows is not supported for `decx android framework` yet
 - Framework tooling checks the current system first: `adb` or `--adb-path`, system `debugfs`, then system `fsck.erofs` / `extract.erofs`
 - If a required framework tool is missing, the CLI falls back to packaged native tools for supported Darwin/Linux targets
 - Packaged native tools are distributed as `dist/bin.tar.gz`; they are not unpacked during `npm install`
@@ -188,7 +190,7 @@ Artifact segments are resolved like this:
 - `source/` is preserved by default and is removed only when `--clean-source` is set
 - If `adb devices` reports exactly one connected device, framework commands use it automatically
 - If multiple devices are connected, pass `--serial <serial>` to select the target device
-- `collect` and `run` detect the device OEM from adb properties; `process` requires an explicit `oem`
+- `collect` and `run` detect the device OEM from adb properties; `process [oem]` uses an explicit value, `.artifact.json`, or a connected device in that order
 
 ### self update notes
 
@@ -212,8 +214,8 @@ decx code search-method <name>           # Search methods by name
 decx code xref-method <sig>              # Find method callers
 decx code xref-class <class>             # Find class usages
 decx code xref-field <field>             # Find field usages
-decx code implement <interface>          # Find implementations
-decx code subclass <class>               # Find subclasses
+decx code implementations <interface>          # Find implementations
+decx code subclasses <class>               # Find subclasses
 ```
 
 ### Global options
@@ -221,7 +223,7 @@ decx code subclass <class>               # Find subclasses
 | Option | Description |
 |--------|-------------|
 | `-s, --session <name>` | Target session name |
-| `-P, --port <port>` | Server port (default: 25419) |
+| `--port <port>` | Server port (default: auto-assigned in 30000–40000) |
 | `--page <n>` | Page number (default: 1) |
 
 ## Method signature format

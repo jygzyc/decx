@@ -9,7 +9,7 @@ import { realpathSync } from "fs";
 import { fileURLToPath } from "url";
 import { makeProcessCommand } from "./commands/process.js";
 import { makeCodeCommand } from "./commands/code.js";
-import { makeArdCommand } from "./commands/ard.js";
+import { makeAndroidCommand } from "./commands/android.js";
 import { makeSelfCommand } from "./commands/self.js";
 import { ROOT_DESCRIPTION } from "./core/constants.js";
 import { VERSION } from "./core/version.js";
@@ -21,7 +21,7 @@ export function createProgram(): Command {
     .description(ROOT_DESCRIPTION)
     .addCommand(makeProcessCommand())
     .addCommand(makeCodeCommand())
-    .addCommand(makeArdCommand())
+    .addCommand(makeAndroidCommand())
     .addCommand(makeSelfCommand());
 }
 

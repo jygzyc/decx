@@ -9,7 +9,7 @@ import { Command } from "commander";
 import { jest } from "@jest/globals";
 import { makeProcessCommand } from "../src/commands/process.js";
 import { makeCodeCommand } from "../src/commands/code.js";
-import { makeArdCommand } from "../src/commands/ard.js";
+import { makeAndroidCommand } from "../src/commands/android.js";
 import { makeSelfCommand } from "../src/commands/self.js";
 import { ROOT_DESCRIPTION } from "../src/core/constants.js";
 import { main } from "../src/index.js";
@@ -22,7 +22,7 @@ function createProgram(): Command {
     .description(ROOT_DESCRIPTION);
   program.addCommand(makeProcessCommand());
   program.addCommand(makeCodeCommand());
-  program.addCommand(makeArdCommand());
+  program.addCommand(makeAndroidCommand());
   program.addCommand(makeSelfCommand());
   return program;
 }
@@ -49,6 +49,14 @@ function hasFlag(cmd: Command, flag: string): boolean {
   return getOptionFlags(cmd).some(optionFlags => optionFlags.includes(flag));
 }
 
+function walkCommands(cmd: Command): Command[] {
+  const result = [cmd];
+  for (const sub of cmd.commands) {
+    result.push(...walkCommands(sub));
+  }
+  return result;
+}
+
 // ============================================================================
 // Root
 // ============================================================================
@@ -56,7 +64,16 @@ function hasFlag(cmd: Command, flag: string): boolean {
 describe("root", () => {
   it("registers 4 top-level commands", () => {
     const program = createProgram();
-    expect(getSubcommandNames(program)).toEqual(["process", "code", "ard", "self"]);
+    expect(getSubcommandNames(program)).toEqual(["process", "code", "android", "self"]);
+  });
+
+  it("never binds -P as a short option anywhere (reserved for JADX -P<key>=<value>)", () => {
+    const program = createProgram();
+    for (const cmd of walkCommands(program)) {
+      for (const opt of cmd.options) {
+        expect(opt.short).not.toBe("-P");
+      }
+    }
   });
 
   it("describes the CLI purpose for agents choosing a command family", () => {
@@ -65,7 +82,7 @@ describe("root", () => {
     expect(help).toContain("deeper analysis of decompiled Java code");
     expect(help).toContain("powered by JADX");
     expect(help).toContain("Query decompiled classes, methods, source, control flow");
-    expect(help).toContain("Android app, framework, resource, permission, and device analysis");
+    expect(help).toContain("Analyze Android apps and frameworks, or inspect a connected device");
   });
 
   it("prints top-level help when invoked without arguments", () => {
@@ -99,10 +116,11 @@ describe("process", () => {
     ]);
   });
 
-  it("open has a target argument and -P/--port option", () => {
+  it("open has a target argument and --port option (no -P short alias)", () => {
     const open = findCommand(cmd, ["open"])!;
     expect(open.registeredArguments.length).toBeGreaterThanOrEqual(1);
     expect(hasFlag(open, "--port")).toBe(true);
+    expect(hasFlag(open, "-P")).toBe(false);
   });
 
   it("open has --force option", () => {
@@ -141,7 +159,7 @@ describe("code", () => {
       "classes", "search-global", "class-context", "class-source",
       "method-source", "method-context", "method-cfg",
       "search-class", "search-method", "xref-method", "xref-class",
-      "xref-field", "implement", "subclass",
+      "xref-field", "implementations", "subclasses",
     ]);
   });
 
@@ -179,13 +197,13 @@ describe("code", () => {
     expect(mc.registeredArguments.length).toBeGreaterThanOrEqual(1);
   });
 
-  it("implement has <interface> argument", () => {
-    const impl = findCommand(cmd, ["implement"])!;
+  it("implementations has <interface> argument", () => {
+    const impl = findCommand(cmd, ["implementations"])!;
     expect(impl.registeredArguments.length).toBeGreaterThanOrEqual(1);
   });
 
-  it("subclass has <class> argument", () => {
-    const sub = findCommand(cmd, ["subclass"])!;
+  it("subclasses has <class> argument", () => {
+    const sub = findCommand(cmd, ["subclasses"])!;
     expect(sub.registeredArguments.length).toBeGreaterThanOrEqual(1);
   });
 
@@ -200,28 +218,28 @@ describe("code", () => {
 });
 
 // ============================================================================
-// decx ard
+// decx android
 // ============================================================================
 
-describe("ard", () => {
+describe("android", () => {
   let cmd: Command;
 
   beforeEach(() => {
-    cmd = findCommand(createProgram(), ["ard"])!;
+    cmd = findCommand(createProgram(), ["android"])!;
   });
 
-  it("registers adb and framework subcommands under ard", () => {
+  it("registers app, device, resource, and framework commands", () => {
     expect(getSubcommandNames(cmd)).toEqual([
-      "app-manifest", "main-activity", "app-application",
-      "exported-components", "app-deeplinks", "app-receivers",
-      "system-service-impl", "system-services", "perm-info",
-      "all-resources", "resource-file", "strings", "get-aidl", "framework",
+      "manifest", "launcher-activity", "application",
+      "exported-components", "deep-links", "dynamic-receivers",
+      "framework-service-implementation", "device",
+      "resources", "resource-file", "strings", "aidl-interfaces", "framework",
     ]);
   });
 
-  it("system-service-impl has <interface> argument", () => {
-    const ssi = findCommand(cmd, ["system-service-impl"])!;
-    expect(ssi.registeredArguments.length).toBeGreaterThanOrEqual(1);
+  it("framework-service-implementation has <interface> argument", () => {
+    const service = findCommand(cmd, ["framework-service-implementation"])!;
+    expect(service.registeredArguments.length).toBeGreaterThanOrEqual(1);
   });
 
   it("resource-file has <res> argument", () => {
@@ -229,21 +247,21 @@ describe("ard", () => {
     expect(rf.registeredArguments.length).toBeGreaterThanOrEqual(1);
   });
 
-  it("all-resources includes file name filter options", () => {
-    const allResources = findCommand(cmd, ["all-resources"])!;
-    expect(hasFlag(allResources, "--include")).toBe(true);
-    expect(hasFlag(allResources, "--no-regex")).toBe(true);
+  it("resources includes file name filter options", () => {
+    const resources = findCommand(cmd, ["resources"])!;
+    expect(hasFlag(resources, "--include")).toBe(true);
+    expect(hasFlag(resources, "--no-regex")).toBe(true);
   });
 
-  it("perm-info has <permission> argument and adb device options", () => {
-    const permInfo = findCommand(cmd, ["perm-info"])!;
-    expect(permInfo.registeredArguments.length).toBeGreaterThanOrEqual(1);
-    expect(hasFlag(permInfo, "--adb-path")).toBe(true);
-    expect(hasFlag(permInfo, "--serial")).toBe(true);
+  it("device permission-info has <permission> and adb options", () => {
+    const permissionInfo = findCommand(cmd, ["device", "permission-info"])!;
+    expect(permissionInfo.registeredArguments.length).toBeGreaterThanOrEqual(1);
+    expect(hasFlag(permissionInfo, "--adb-path")).toBe(true);
+    expect(hasFlag(permissionInfo, "--serial")).toBe(true);
   });
 
-  it("system-services includes adb device options", () => {
-    const systemServices = findCommand(cmd, ["system-services"])!;
+  it("device system-services includes adb options", () => {
+    const systemServices = findCommand(cmd, ["device", "system-services"])!;
     expect(systemServices.registeredArguments.length).toBe(0);
     expect(hasFlag(systemServices, "--adb-path")).toBe(true);
     expect(hasFlag(systemServices, "--serial")).toBe(true);
@@ -267,7 +285,7 @@ describe("ard", () => {
     expect(hasFlag(collect, "--clean-source")).toBe(true);
   });
 
-  it("framework process requires <oem>", () => {
+  it("framework process takes an optional oem argument", () => {
     const process = findCommand(cmd, ["framework", "process"])!;
     expect(process.registeredArguments.length).toBeGreaterThanOrEqual(1);
   });
@@ -283,8 +301,7 @@ describe("ard", () => {
   it("help distinguishes APK, live-device, and framework-analysis commands", () => {
     const help = cmd.helpInformation();
     expect(help).toContain("Return the APK AndroidManifest.xml");
-    expect(help).toContain("List live Binder service names from a connected device");
-    expect(help).toContain("Show live Android permission metadata from a connected device");
+    expect(help).toContain("Inspect live state from an adb-connected Android device");
     expect(help).toContain("Collect, process, pack, and open Android framework artifacts");
   });
 

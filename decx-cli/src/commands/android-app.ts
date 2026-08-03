@@ -25,9 +25,9 @@ function parsePage(opts: Record<string, unknown>): number {
   return opts.page ? parseInt(String(opts.page)) : 1;
 }
 
-export function registerArdAppAnalysisCommands(cmd: Command): void {
+export function registerAndroidAppAnalysisCommands(cmd: Command): void {
   cmd
-    .command("app-manifest")
+    .command("manifest")
     .summary("Return the APK AndroidManifest.xml")
     .description("Return the decoded AndroidManifest.xml for the current app analysis session.")
     .option("--page <n>", "Result page number to fetch", String)
@@ -37,7 +37,7 @@ export function registerArdAppAnalysisCommands(cmd: Command): void {
     }));
 
   cmd
-    .command("main-activity")
+    .command("launcher-activity")
     .summary("Return the launcher activity class")
     .description("Return the app launcher activity declared with MAIN and LAUNCHER intent filters.")
     .option("--page <n>", "Result page number to fetch", String)
@@ -47,7 +47,7 @@ export function registerArdAppAnalysisCommands(cmd: Command): void {
     }));
 
   cmd
-    .command("app-application")
+    .command("application")
     .summary("Return the custom Application class")
     .description("Return the android:name Application class declared by the app manifest, when present.")
     .option("--page <n>", "Result page number to fetch", String)
@@ -70,7 +70,7 @@ export function registerArdAppAnalysisCommands(cmd: Command): void {
     }));
 
   cmd
-    .command("app-deeplinks")
+    .command("deep-links")
     .summary("List manifest-declared deep links")
     .description("List schemes, hosts, paths, and owning components from app intent filters.")
     .option("--page <n>", "Result page number to fetch", String)
@@ -81,7 +81,7 @@ export function registerArdAppAnalysisCommands(cmd: Command): void {
 
   addPackageFilterOptions(
     cmd
-      .command("app-receivers")
+      .command("dynamic-receivers")
       .summary("List dynamically registered broadcast receivers")
       .description("Search code for runtime broadcast receiver registrations, with optional package filters.")
       .option("--page <n>", "Result page number to fetch", String)
@@ -92,9 +92,9 @@ export function registerArdAppAnalysisCommands(cmd: Command): void {
     }));
 
   cmd
-    .command("system-service-impl <interface>")
-    .summary("Find framework service implementations for one interface")
-    .description("Search the current framework analysis session for classes implementing a system service interface.")
+    .command("framework-service-implementation <interface>")
+    .summary("Find a framework service implementation in loaded decompiled code")
+    .description("Search the current decompiled analysis session (loaded DECX session, offline) for classes implementing a system service interface such as android.app.IActivityManager.")
     .option("--page <n>", "Result page number to fetch", String)
     .action(withErrorHandler(async (iface: string, opts, command) => {
       const { fmt, client } = resolveCommandClient(opts, command);
@@ -102,9 +102,9 @@ export function registerArdAppAnalysisCommands(cmd: Command): void {
     }));
 }
 
-export function registerArdResourceCommands(cmd: Command): void {
+export function registerAndroidResourceCommands(cmd: Command): void {
   cmd
-    .command("all-resources")
+    .command("resources")
     .summary("List decoded APK resource file names")
     .description("List resource paths available in the current app analysis session, with optional file-name filters.")
     .option("--include <pattern>", "Include only resource file names matching this pattern; repeatable", collectOption, [])
@@ -137,7 +137,7 @@ export function registerArdResourceCommands(cmd: Command): void {
 
   addPackageFilterOptions(
     cmd
-      .command("get-aidl")
+      .command("aidl-interfaces")
       .summary("List AIDL-style Binder interfaces discovered in code")
       .description("Find AIDL interfaces and Binder stubs/proxies in the current analysis session, with optional package filters.")
       .option("--page <n>", "Result page number to fetch", String)

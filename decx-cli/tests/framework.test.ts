@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, rmSync, writeFileSync } from "fs";
 import * as path from "path";
 import { cleanFrameworkOutputs, cleanFrameworkTempDirs } from "../src/android/framework-processor.js";
 import { normalizeOem } from "../src/android/framework-collector.js";
-import { resolveFrameworkJarPath, resolveFrameworkLayout, summarizeFrameworkArtifact } from "../src/android/framework.js";
+import { resolveFrameworkJarPath, resolveFrameworkLayout, resolveProcessOem, summarizeFrameworkArtifact } from "../src/android/framework.js";
 import { resolveFrameworkTools } from "../src/android/framework-tools.js";
 import { resetTestDir, testPath } from "./test-paths.js";
 
@@ -23,7 +23,7 @@ function writeArtifact(outDir: string, vendor: string, oem: string = "xiaomi"): 
   return jarPath;
 }
 
-describe("framework collector", () => {
+describe("framework OEM handling", () => {
   it("normalizes supported OEM names", () => {
     expect(normalizeOem("XIAOMI")).toBe("xiaomi");
     expect(normalizeOem("google")).toBe("google");
@@ -33,9 +33,42 @@ describe("framework collector", () => {
   it("rejects unsupported OEM names", () => {
     expect(() => normalizeOem("meizu")).toThrow("Unsupported OEM");
   });
+
+  it("resolves the process oem from the explicit argument", async () => {
+    await expect(resolveProcessOem({ oem: "XIAOMI" })).resolves.toBe("xiaomi");
+  });
+
+  it("resolves the process oem from the persisted .artifact.json when omitted", async () => {
+    const outDir = resetTestDir("tmp", "decx-fw-process-artifact");
+    writeArtifact(outDir, "K70 Ultra", "xiaomi");
+
+    await expect(
+      resolveProcessOem({ outDir }, async () => { throw new Error("device should not be queried"); }),
+    ).resolves.toBe("xiaomi");
+
+    rmSync(outDir, { recursive: true, force: true });
+  });
+
+  it("resolves the process oem from a connected device when no artifact is present", async () => {
+    const outDir = resetTestDir("tmp", "decx-fw-process-detect");
+    await expect(
+      resolveProcessOem({ outDir }, async () => "samsung"),
+    ).resolves.toBe("samsung");
+
+    rmSync(outDir, { recursive: true, force: true });
+  });
+
+  it("fails with a clear error when the process oem cannot be resolved", async () => {
+    const outDir = resetTestDir("tmp", "decx-fw-process-error");
+    await expect(
+      resolveProcessOem({ outDir }, async () => { throw new Error("no device"); }),
+    ).rejects.toThrow("Framework OEM could not be resolved");
+
+    rmSync(outDir, { recursive: true, force: true });
+  });
 });
 
-describe("framework layout", () => {
+describe("framework artifact layout", () => {
   it("derives source, temp, and jar paths from out-dir", () => {
     const outDir = testPath("tmp", "decx-fw");
     const layout = resolveFrameworkLayout({ outDir });
@@ -90,7 +123,9 @@ describe("framework layout", () => {
 
     rmSync(outDir, { recursive: true, force: true });
   });
+});
 
+describe("framework jar resolution", () => {
   it("resolves an explicit framework jar path without device detection", async () => {
     const jarPath = testPath("tmp", "custom.jar");
     await expect(resolveFrameworkJarPath(jarPath, {})).resolves.toBe(jarPath);
@@ -129,7 +164,9 @@ describe("framework layout", () => {
 
     rmSync(outDir, { recursive: true, force: true });
   });
+});
 
+describe("framework build cleanup", () => {
   it("removes all tmp directories after packing cleanup", () => {
     const outDir = resetTestDir("tmp", "decx-fw-clean-pack");
     const layout = resolveFrameworkLayout({ outDir });

@@ -22,13 +22,28 @@ export function makeProcessCommand(): Command {
   cmd
     .command("check")
     .summary("Check installed server jar, port availability, and server health")
-    .description("Check whether decx-server.jar is installed, whether a DECX server responds on the selected port, and whether that port is available.")
-    .option("-P, --port <port>", "DECX HTTP server port to check", String)
+    .description("Check whether decx-server.jar is installed and whether a DECX server is healthy. With no --port it auto-selects the only running session; otherwise it checks the configured default port.")
+    .option("--port <port>", "DECX HTTP server port to check", String)
     .action(async (opts) => {
       const fmt = new Formatter();
       try {
         const mgr = Manager.get();
-        const port = parseServerPort(opts.port ?? mgr.server.defaultPort);
+        mgr.cleanupDead();
+        let port: number;
+        let sessionName: string | undefined;
+
+        if (opts.port) {
+          port = parseServerPort(opts.port);
+        } else {
+          // Auto-select: if exactly one alive session, check its port; otherwise default port
+          const auto = mgr.autoSelectSession();
+          if (auto) {
+            port = auto.port;
+            sessionName = auto.name;
+          } else {
+            port = parseServerPort(mgr.server.defaultPort);
+          }
+        }
 
         // Check decx-server.jar
         const jarPath = findDecxServerJar();
@@ -40,14 +55,18 @@ export function makeProcessCommand(): Command {
 
         // Check port availability
         const portAvailable = await isServerPortAvailable(port);
+        const portInfo = portAvailable
+          ? `Port ${port} is available`
+          : (sessionName ? `Port ${port} is in use by session '${sessionName}'` : `Port ${port} is already in use`);
 
         const results = {
+          session: sessionName ? { name: sessionName, port } : null,
           server: { ok: serverOk, info: serverInfo },
           jar: { ok: jarOk, info: jarInfo },
-          port: { ok: portAvailable, info: portAvailable ? `Port ${port} is available` : `Port ${port} is already in use` },
+          port: { ok: portAvailable, info: portInfo },
         };
 
-        logCliEvent({ command: "process", action: "check", serverPort: port, ...results });
+        logCliEvent({ command: "process", action: "check", serverPort: port, ...results, session: sessionName });
         fmt.output(results);
       } catch (err) { handleCliError(err, fmt); }
     });
@@ -58,8 +77,8 @@ export function makeProcessCommand(): Command {
     .allowUnknownOption(true)
     .allowExcessArguments(true)
     .summary("Start a DECX server session for an APK, DEX, JAR, AAR, or framework jar")
-    .description("Start decx-server.jar for a target file and record a reusable session. Unknown options after this command are forwarded to jadx-cli.")
-    .option("-P, --port <port>", "DECX HTTP server port to bind")
+    .description("Start decx-server.jar for a target file and record a reusable session. Unknown options after this command are forwarded to jadx-cli, including JADX `-P<key>=<value>` project properties. Use `--port` to set the server port.")
+    .option("--port <port>", "DECX HTTP server port to bind")
     .option("--mcp", "Also start MCP Streamable HTTP server on port + 1")
     .option("--force", "Start a new server even when a matching file/session already exists")
     .option("-n, --name <name>", "Session name used by -s/--session (default: input filename without extension)")
@@ -82,7 +101,7 @@ export function makeProcessCommand(): Command {
     .summary("Stop one or more recorded DECX server sessions")
     .description("Stop a DECX server by session name, by --port, the only running session, or every running session with --all.")
     .option("-a, --all", "Stop all recorded running DECX sessions")
-    .option("-P, --port <port>", "Stop the session bound to this DECX HTTP server port")
+    .option("--port <port>", "Stop the session bound to this DECX HTTP server port")
     .action(async (name: string | undefined, opts) => {
       const fmt = new Formatter();
       try {
@@ -166,28 +185,38 @@ export function makeProcessCommand(): Command {
   cmd
     .command("status [name]")
     .summary("Check health for one session or server port")
-    .description("Call the DECX /health endpoint for a named session, a specific --port, or the configured default port.")
-    .option("-P, --port <port>", "DECX HTTP server port to query", String)
+    .description("Call the DECX /health endpoint for a named session, a specific --port, the only running session, or the configured default port.")
+    .option("--port <port>", "DECX HTTP server port to query", String)
     .action(async (name: string | undefined, opts) => {
       const fmt = new Formatter();
       try {
       const mgr = Manager.get();
+      mgr.cleanupDead();
       let port: number;
+      let sessionName: string | undefined;
 
       if (name) {
         const session = mgr.getSession(name);
         if (!session) throw new ProcessError(`Session not found: ${name}`);
         port = session.port;
+        sessionName = session.name;
       } else if (opts.port) {
         port = parseServerPort(opts.port);
       } else {
-        port = parseServerPort(mgr.server.defaultPort);
+        // Auto-select: if exactly one alive session, use it; otherwise default port
+        const auto = mgr.autoSelectSession();
+        if (auto) {
+          port = auto.port;
+          sessionName = auto.name;
+        } else {
+          port = parseServerPort(mgr.server.defaultPort);
+        }
       }
 
       const client = new DecxClient("127.0.0.1", port);
       try {
         const health = await client.healthCheck();
-        logCliEvent({ command: "process", action: "status", session: name, port, ok: true });
+        logCliEvent({ command: "process", action: "status", session: name ?? sessionName, port, ok: true });
         fmt.output({ ok: true, port, health });
       } catch (err) {
         throw new DecxError(String(err), "SERVER_ERROR", { port });
