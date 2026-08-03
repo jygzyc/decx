@@ -119,9 +119,9 @@ Notable details:
 - `skills/decx-poc/scripts/setup-poc.mjs` copies `skills/decx-poc/assets/poc-template-app/` into `poc-<target>/app/` and `skills/decx-poc/assets/poc-template-server/` into `poc-<target>/server/`
 - The PoC app template keeps a dynamic button registry in `ExploitRegistry` and also accepts browser-driven `poc-<target>://run/trigger?exploit=<id>` launches through `PoCActivity`.
 
-### OpenCode workflow control plane
+### Minimal OpenCode plugin
 
-`.opencode/plugins/decx.js` is the OpenCode DECX workflow control plane. It must not register `skills.paths`; graph writes go through fixed function-level plugin tools backed by `.opencode/plugins/lib/graph-api.js` and the embedded `.opencode/plugins/lib/decx-graph.js`; Planner/MainAgent orchestrates Explorer/Evaluator/Metacog subagents, and open hints must be explicitly answered before ordinary planner work continues; cross-session analysis is read-only federation over isolated `.decx-analysis/<session>/decx-analysis.db` files, not shared writes.
+`.opencode/plugins/decx.js` is a minimal OpenCode plugin (auto-loaded from `.opencode/plugins/`) that only injects a routing hint into the system prompt, pointing the agent at the installed skills (`decx-cli`, `decx-vulnhunt`, `decx-report`, `decx-poc`). There is no graph database and no function-level tool set; workflow discipline is enforced by the skills themselves.
 
 ## Build And Test Commands
 
