@@ -78,7 +78,6 @@ Every case follows this structure:
 | Skill | Scope |
 |---|---|
 | `decx-cli` | DECX CLI command usage. Independent, no cross-skill routing. |
-| `decx-app-vulnhunt` | APK app-layer vulnerability hunting. Uses Cairn-style SQLite blackboard for vulnerability discovery. |
-| `decx-framework-vulnhunt` | Framework/Binder vulnerability hunting. Uses Cairn-style SQLite blackboard for vulnerability discovery. |
-| `decx-report` | Report generation from blackboard export data. |
-| `decx-poc` | PoC app construction from verified graph paths. |
+| `decx-vulnhunt` | Android vulnerability hunting method (App + Framework tracks): surface collection, pattern routing, evidence gates, risk rating. |
+| `decx-report` | Report generation from finalized finding writeups. |
+| `decx-poc` | PoC construction from one finalized finding writeup. |

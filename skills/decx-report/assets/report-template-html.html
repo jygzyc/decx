@@ -20,7 +20,7 @@
       --tag-sink: #dc2626; --tag-sink-bg: #fee2e2;
       --tag-edge: #7c3aed; --tag-edge-bg: #ede9fe;
       --tag-effect: #059669; --tag-effect-bg: #d1fae5;
-      --tag-dead: #6b7280; --tag-dead-bg: #f3f4f6;
+      --tag-muted: #6b7280; --tag-muted-bg: #f3f4f6;
       --radius: 8px; --radius-sm: 5px;
       --shadow: 0 1px 3px rgba(0,0,0,.06), 0 1px 2px rgba(0,0,0,.04);
     }
@@ -40,7 +40,7 @@
         --tag-sink: #f87171; --tag-sink-bg: #1c1111;
         --tag-edge: #a78bfa; --tag-edge-bg: #1e1b3a;
         --tag-effect: #34d399; --tag-effect-bg: #0e2a22;
-        --tag-dead: #9ca3af; --tag-dead-bg: #1a1d26;
+        --tag-muted: #9ca3af; --tag-muted-bg: #1a1d26;
         --shadow: 0 1px 3px rgba(0,0,0,.25), 0 1px 2px rgba(0,0,0,.15);
       }
     }
@@ -70,7 +70,7 @@
     .badge.critical { background: var(--critical); } .badge.high { background: var(--high); }
     .badge.medium { background: var(--medium); } .badge.low { background: var(--low); }
     .badge.composed { background: var(--tag-edge); }
-    .badge.dead { background: var(--tag-dead); }
+    .badge.muted { background: var(--tag-muted); }
 
     /* Table */
     table { width: 100%; border-collapse: collapse; margin: 8px 0; font-size: 12.5px; }
@@ -145,9 +145,9 @@
     .flow-edge-label { font-size: 10px; font-weight: 600; color: var(--tag-edge); text-transform: uppercase; letter-spacing: .3px; }
     .flow-section-label { font-size: 11px; font-weight: 600; color: var(--text-2); text-transform: uppercase; letter-spacing: .4px; margin: 8px 0 4px; }
 
-    /* Dead-end notice */
-    .dead-end { background: var(--tag-dead-bg); border: 1px dashed var(--tag-dead); border-radius: var(--radius-sm); padding: 12px 14px; margin: 8px 0; font-size: 12.5px; line-height: 1.55; color: var(--text-2); }
-    .dead-end b { color: var(--tag-dead); }
+    /* No-composition notice */
+    .no-composition { background: var(--tag-muted-bg); border: 1px dashed var(--tag-muted); border-radius: var(--radius-sm); padding: 12px 14px; margin: 8px 0; font-size: 12.5px; line-height: 1.55; color: var(--text-2); }
+    .no-composition b { color: var(--tag-muted); }
 
     /* Text overflow guard */
     p, td, li, .chain-step .body, .flow-node { overflow-wrap: break-word; word-break: break-word; }
@@ -257,18 +257,18 @@
     <!-- ═══════ 3. Composition — cross-finding composition analysis ═══════ -->
     <!--
       Every finding MUST have this section.
-      For dead-end findings: show the single dead-end notice.
-      For all others: show composition analysis (组合分析 + 效果比较表 + 完整攻击路径 + 真实影响).
+      When no composition evidence supports composition, show the no-composition notice.
+      Otherwise show composition analysis (组合分析 + 效果比较表 + 完整攻击路径 + 真实影响).
     -->
     <section>
       <h2>组合链利用</h2>
 
-      {{#if issue.isDeadEnd}}
-      <!-- Dead-end: no cross-finding composition possible -->
-      <div class="dead-end">
-        <b>dead-end</b> — {{issue.deadReason}}<br>
+      {{#if issue.noComposition}}
+      <!-- No accepted composition evidence -->
+      <div class="no-composition">
+        <b>未形成组合链</b> — {{issue.compositionReason}}<br>
         已评估组合: {{issue.evaluatedCombinations}}<br>
-        无法组合原因: {{issue.deadBlocker}}
+        无法组合原因: {{issue.compositionBlocker}}
       </div>
 
       {{else}}
@@ -317,20 +317,6 @@
       <div class="fix">{{issue.remediation}}</div>
     </section>
 
-    <!-- ═══════ Residual ═══════ -->
-    <section>
-      <h2>残余攻击面</h2>
-      <table>
-        <thead><tr><th>组件</th><th>状态</th><th>说明</th></tr></thead>
-        <tbody>
-          <tr>
-            <td>{{candidate.component}}</td>
-            <td>{{candidate.status}}</td>
-            <td>{{candidate.note}}</td>
-          </tr>
-        </tbody>
-      </table>
-    </section>
   </main>
 </body>
 </html>

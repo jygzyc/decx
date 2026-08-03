@@ -52,10 +52,9 @@ ln -s ~/.decx/source/skills ~/.agents/skills
 | 技能 | 用途 |
 |---|---|
 | `decx-cli` | DECX CLI 使用、通用代码导航、源码查看、交叉引用、Manifest/资源检查和工作流路由 |
-| `decx-app-vulnhunt` | 基于 SQLite 黑板工作流的 APK 应用层漏洞挖掘 |
-| `decx-framework-vulnhunt` | 面向处理后的 framework 包，分析 Android framework、Binder 和系统服务漏洞 |
-| `decx-poc` | 从一个已最终确认的黑板发现或选定图路径构建 Android PoC App 和可选辅助服务 |
-| `decx-report` | 从已最终确认的黑板发现生成 HTML/Markdown 报告 |
+| `decx-vulnhunt` | Android 漏洞挖掘（App + Framework 双轨）：导出组件、WebView/Provider/Service/Receiver、Binder/系统服务、AIDL |
+| `decx-poc` | 从一个已最终确认的漏洞发现构建 Android PoC App 和可选辅助服务 |
+| `decx-report` | 从已最终确认的漏洞发现生成 HTML/Markdown 报告 |
 
 ### JADX 插件
 
@@ -79,8 +78,8 @@ Agent 驱动分析时，先用 CLI 创建会话，再让已安装技能接管具
 decx process open target.apk --name target
 decx code classes --limit 50
 decx code search-global "WebView" --limit 20
-decx ard exported-components
-decx ard app-deeplinks
+decx android exported-components
+decx android deep-links
 decx process close target
 decx process close --port 25419
 ```
@@ -88,31 +87,31 @@ decx process close --port 25419
 典型技能顺序：
 
 - `decx-cli` 用于探索、收集证据和工作流路由
-- `decx-app-vulnhunt` 或 `decx-framework-vulnhunt` 用于聚焦漏洞挖掘
-- `decx-report` 用于从已最终确认的黑板发现生成报告
-- `decx-poc` 用于把一个已最终确认的黑板发现或选定图路径转换为可构建 PoC
+- `decx-vulnhunt` 用于聚焦漏洞挖掘（App 或 Framework 轨道）
+- `decx-report` 用于从已最终确认的漏洞发现生成报告
+- `decx-poc` 用于把一个已最终确认的漏洞发现转换为可构建 PoC
 
-漏洞挖掘技能会把分析状态写入 `.decx-analysis/<target>/decx-analysis.db`。App 挖掘用 `--kind android_app` 初始化黑板；framework 挖掘用 `--kind android_framework`。黑板保存 facts、intents、events、links 和 chains，供后续报告和 PoC 技能消费。
+漏洞挖掘会在工作目录中保存分析笔记和已最终确认的漏洞发现，供后续报告和 PoC 技能消费。
 
 常用命令分组：
 
 | 需求 | 命令 |
 |---|---|
 | 会话管理 | `decx process open <file>`、`decx process list`、`decx process check`、`decx process close [name] [--port <port>]` |
-| 代码分析 | `decx code classes`、`class-source`、`method-source`、`method-context`、`search-global`、`search-class`、`xref-method`、`xref-class`、`xref-field`、`implement`、`subclass` |
-| APK 分析 | `decx ard app-manifest`、`main-activity`、`app-application`、`exported-components`、`app-deeplinks`、`app-receivers`、`get-aidl`、`all-resources`、`resource-file`、`strings` |
-| Framework 分析 | `decx ard framework collect`、`process <oem>`、`run`、`open [jar]`，以及 `system-service-impl <interface>` |
-| 设备辅助 | `decx ard system-services`、`decx ard perm-info <permission>` |
+| 代码分析 | `decx code classes`、`class-source`、`method-source`、`method-context`、`search-global`、`search-class`、`xref-method`、`xref-class`、`xref-field`、`implementations`、`subclasses` |
+| APK 分析 | `decx android manifest`、`launcher-activity`、`application`、`exported-components`、`deep-links`、`dynamic-receivers`、`aidl-interfaces`、`resources`、`resource-file`、`strings` |
+| Framework 分析 | `decx android framework collect`、`process [oem]`、`run`、`open [jar]`，以及 `framework-service-implementation <interface>` |
+| 设备辅助 | `decx android device system-services`、`decx android device permission-info <permission>` |
 | CLI/server 管理 | `decx self install`、`decx self update` |
 
 注意：
 
-- 基于会话的 `code` 和 `ard` 命令支持 `--page <n>`，也可用 `-s, --session <name>` 或 `-P, --port <port>` 指向指定会话。
+- 基于会话的 `code` 和 `android` 命令支持 `--page <n>`，也可用 `-s, --session <name>` 或 `--port <port>` 指向指定会话。
 - `decx code class-source` 支持用 `--limit <n>` 最多返回 N 行源码。
 - `decx process open <file>` 会透传标准 `jadx-cli` 参数，默认启用 `--show-bad-code` 和 `--no-imports`，并会移除 `--deobf`，因为 DECX 分析需要保留原始名称。
-- `decx ard all-resources` 支持用 `--include`、`--no-regex` 按文件名过滤。
-- `system-services` 和 `perm-info` 是 adb 命令，使用 `--serial` / `--adb-path`，不使用 `-P <port>`。
-- `decx ard framework run` 默认从已连接设备收集、处理、打包并打开最终 framework JAR；`process <oem>` 用于处理本地 framework dump。
+- `decx android resources` 支持用 `--include`、`--no-regex` 按文件名过滤。
+- `decx android device system-services` 和 `permission-info` 是 adb 命令，使用 `--serial` / `--adb-path`，不使用 `--port <port>`。
+- `decx android framework run` 默认从已连接设备收集、处理、打包并打开最终 framework JAR；`process [oem]` 用于处理本地 framework dump，省略 OEM 时会尝试从 `.artifact.json` 或已连接设备解析。
 
 ### 插件 + MCP
 

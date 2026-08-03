@@ -51,8 +51,8 @@ export function makeCodeCommand(): Command {
   cmd.description("Query decompiled classes, methods, source, control flow, and cross references");
 
   cmd
-    .option("-s, --session <name>", "Use a named DECX process session instead of the default port")
-    .option("-P, --port <port>", "Connect to a DECX HTTP server on this port");
+    .option("-s, --session <name>", "Select a named DECX session; required when multiple sessions are running")
+    .option("--port <port>", "Connect to a DECX HTTP server on this port");
 
   addPackageFilterOptions(cmd.command("classes"))
     .summary("List decompiled classes with optional package filters")
@@ -187,25 +187,25 @@ export function makeCodeCommand(): Command {
     }));
 
   cmd
-    .command("implement <interface>")
+    .command("implementations <interface>")
     .summary("Find classes implementing one interface")
     .description("Return implementation classes for a fully qualified interface name.")
     .option("--page <n>", "Result page number to fetch", String)
     .action(withErrorHandler(async (iface: string, opts, command) => {
       const { fmt, client } = resolveCommandClient(opts, command);
       const page = opts.page ? parseInt(opts.page) : 1;
-      fmt.output(await client.getImplement(iface, page));
+      fmt.output(await client.getImplementations(iface, page));
     }));
 
   cmd
-    .command("subclass <class>")
+    .command("subclasses <class>")
     .summary("Find subclasses of one class")
     .description("Return direct and discovered subclasses for a fully qualified class name.")
     .option("--page <n>", "Result page number to fetch", String)
     .action(withErrorHandler(async (className: string, opts, command) => {
       const { fmt, client } = resolveCommandClient(opts, command);
       const page = opts.page ? parseInt(opts.page) : 1;
-      fmt.output(await client.getSubClasses(className, page));
+      fmt.output(await client.getSubclasses(className, page));
     }));
 
   return cmd;

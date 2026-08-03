@@ -52,7 +52,7 @@ function isDecxProcess(pid: number): boolean {
 }
 
 export function createSession(name: string, hash: string, apkPath: string, pid: number, port: number): Session {
-  const session: Session = { name, hash, pid, port, path: apkPath, startedAt: Date.now(), kind: "process" };
+  const session: Session = { name, hash, pid, port, path: apkPath, startedAt: Date.now() };
   atomicWriteJson(sessionFilePath(name), session);
   return session;
 }

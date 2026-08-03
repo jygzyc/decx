@@ -19,15 +19,15 @@ session_context=$(cat <<'EOF'
 You have DECX skills installed.
 
 Use `decx-cli` first for any DECX-related task.
-Route to `decx-app-vulnhunt`, `decx-framework-vulnhunt`, `decx-poc`, or `decx-report` as needed.
+Route to `decx-vulnhunt`, `decx-poc`, or `decx-report` as needed.
 If the work can be split, use `decx-subagent`.
 
 DECX rules:
-- Session-backed `decx code` and `decx ard` commands need `-P <port>`
-- `decx ard system-services` and `decx ard perm-info` are adb-backed and use `--serial` / `--adb-path`
+- Session-backed `decx code` and `decx android` commands accept `--port <port>` or `-s <name>`; omit both only when exactly one session is alive
+- `decx android device system-services` and `decx android device permission-info` are adb-backed and use `--serial` / `--adb-path`
 - If a command is missing, rejected, or unclear, run the nearest `--help` first
 - Keep one DECX session per target
-- Keep artifacts under `.decx-analysis/<target-name>/`
+- Keep analysis artifacts in the working directory
 - Close the DECX session only when the workflow is complete
 </EXTREMELY_IMPORTANT>
 EOF

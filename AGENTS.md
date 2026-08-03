@@ -31,14 +31,9 @@ AI Assistant / CLI
 | `decx/decx-plugin/` | Kotlin, Shadow JAR | JADX GUI plugin, lifecycle, UI, in-process MCP server management |
 | `decx/decx-server/` | Kotlin, Shadow JAR | Standalone headless server with `DecxServerApp` main class |
 | `decx-cli/` | TypeScript, Node.js 22.5+ | User CLI for session management and analysis commands |
-| `decx-agent/src/server/` | TypeScript, Node.js 22.5+ | SQLite state, local API, and Web audit UI for the standalone agent |
-| `decx-agent/src/dispatcher/` | TypeScript, Node.js 22.5+ | Cairn-style bootstrap/reason/explore/review loop and workflow routing |
-| `decx-agent/src/roles/` | TypeScript, Node.js 22.5+ | Built-in and configured role prompt registry |
-| `decx-agent/src/workers/` | TypeScript, Node.js 22.5+ | Bottom adapters for command and model workers |
 | `skills/decx-cli/` | Skill `decx-cli` | DECX CLI usage, general analysis, and workflow routing |
-| `skills/decx-app-vulnhunt/` | Skill `decx-app-vulnhunt` | Android app vulnerability hunting workflow |
-| `skills/decx-framework-vulnhunt/` | Skill `decx-framework-vulnhunt` | Android framework vulnerability hunting workflow |
-| `skills/decx-report/` | Skill `decx-report` | Report generation from finalized blackboard findings |
+| `skills/decx-vulnhunt/` | Skill `decx-vulnhunt` | Android vulnerability hunting workflow (App + Framework tracks) |
+| `skills/decx-report/` | Skill `decx-report` | Report generation from finalized DECX analysis graph findings |
 | `skills/decx-poc/` | Skill `decx-poc` | PoC app construction workflow |
 | `skills/decx-poc/assets/poc-template-app/` | Android template | Source-of-truth minimal Android PoC app scaffold |
 | `skills/decx-poc/assets/poc-template-server/` | Node template | Source-of-truth PoC HTML server scaffold |
@@ -52,9 +47,9 @@ AI Assistant / CLI
 - Common code analysis:
   `get_classes`, `get_class_context`, `get_class_source`, `search_global_key`, `search_class_key`,
   `search_method`, `get_method_source`, `get_method_context`, `get_method_cfg`, `get_method_xref`, `get_field_xref`,
-  `get_class_xref`, `get_implement`, `get_sub_classes`
+  `get_class_xref`, `get_implementations`, `get_subclasses`
 - Android app analysis:
-  `get_aidl`, `get_app_manifest`, `get_main_activity`, `get_application`,
+  `get_aidl_interfaces`, `get_app_manifest`, `get_main_activity`, `get_application`,
   `get_exported_components`, `get_deep_links`, `get_dynamic_receivers`,
   `get_all_resources`, `get_resource_file`, `get_strings`
 - Android framework analysis:
@@ -71,7 +66,7 @@ The JADX plugin does more than just expose the server:
 - Starts the embedded DECX HTTP server
 - Starts and stops the in-process Kotlin MCP HTTP server on `serverPort + 1`
 - Provides UI and restart hooks through `DecxUIManager`
-- Performs decompiler warmup in the background for faster later queries
+- Caches decompiled source on demand via `DecompileGuard` (compressed) for fast repeat queries; no background warmup
 
 ### CLI responsibilities
 
@@ -80,16 +75,18 @@ Current top-level commands are:
 
 - `decx process`
 - `decx code`
-- `decx ard`
+- `decx android`
 - `decx self`
 
 Notable details:
 
 - `decx process open <file>` launches `java -jar decx-server.jar ...`
 - `decx process open <file>` starts the JVM with `-Xmx` set to 2/3 of machine memory rounded down
-- `decx process open <file>` is also reused by `decx ard framework open` and `decx ard framework run`
+- `decx process open <file>` is also reused by `decx android framework open` and `decx android framework run`
 - Standard `jadx-cli` flags are passed through by `process open`
-- `process open` enables `--show-bad-code` by default unless the flag is already present in passthrough args
+- `process open` auto-injects `--show-bad-code`, `--no-imports`, and `-Pdex-input.verify-checksum=no` (each skipped if already present), and intentionally strips `--deobf` because DECX relies on original symbol names
+- No DECX command binds `-P` to `--port`; `-P<key>=<value>` tokens are forwarded to jadx-cli by `process open` as JADX project properties. Use `--port` everywhere for the server port
+- When `--port` is omitted, `process open` auto-assigns a free random port in `30000–40000` (checked for availability, retried on collision); the chosen port is recorded on the session
 - CLI sessions are tracked locally and can be reused by session name and file hash
 - `decx process close` can close by session name, by `--port <port>`, or all sessions with `--all`
 - CLI data defaults to `~/.decx`; set `DECX_HOME` to redirect config, sessions, logs, tmp files, output, and installed server JARs
@@ -97,46 +94,34 @@ Notable details:
 - `decx self install` installs or updates `decx-server.jar`
 - `decx self update` updates both the server JAR and the currently installed npm CLI package
 - `decx-cli` builds runtime JavaScript as two bundles: `dist/index.js` for the CLI and `dist/sdk/index.js` for SDK imports; packaged native tools are stored as `dist/bin.tar.gz` and extracted to cache at runtime
-- `decx ard framework` provides framework collection and preprocessing subcommands:
-  `collect`, `process`, `pack`, `run`, `open`, `tools`
-- `decx ard` also includes adb-backed inspection commands:
-  `system-services`, `perm-info`
+- `decx android framework` provides framework collection and preprocessing subcommands:
+  `collect`, `process`, `run`, `open`
+- `decx android device` provides adb-backed inspection commands:
+  `system-services`, `permission-info`
 - Framework processing is implemented in native TypeScript under `decx-cli/src/android/`
 - ADB interaction is centralized in `decx-cli/src/android/adb.ts`
-- `decx ard system-services` returns structured JSON for live Binder/system services and supports `--serial`, `--adb-path`, and `--grep`
-- `decx ard perm-info <permission>` returns one structured JSON object for a permission and supports `--serial` and `--adb-path`
+- `decx android device system-services` returns structured JSON for live Binder/system services and supports `--serial`, `--adb-path`, and `--grep`
+- `decx android device permission-info <permission>` returns one structured JSON object for a permission and supports `--serial` and `--adb-path`
 - `get_classes` accepts a `filter` object with `limit`, regex-enabled `includes`/`excludes`, and optional `regex=false`
 - `get_class_source` accepts an optional `filter.limit` to return at most N source lines
-- `get_aidl` and `get_dynamic_receivers` accept the same regex-enabled `filter` object for package filtering
+- `get_aidl_interfaces` and `get_dynamic_receivers` accept the same regex-enabled `filter` object for package filtering
 - `get_exported_components` accepts regex-enabled `includes`/`excludes` and optional `regex=false`
 - `get_all_resources` accepts `filter.includes` and optional `regex=false` for resource file-name filtering
 - `search_global_key` accepts a `search` object with `limit`, `includes`, `excludes`, `caseSensitive`, and `regex`
 - `search_class_key` greps within one class and requires a `grep` object with `limit`, `caseSensitive`, and `regex`
 - Framework build metadata is stored per-output-directory under `.artifact.json`; legacy `.meta.json` is no longer used
-- `decx ard framework open` / `run` ultimately create normal process sessions via `decx process open`; framework artifacts are not stored as a separate session kind
+- `decx android framework open` / `run` ultimately create normal process sessions via `decx process open`; framework artifacts are not stored as a separate session kind
 ### Skill workflow details
 
 - Skill architecture and authoring rules are defined in `skills/AGENTS.md`.
-- Vulnerability hunting skills use a SQLite blackboard architecture. Each target gets one `decx-analysis.db` under `.decx-analysis/<target>/`. App hunts initialize with `--kind android_app`; framework hunts initialize with `--kind android_framework`. The blackboard is driven by Facts (immutable observations whose descriptions carry the observation type), Intents (exploration goals), Events (audit trail), and links/chains. Chains emerge from the fact→intent→fact graph when evidence proves a complete path. The blackboard CLI is `scripts/decx-analysis-db.mjs`.
-- `skills/decx-report/` (`decx-report`) owns report templates and consumes finalized blackboard findings; app/framework vuln-hunt skills should not duplicate report templates.
+- Vulnerability hunting is the `decx-vulnhunt` skill with App and Framework tracks sharing one methodology, evidence gates, and rating authority; report/PoC skills consume its finalized finding writeups.
+- `skills/decx-report/` (`decx-report`) owns report templates and consumes finalized DECX finding writeups; vuln-hunt skills should not duplicate report templates.
 - `skills/decx-poc/scripts/setup-poc.mjs` copies `skills/decx-poc/assets/poc-template-app/` into `poc-<target>/app/` and `skills/decx-poc/assets/poc-template-server/` into `poc-<target>/server/`
-- The PoC app template keeps a dynamic button registry in `ExploitRegistry` and also accepts browser-driven `poc-<target>://run/trigger?exploit=<id>` launches through `PoCActivity`
+- The PoC app template keeps a dynamic button registry in `ExploitRegistry` and also accepts browser-driven `poc-<target>://run/trigger?exploit=<id>` launches through `PoCActivity`.
 
-### Agent framework
+### Minimal OpenCode plugin
 
-The agent is a generic, configured TypeScript framework intentionally separate from the Kotlin server and the deterministic `decx` CLI.
-
-- `decx-agent` is bundled as a standalone binary. Do not add a `decx agent` bridge command.
-- Public commands are `run <config>`, `resume`, `status`, `workers`, and `serve`.
-- There are no fixed business task subcommands; vulnerability hunting, cloud-control analysis, attribution, parameter reversal, and other tasks are expressed by `task.json`, prompt files, roles, and workflow rules.
-- Runtime state is stored in SQLite at `.decx/agent_tasks/agent.sqlite` by default.
-- Session directories under `.decx/agent_tasks/<session>/` hold `task.json`, prompt files, and task-local artifacts.
-- The dispatcher loop has `bootstrap`, `reason`, `explore`, and asynchronous `review` phases.
-- Built-in roles are `planner`, `dispatcher`, `executor`, `explorer`, and `reviewer`; task configs can extend them with prompt-defined roles.
-- Worker backends are bottom adapters. They receive prompts and return JSON; they do not own agent state. CLI runners (`codex`, `claude-code`, `opencode`, plus any custom command) use `kind: "command"`. Model runners (`api`, `openai`, `anthropic`, `openai-compatible`, plus any custom `ModelProvider`) use `kind: "model"` and are matched by id through `src/workers/providers/registry.ts`, which wraps the official `openai` and `@anthropic-ai/sdk` SDKs. New model providers are added with `registerProvider(...)` — no source edit required. The legacy `api` `WorkerKind` is gone; the `api` worker name still resolves to `model`.
-- Command workers are split into a driver registry plus command adapter/base helpers under `decx-agent/src/workers/`; configured command workers support prompt/session/path placeholders, optional `sessionStrategy` (`none`, `stable`, `uuid`, `regex`), optional `sessionPattern`, and `responseMode: "jsonl-assistant-text"` for JSONL agent output.
-- `.opencode/plugins/decx.js` only registers the repository `skills/` directory with OpenCode's `skills.paths`; do not add unfinished `decx-agent` tool shims there.
-- Validate agent changes with `cd decx-agent && npm run build && npm run smoke`, plus `cd decx-cli && npm run build && npm test`.
+`.opencode/plugins/decx.js` is a minimal OpenCode plugin (auto-loaded from `.opencode/plugins/`) that only injects a routing hint into the system prompt, pointing the agent at the installed skills (`decx-cli`, `decx-vulnhunt`, `decx-report`, `decx-poc`). There is no graph database and no function-level tool set; workflow discipline is enforced by the skills themselves.
 
 ## Build And Test Commands
 
@@ -167,11 +152,11 @@ npm install
 npm run build
 npm test
 npm run lint
+npm run typecheck
 npm run dev
 ```
 
-Do not document or rely on `npm run typecheck` unless you add that script first.
-`decx-cli/package.json` does not currently define it.
+`npm run build` type-checks (via `tsc --noEmit` behind the build script) and emits a compact runtime bundle under `dist/`. `npm run typecheck` runs `tsc --noEmit` standalone for CI/local checks.
 
 ## Technology And Style Notes
 
@@ -310,15 +295,17 @@ Port coordination matters:
 | `decx/decx-core/src/main/kotlin/jadx/plugins/decx/server/DecxMcpServer.kt` | In-process Kotlin MCP server lifecycle |
 | `decx/decx-core/src/main/kotlin/jadx/plugins/decx/server/McpHttpServer.kt` | Ktor CIO Streamable HTTP transport for MCP |
 | `decx/decx-core/src/main/kotlin/jadx/plugins/decx/server/McpToolRegistry.kt` | MCP tool surface, backed by DecxRoutes |
-| `decx/decx-core/src/main/kotlin/jadx/plugins/decx/utils/DecompileGuard.kt` | Guarded decompilation and high-memory skip logging |
+| `decx/decx-core/src/main/kotlin/jadx/plugins/decx/utils/DecompileGuard.kt` | Guarded decompilation, high-memory skip, and compressed source cache |
+| `decx/decx-core/src/main/kotlin/jadx/plugins/decx/utils/SymbolIndex.kt` | Lazy class/method name inventory for `get_classes`/`search_method` |
+| `decx/decx-core/src/main/kotlin/jadx/plugins/decx/utils/RouteTelemetry.kt` | In-flight + per-endpoint latency telemetry via `/health` and logs |
 | `decx/decx-plugin/src/main/kotlin/jadx/plugins/decx/DecxPlugin.kt` | JADX plugin entry point |
-| `decx/decx-plugin/src/main/kotlin/jadx/plugins/decx/lifecycle/PluginLifecycleManager.kt` | Startup sequencing and warmup |
+| `decx/decx-plugin/src/main/kotlin/jadx/plugins/decx/lifecycle/PluginLifecycleManager.kt` | Startup sequencing |
 | `decx/decx-plugin/src/main/kotlin/jadx/plugins/decx/ui/DecxUIManager.kt` | Plugin UI and restart actions |
 | `decx/decx-server/src/main/kotlin/jadx/plugins/decx/server/DecxServerApp.kt` | Headless entry point |
 | `decx-cli/src/index.ts` | CLI command registration |
 | `decx-cli/src/commands/process.ts` | Session lifecycle and server spawning |
 | `decx-cli/src/commands/code.ts` | Common code-analysis commands |
-| `decx-cli/src/commands/ard.ts` | Android-analysis commands |
+| `decx-cli/src/commands/android.ts` | Android-analysis commands |
 | `decx-cli/src/commands/self.ts` | CLI/server self-management |
 
 ## Agent Guidance For This Repo

@@ -14,7 +14,7 @@
       "displayName": "DECX",
       "source": "./",
       "description": "DECX (`Decompiler + X`) is an AI-oriented analysis layer built on top of JADX.",
-      "version": "3.4.0",
+      "version": "4.0.0",
       "author": {
         "name": "Yves",
         "email": "jyg.zyc@outlook.com"

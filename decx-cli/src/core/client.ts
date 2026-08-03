@@ -219,18 +219,18 @@ export class DecxClient {
         return this.request("POST", "/api/decx/get_class_xref", { cls, page });
     }
 
-    async getImplement(iface: string, page: number = 1): Promise<Record<string, unknown>> {
-        return this.request("POST", "/api/decx/get_implement", { iface, page });
+    async getImplementations(iface: string, page: number = 1): Promise<Record<string, unknown>> {
+        return this.request("POST", "/api/decx/get_implementations", { iface, page });
     }
 
-    async getSubClasses(cls: string, page: number = 1): Promise<Record<string, unknown>> {
-        return this.request("POST", "/api/decx/get_sub_classes", { cls, page });
+    async getSubclasses(cls: string, page: number = 1): Promise<Record<string, unknown>> {
+        return this.request("POST", "/api/decx/get_subclasses", { cls, page });
     }
 
     // ── AndroidService ─────────────────────────────────────────────────────
 
     async getAidlInterfaces(options: ClassFilterOptions = { filter: { includes: [], excludes: [] } }, page: number = 1): Promise<Record<string, unknown>> {
-        return this.request("POST", "/api/decx/get_aidl", { ...options, page });
+        return this.request("POST", "/api/decx/get_aidl_interfaces", { ...options, page });
     }
 
     async getAppManifest(page: number = 1): Promise<Record<string, unknown>> {

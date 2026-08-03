@@ -1,21 +1,21 @@
 [versions]
 kotlin = "2.4.0"
-jadx = "1.5.5"
+jadx = "1.5.6"
 gson = "2.13.2"
-javalin = "6.7.0"
+javalin = "7.2.2"
 ktor = "3.5.1"
 mcpKotlinSdk = "0.13.0"
 kotlinxCoroutines = "1.11.0"
 kotlinxSerialization = "1.11.0"
-jackson = "2.22.0"
+jackson = "2.22.1"
 slf4j = "2.0.18"
-logback = "1.5.37"
+logback = "1.5.38"
 assertj = "3.27.7"
 junit = "5.12.1"
 
 [plugins]
 kotlin-jvm = { id = "org.jetbrains.kotlin.jvm", version.ref = "kotlin" }
-shadow = { id = "com.gradleup.shadow", version = "9.4.3" }
+shadow = { id = "com.gradleup.shadow", version = "9.5.1" }
 use-latest-versions = { id = "se.patrikerdes.use-latest-versions", version = "0.2.19" }
 ben-manes-versions = { id = "com.github.ben-manes.versions", version = "0.54.0" }
 

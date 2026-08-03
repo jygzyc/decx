@@ -169,17 +169,17 @@ object McpToolRegistry {
             toPayload = { args -> linkedMapOf("cls" to classArg(args), "page" to pageArg(args)) }
         ),
         routeTool(
-            name = "get_implement",
+            name = "get_implementations",
             description = "Find classes whose Smali directly declares the target interface in a .implement directive.",
-            routePath = "/api/decx/get_implement",
+            routePath = "/api/decx/get_implementations",
             properties = mapOf("interface_name" to interfaceNameProp, "page" to pageProp),
             required = listOf("interface_name"),
             toPayload = { args -> linkedMapOf("iface" to interfaceArg(args), "page" to pageArg(args)) }
         ),
         routeTool(
-            name = "get_sub_classes",
+            name = "get_subclasses",
             description = "Find classes whose Smali directly declares the target class in a .super directive.",
-            routePath = "/api/decx/get_sub_classes",
+            routePath = "/api/decx/get_subclasses",
             properties = classProperties(),
             required = listOf("class_name"),
             toPayload = { args -> linkedMapOf("cls" to classArg(args), "page" to pageArg(args)) }
@@ -190,7 +190,7 @@ object McpToolRegistry {
         routeTool(
             name = "get_aidl_interfaces",
             description = "Discover AIDL-style interfaces by finding *.Stub classes and concrete subclasses of those stubs. Returns interface, stub, and implementation class names.",
-            routePath = "/api/decx/get_aidl",
+            routePath = "/api/decx/get_aidl_interfaces",
             properties = filterProperties(),
             toPayload = { args -> linkedMapOf("filter" to filterPayload(args), "page" to pageArg(args)) }
         ),

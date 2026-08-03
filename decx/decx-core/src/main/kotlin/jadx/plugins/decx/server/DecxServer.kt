@@ -8,7 +8,9 @@ import jadx.plugins.decx.DecxConstants
 import jadx.plugins.decx.api.DecxApi
 import jadx.plugins.decx.api.DecxRoutes
 import jadx.plugins.decx.api.DecxApiImpl
-import jadx.plugins.decx.utils.CacheUtils
+import jadx.plugins.decx.utils.DecompileGuard
+import jadx.plugins.decx.utils.SymbolIndex
+import jadx.plugins.decx.utils.RouteTelemetry
 import jadx.plugins.decx.utils.LogUtils
 import jadx.plugins.decx.utils.PluginUtils
 import jadx.plugins.decx.utils.ThreadPoolUtils
@@ -65,15 +67,19 @@ class DecxServer(
         }
 
         return try {
-            app = Javalin.create { cfg ->
-                cfg.showJavalinBanner = false
-            }.start(overridePort)
             routeHandler = RouteHandler(api)
-            configureRoutes()
+            app = Javalin.create { config ->
+                config.startup.showJavalinBanner = false
+                config.routes.get("/health") { ctx -> handleHealthCheck(ctx) }
+                DecxRoutes.all.forEach { route ->
+                    config.routes.post(route.path) { ctx -> handleRoute(ctx, route.path) }
+                }
+            }.start(overridePort)
             started = true
 
             LogUtils.info("Server started on port $overridePort")
             setupShutdownHook()
+            RouteTelemetry.startLogger()
             true
         } catch (e: Exception) {
             started = false
@@ -89,6 +95,7 @@ class DecxServer(
         started = false
 
         return try {
+            RouteTelemetry.stopLogger()
             mcpServer?.stop()
             app?.stop()
             app = null
@@ -112,7 +119,9 @@ class DecxServer(
 
         Thread({
             try {
-                CacheUtils.reinitializeCache()
+                DecompileGuard.clearCache()
+                SymbolIndex.clear()
+                RouteTelemetry.reset()
                 LogUtils.info("Restarting server...")
                 stop()
                 Thread.sleep(RESTART_DELAY_MS)
@@ -135,7 +144,10 @@ class DecxServer(
                     "version" to DecxConstants.getVersion(),
                     "url" to PluginUtils.buildServerUrl(port = port, running = started),
                     "port" to port,
-                    "timestamp" to System.currentTimeMillis()
+                    "timestamp" to System.currentTimeMillis(),
+                    "active_operations" to RouteTelemetry.activeSnapshot(),
+                    "endpoint_stats" to RouteTelemetry.statsSnapshot(),
+                    "cache" to listOf(DecompileGuard.stats())
                 )
             )
         } catch (e: Exception) {
@@ -155,31 +167,36 @@ class DecxServer(
      */
     fun getApi(): DecxApi = api
 
-    private fun configureRoutes() {
-        app?.apply {
-            get("/health") { ctx -> handleHealthCheck(ctx) }
-            DecxRoutes.all.forEach { route ->
-                post(route.path) { ctx -> handleRoute(ctx, route.path) }
-            }
-        }
-    }
-
     private fun handleRoute(ctx: Context, path: String) {
+        val opId = RouteTelemetry.begin(path)
+        val start = System.nanoTime()
         var future: Future<Map<String, Any>>? = null
+        var outcome = RouteTelemetry.Outcome.SUCCESS
         try {
             val payload = readPayload(ctx)
             future = routeExecutor.submit<Map<String, Any>> {
-                executeRoute(path, payload)
+                RouteTelemetry.bindThread(opId)
+                try {
+                    executeRoute(path, payload)
+                } finally {
+                    RouteTelemetry.unbindThread()
+                }
             }
             val response = future.get(requestTimeoutMs, TimeUnit.MILLISECONDS)
             ctx.json(response)
         } catch (e: TimeoutException) {
             future?.cancel(true)
+            outcome = RouteTelemetry.Outcome.TIMEOUT
             handleRouteTimeout(ctx, path)
         } catch (e: ExecutionException) {
+            outcome = RouteTelemetry.Outcome.ERROR
             handleRouteError(ctx, e.cause as? Exception ?: e, path)
         } catch (e: Exception) {
+            outcome = RouteTelemetry.Outcome.ERROR
             handleRouteError(ctx, e, path)
+        } finally {
+            val elapsedMs = (System.nanoTime() - start) / 1_000_000L
+            RouteTelemetry.complete(path, opId, elapsedMs, outcome)
         }
     }
 

@@ -10,12 +10,14 @@ import { createServer, type Server } from "net";
 import { makeProcessCommand } from "../src/commands/process.js";
 import {
   buildDecxServerJavaArgs,
+  decideOpenReuse,
   defaultJavaHeap,
   extractPassthroughArgs,
   normalizeJadxPassthroughArgs,
   selectAvailableServerPort,
 } from "../src/core/launcher.js";
 import { parseServerPort } from "../src/core/ports.js";
+import type { Session } from "../src/core/types.js";
 
 function createProgram(): Command {
   const program = new Command();
@@ -173,6 +175,94 @@ describe("normalizeJadxPassthroughArgs", () => {
   });
 });
 
+function makeSession(over: Partial<Session> = {}): Session {
+  return {
+    name: "app",
+    hash: "hash-app",
+    pid: 11111,
+    port: 25419,
+    path: "/tmp/app.apk",
+    startedAt: Date.now(),
+    ...over,
+  } as Session;
+}
+
+describe("process open session reuse by sha256", () => {
+  it("reuses an alive session that already holds the same file hash", () => {
+    const alive = makeSession({ name: "foo", hash: "abc", port: 3000 });
+    const decision = decideOpenReuse({
+      fileHash: "abc",
+      fileName: "bar",
+      force: false,
+      aliveSessions: [alive],
+      existingByName: null,
+    });
+    expect(decision).toEqual({ action: "reuse", session: alive });
+  });
+
+  it("reuses even when the requested name differs from the loaded session", () => {
+    const alive = makeSession({ name: "downloaded_copy", hash: "same", port: 4000 });
+    const decision = decideOpenReuse({
+      fileHash: "same",
+      fileName: "renamed_copy",
+      force: false,
+      aliveSessions: [alive],
+      existingByName: null,
+    });
+    expect(decision).toEqual({ action: "reuse", session: alive });
+  });
+
+  it("errors when the requested name is taken by a different file", () => {
+    const existing = makeSession({ name: "foo", hash: "different", pid: 1 });
+    const decision = decideOpenReuse({
+      fileHash: "abc",
+      fileName: "foo",
+      force: false,
+      aliveSessions: [],
+      existingByName: existing,
+    });
+    expect(decision.action).toBe("error");
+    if (decision.action === "error") {
+      expect(decision.message).toContain("already exists for a different APK");
+    }
+  });
+
+  it("spawns and clears a stale same-name record when the hash matches but the process is dead", () => {
+    const stale = makeSession({ name: "foo", hash: "abc", pid: 1 });
+    const decision = decideOpenReuse({
+      fileHash: "abc",
+      fileName: "foo",
+      force: false,
+      aliveSessions: [],
+      existingByName: stale,
+    });
+    expect(decision).toEqual({ action: "spawn", removeStaleName: "foo" });
+  });
+
+  it("spawns fresh when nothing matches", () => {
+    const decision = decideOpenReuse({
+      fileHash: "abc",
+      fileName: "foo",
+      force: false,
+      aliveSessions: [],
+      existingByName: null,
+    });
+    expect(decision).toEqual({ action: "spawn", removeStaleName: undefined });
+  });
+
+  it("skips reuse and spawns when --force is set, even with a hash collision", () => {
+    const alive = makeSession({ name: "foo", hash: "abc", port: 5000 });
+    const decision = decideOpenReuse({
+      fileHash: "abc",
+      fileName: "foo",
+      force: true,
+      aliveSessions: [alive],
+      existingByName: alive,
+    });
+    expect(decision).toEqual({ action: "spawn" });
+  });
+});
+
 describe("extractPassthroughArgs", () => {
   const originalArgv = process.argv;
 
@@ -191,6 +281,19 @@ describe("extractPassthroughArgs", () => {
     ];
 
     expect(extractPassthroughArgs()).toEqual(["--deobf"]);
+  });
+
+  it("passes JADX -P<key>=<value> project properties through to jadx", () => {
+    process.argv = [
+      "node",
+      "decx",
+      "process",
+      "open",
+      "app.apk",
+      "-Pdex-input.verify-checksum=no",
+    ];
+
+    expect(extractPassthroughArgs()).toEqual(["-Pdex-input.verify-checksum=no"]);
   });
 
   it("strips --mcp so it is not forwarded to jadx", () => {
@@ -297,7 +400,7 @@ describe("selectAvailableServerPort", () => {
     });
   }
 
-  it("keeps the preferred port when it is available", async () => {
+  it("keeps an explicitly requested port when it is available", async () => {
     const { server, port } = await listen(0);
     await close(server);
 
@@ -305,13 +408,19 @@ describe("selectAvailableServerPort", () => {
     expect(selected).toBe(port);
   });
 
-  it("falls back to a random port when the preferred port is occupied", async () => {
+  it("picks a random port in [30000, 40000] when no port is requested", async () => {
+    const selected = await selectAvailableServerPort(undefined);
+    expect(selected).toBeGreaterThanOrEqual(30000);
+    expect(selected).toBeLessThanOrEqual(40000);
+  });
+
+  it("falls back to a random port in the default range when the requested port is occupied", async () => {
     const { server, port } = await listen(0);
     try {
       const selected = await selectAvailableServerPort(port);
       expect(selected).not.toBe(port);
-      expect(selected).toBeGreaterThan(1000);
-      expect(selected).toBeLessThanOrEqual(65535);
+      expect(selected).toBeGreaterThanOrEqual(30000);
+      expect(selected).toBeLessThanOrEqual(40000);
     } finally {
       await close(server);
     }
@@ -322,14 +431,14 @@ describe("selectAvailableServerPort", () => {
     try {
       const selected = await selectAvailableServerPort(port - 1, true);
       expect(selected).not.toBe(port - 1);
-      expect(selected).toBeGreaterThan(1000);
-      expect(selected).toBeLessThan(65535);
+      expect(selected).toBeGreaterThanOrEqual(30000);
+      expect(selected).toBeLessThanOrEqual(40000);
     } finally {
       await close(server);
     }
   });
 
-  it("rejects ports at or below 1000", async () => {
+  it("rejects explicitly requested ports at or below 1000", async () => {
     await expect(selectAvailableServerPort(1000)).rejects.toThrow("Invalid port: 1000");
   });
 });

@@ -7,7 +7,7 @@ DECX skills are discovered by Codex through a symlinked `skills/` directory unde
 - Codex CLI
 - Git
 - `decx` CLI binary ([install guide](../../README.md))
-- `node` 18+ (required by DECX blackboard, report, and PoC helper scripts)
+- `node` 18+ (required by DECX report and PoC helper scripts)
 
 ## Installation
 
@@ -42,10 +42,9 @@ Restart Codex to discover the skills.
 | Skill | Trigger | Requires |
 |---|---|---|
 | `decx-cli` | Run `decx` commands, open targets, inspect classes/methods/xrefs, manage sessions | `decx` |
-| `decx-app-vulnhunt` | Audit APK app-layer attack surfaces with the SQLite blackboard workflow | `decx`, `node` |
-| `decx-framework-vulnhunt` | Audit processed framework bundles, Binder services, AIDL implementations, vendor/OEM code | `decx`, `node` |
-| `decx-poc` | Build a PoC app from a finalized blackboard finding or selected graph path | `decx`, `node` |
-| `decx-report` | Generate HTML/Markdown reports from finalized blackboard findings | `decx`, `node` |
+| `decx-vulnhunt` | Audit APK app-layer or Android framework/Binder attack surfaces (App + Framework tracks) | `decx`, `node` |
+| `decx-poc` | Build a PoC app from a finalized finding writeup | `decx`, `node` |
+| `decx-report` | Generate HTML/Markdown reports from finalized finding writeups | `decx`, `node` |
 
 ## Usage
 
@@ -60,8 +59,7 @@ use skill decx-cli
 From `decx-cli`, specialized skills are loaded automatically when the task matches:
 
 ```
-use skill decx-app-vulnhunt
-use skill decx-framework-vulnhunt
+use skill decx-vulnhunt
 use skill decx-poc
 use skill decx-report
 ```
@@ -71,18 +69,13 @@ use skill decx-report
 The typical analysis flow:
 
 1. **Navigate** — `decx-cli` to open a target and inspect code
-2. **Hunt** — `decx-app-vulnhunt` or `decx-framework-vulnhunt` to create and review blackboard facts, intents, links, and chains
-3. **Report** — `decx-report` to generate reports from finalized blackboard findings
-4. **PoC** — `decx-poc` to build an exploit app from one finalized blackboard finding or selected graph path
+2. **Hunt** — `decx-vulnhunt` to trace and prove exploitable paths (App or Framework track)
+3. **Report** — `decx-report` to generate reports from finalized finding writeups
+4. **PoC** — `decx-poc` to build an exploit app from one finalized finding writeup
 
-### Blackboard
+### Analysis Output
 
-All analysis output lives under `.decx-analysis/<target>/`:
-
-- `decx-analysis.db` — SQLite blackboard for the target
-- app hunts initialize with `--kind android_app`
-- framework hunts initialize with `--kind android_framework`
-- facts, intents, events, links, and chains are managed by `scripts/decx-analysis-db.mjs`
+Analysis notes and finding writeups live in the working directory.
 
 ## Updating
 
