@@ -172,7 +172,6 @@ export async function runTasksWithConcurrency<T>(
   let nextIndex = 0;
 
   async function worker(): Promise<void> {
-    // eslint-disable-next-line no-constant-condition
     while (true) {
       const currentIndex = nextIndex;
       nextIndex += 1;
