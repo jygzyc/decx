@@ -91,7 +91,7 @@ Typical skill sequence:
 - `decx-report` for generating reports from finalized finding writeups
 - `decx-poc` for turning one finalized finding writeup into a buildable PoC
 
-Vulnerability hunting keeps notes and finalized finding writeups under `.decx-analysis/<target>/`. Downstream report and PoC skills consume those finding writeups.
+Vulnerability hunting keeps notes and finalized finding writeups in the working directory. Downstream report and PoC skills consume those finding writeups.
 
 Useful command groups:
 

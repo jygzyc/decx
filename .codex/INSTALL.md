@@ -75,7 +75,7 @@ The typical analysis flow:
 
 ### Analysis Output
 
-Analysis notes and finding writeups live under `.decx-analysis/<target>/`.
+Analysis notes and finding writeups live in the working directory.
 
 ## Updating
 

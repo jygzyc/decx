@@ -8,11 +8,7 @@ metadata:
 
 # DECX CLI
 
-Runs `decx` CLI commands for Android/Java target analysis. Targets include APK, DEX, JAR, and processed framework files.
-
-## Routing Gate
-
-Use only for DECX CLI command execution: session lifecycle, code/manifest inspection, or adb-backed device queries. Do not use for vulnerability analysis, chain tracing, report writing, PoC construction, or generic Android security advice. Route those to `decx-vulnhunt`, `decx-report`, `decx-poc`, or external security guidance respectively.
+Core DECX skill: runs `decx` CLI commands for Android/Java target analysis. Targets include APK, DEX, JAR, and processed framework files. 
 
 ## Command Selection
 
@@ -68,7 +64,7 @@ decx code search-global "<keyword>" --limit <n> --port <port>
 
 ## Persistence
 
-Keep notes under `.decx-analysis/<target-name>/` for work that may continue later. Close the session only when the target is no longer needed.
+Keep notes and outputs for work that may continue later in the working directory. Close the session only when the target is no longer needed.
 
 ## Troubleshooting
 

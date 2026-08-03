@@ -66,10 +66,10 @@ describe("DecxClient", () => {
     });
 
     it("returns body on 200", async () => {
-      fetchMock.mockResolvedValue(jsonResponse({ status: "running", version: "3.4.0" }));
+      fetchMock.mockResolvedValue(jsonResponse({ status: "running", version: "4.0.0" }));
       const result = await client.healthCheck();
       expect(result.status).toBe("running");
-      expect(result.version).toBe("3.4.0");
+      expect(result.version).toBe("4.0.0");
     });
 
     it("throws DecxError on error status with structured body", async () => {
