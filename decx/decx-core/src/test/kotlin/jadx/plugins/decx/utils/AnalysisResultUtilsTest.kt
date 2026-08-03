@@ -11,7 +11,7 @@ import org.junit.jupiter.api.Test
 class AnalysisResultUtilsTest {
 
     @Test
-    fun `success envelope shape`() {
+    fun successEnvelopeShape() {
         val items = listOf(AnalysisResultUtils.item("a", ItemKind.SYMBOL, "A", "aa"))
         val r = AnalysisResultUtils.success("classes", mapOf("k" to "v"), items, mapOf("extra" to 1))
 
@@ -29,7 +29,7 @@ class AnalysisResultUtilsTest {
     }
 
     @Test
-    fun `error envelope shape`() {
+    fun errorEnvelopeShape() {
         val r = AnalysisResultUtils.error("classes", mapOf("k" to "v"), "BAD_CODE", "nope")
         assertThat(r["ok"]).isEqualTo(false)
         assertThat(r["kind"]).isEqualTo("classes")
@@ -41,7 +41,7 @@ class AnalysisResultUtilsTest {
     }
 
     @Test
-    fun `item carries id kind title content meta`() {
+    fun itemCarriesIdKindTitleContentMeta() {
         val it = AnalysisResultUtils.item("id1", ItemKind.CODE, "Title", "body", mapOf("language" to "java"))
         assertThat(it["id"]).isEqualTo("id1")
         assertThat(it["kind"]).isEqualTo(ItemKind.CODE)
@@ -51,7 +51,7 @@ class AnalysisResultUtilsTest {
     }
 
     @Test
-    fun `paginate passes small page-1 responses through`() {
+    fun paginatePassesSmallPage1ResponsesThrough() {
         val items = listOf(AnalysisResultUtils.item("a", ItemKind.SYMBOL, "A", "aa"))
         val r = AnalysisResultUtils.success("classes", emptyMap(), items)
         val paged = AnalysisResultUtils.paginate(r, 1)
@@ -59,7 +59,7 @@ class AnalysisResultUtilsTest {
     }
 
     @Test
-    fun `paginate leaves error responses untouched`() {
+    fun paginateLeavesErrorResponsesUntouched() {
         val err = AnalysisResultUtils.error("classes", emptyMap(), "BAD", "x")
         assertThat(AnalysisResultUtils.paginate(err, 1)).isSameAs(err)
     }

@@ -23,7 +23,7 @@ interface DecxApi {
     fun getMethodXref(mth: String): DecxApiResult
     fun getFieldXref(fld: String): DecxApiResult
     fun getClassXref(cls: String): DecxApiResult
-    fun getImplementOfInterface(iface: String): DecxApiResult
+    fun getImplementations(iface: String): DecxApiResult
     fun getSubclasses(cls: String): DecxApiResult
 
     // ==================== Android Service ====================

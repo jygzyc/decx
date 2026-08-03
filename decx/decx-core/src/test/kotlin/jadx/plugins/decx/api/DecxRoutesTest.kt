@@ -12,13 +12,13 @@ import org.junit.jupiter.api.Test
 class DecxApiResultTest {
 
     @Test
-    fun `ok and fail flags`() {
+    fun okAndFailFlags() {
         assertThat(DecxApiResult.ok(emptyMap()).success).isTrue()
         assertThat(DecxApiResult.fail(emptyMap()).success).isFalse()
     }
 
     @Test
-    fun `success builder carries ok kind and items`() {
+    fun successBuilderCarriesOkKindAndItems() {
         val items = listOf(AnalysisResultUtils.item("a", "symbol", "A", "aa"))
         val r = DecxApiResult.success("classes", mapOf("k" to 1), items)
         assertThat(r.success).isTrue()
@@ -28,7 +28,7 @@ class DecxApiResultTest {
     }
 
     @Test
-    fun `error builder carries ok=false and error block`() {
+    fun errorBuilderCarriesOkFalseAndErrorBlock() {
         val r = DecxApiResult.error("classes", emptyMap(), code = "BAD", message = "nope")
         assertThat(r.success).isFalse()
         assertThat(r.data["ok"]).isEqualTo(false)
@@ -41,20 +41,20 @@ class DecxApiResultTest {
 class DecxRoutesTest {
 
     @Test
-    fun `all routes have unique paths`() {
+    fun allRoutesHaveUniquePaths() {
         val paths = DecxRoutes.all.map { it.path }
         assertThat(paths.size).isEqualTo(paths.toSet().size)
     }
 
     @Test
-    fun `routeOf resolves known paths and rejects unknown`() {
+    fun routeOfResolvesKnownPathsAndRejectsUnknown() {
         assertThat(DecxRoutes.routeOf("/api/decx/get_classes")).isNotNull
         assertThat(DecxRoutes.routeOf("/api/decx/search_method")).isNotNull
         assertThat(DecxRoutes.routeOf("/api/decx/does_not_exist")).isNull()
     }
 
     @Test
-    fun `kindOf maps known paths and falls back to unknown`() {
+    fun kindOfMapsKnownPathsAndFallsBackToUnknown() {
         assertThat(DecxRoutes.kindOf("/api/decx/get_classes")).isEqualTo(DecxKind.CLASSES)
         assertThat(DecxRoutes.kindOf("/api/decx/search_global_key")).isEqualTo(DecxKind.SEARCH_GLOBAL)
         assertThat(DecxRoutes.kindOf("/api/decx/search_method")).isEqualTo(DecxKind.SEARCH_METHOD)
@@ -64,7 +64,7 @@ class DecxRoutesTest {
     }
 
     @Test
-    fun `expected route set is intact`() {
+    fun expectedRouteSetIsIntact() {
         val paths = DecxRoutes.all.map { it.path }.toSet()
         assertThat(paths).contains(
             "/api/decx/get_classes",
@@ -79,9 +79,9 @@ class DecxRoutesTest {
             "/api/decx/get_method_xref",
             "/api/decx/get_field_xref",
             "/api/decx/get_class_xref",
-            "/api/decx/get_implement",
-            "/api/decx/get_sub_classes",
-            "/api/decx/get_aidl",
+            "/api/decx/get_implementations",
+            "/api/decx/get_subclasses",
+            "/api/decx/get_aidl_interfaces",
             "/api/decx/get_app_manifest",
             "/api/decx/get_main_activity",
             "/api/decx/get_application",

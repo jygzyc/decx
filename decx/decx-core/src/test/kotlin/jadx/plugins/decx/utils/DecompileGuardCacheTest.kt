@@ -20,7 +20,7 @@ class DecompileGuardCacheTest {
     }
 
     @Test
-    fun `compress then decompress round-trips ascii and actually shrinks`() {
+    fun compressThenDecompressRoundTripsAsciiAndShrinks() {
         val src = "public class Foo { void bar() {} }\n".repeat(80)
         val compressed = DecompileGuard.compress(src.toByteArray(Charsets.UTF_8))
         assertThat(compressed).isNotNull
@@ -29,7 +29,7 @@ class DecompileGuardCacheTest {
     }
 
     @Test
-    fun `compress then decompress round-trips edge cases`() {
+    fun compressThenDecompressRoundTripsEdgeCases() {
         val cases = listOf("", "a", "中文 / ñ / ünicödé", "line1\nline2\ttab")
         for (src in cases) {
             val compressed = DecompileGuard.compress(src.toByteArray(Charsets.UTF_8))
@@ -39,7 +39,7 @@ class DecompileGuardCacheTest {
     }
 
     @Test
-    fun `stats reports empty state after clear`() {
+    fun statsReportsEmptyStateAfterClear() {
         val s = DecompileGuard.stats()
         assertThat(s["kind"]).isEqualTo("decompile_source")
         assertThat(s["entries"]).isEqualTo(0)
@@ -49,7 +49,7 @@ class DecompileGuardCacheTest {
     }
 
     @Test
-    fun `clearCache is idempotent`() {
+    fun clearCacheIsIdempotent() {
         // clearing an already-empty cache must not throw
         DecompileGuard.clearCache()
         DecompileGuard.clearCache()

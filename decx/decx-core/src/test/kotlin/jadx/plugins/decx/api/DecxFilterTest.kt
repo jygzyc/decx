@@ -11,7 +11,7 @@ import org.junit.jupiter.api.Test
 class DecxFilterTest {
 
     @Test
-    fun `from null yields defaults`() {
+    fun fromNullYieldsDefaults() {
         val f = DecxFilter.from(null)
         assertThat(f.limit).isNull()
         assertThat(f.includes).isEmpty()
@@ -21,7 +21,7 @@ class DecxFilterTest {
     }
 
     @Test
-    fun `from map parses all fields`() {
+    fun fromMapParsesAllFields() {
         val f = DecxFilter.from(
             mapOf(
                 "limit" to 5,
@@ -39,14 +39,14 @@ class DecxFilterTest {
     }
 
     @Test
-    fun `default compiled filter matches everything`() {
+    fun defaultCompiledFilterMatchesEverything() {
         val c = DecxFilter().compile()!!
         assertThat(c.matches("anything")).isTrue()
         assertThat(c.matches("")).isTrue()
     }
 
     @Test
-    fun `regex includes match and excludes win`() {
+    fun regexIncludesMatchAndExcludesWin() {
         val c = DecxFilter(
             includes = listOf("com\\.example\\..*"),
             excludes = listOf(".*Test")
@@ -57,27 +57,27 @@ class DecxFilterTest {
     }
 
     @Test
-    fun `invalid regex yields null compile`() {
+    fun invalidRegexYieldsNullCompile() {
         assertThat(DecxFilter(includes = listOf("[invalid")).compile()).isNull()
         assertThat(DecxFilter(excludes = listOf("(unclosed")).compile()).isNull()
     }
 
     @Test
-    fun `literal mode does substring matching`() {
+    fun literalModeDoesSubstringMatching() {
         val c = DecxFilter(regex = false, includes = listOf("Foo")).compile()!!
         assertThat(c.matches("com.FooBar")).isTrue()
         assertThat(c.matches("com.Bar")).isFalse()
     }
 
     @Test
-    fun `limit takes first n and null returns all`() {
+    fun limitTakesFirstNAndNullReturnsAll() {
         assertThat(DecxFilter(limit = 2).limit(listOf(1, 2, 3, 4))).containsExactly(1, 2)
         assertThat(DecxFilter(limit = 0).limit(listOf(1, 2, 3))).isEmpty()
         assertThat(DecxFilter().limit(listOf(1, 2, 3))).containsExactly(1, 2, 3)
     }
 
     @Test
-    fun `toQuery emits only set fields`() {
+    fun toQueryEmitsOnlySetFields() {
         val q = DecxFilter(limit = 3, includes = listOf("x"), caseSensitive = true).toQuery()
         assertThat(q["limit"]).isEqualTo(3)
         assertThat(q["includes"]).isEqualTo(listOf("x"))

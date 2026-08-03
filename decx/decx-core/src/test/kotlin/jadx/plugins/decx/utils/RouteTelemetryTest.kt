@@ -13,7 +13,7 @@ class RouteTelemetryTest {
     }
 
     @Test
-    fun `begin registers an active operation`() {
+    fun beginRegistersActiveOperation() {
         val opId = RouteTelemetry.begin("/api/decx/get_classes", total = 10)
         val active = RouteTelemetry.activeSnapshot()
         assertThat(active).hasSize(1)
@@ -26,7 +26,7 @@ class RouteTelemetryTest {
     }
 
     @Test
-    fun `complete records per-endpoint latency and outcome`() {
+    fun completeRecordsPerEndpointLatencyAndOutcome() {
         val opId = RouteTelemetry.begin("/x")
         RouteTelemetry.complete("/x", opId, 12, RouteTelemetry.Outcome.SUCCESS)
 
@@ -42,7 +42,7 @@ class RouteTelemetryTest {
     }
 
     @Test
-    fun `multiple samples accumulate and compute p95`() {
+    fun multipleSamplesAccumulateAndComputeP95() {
         repeat(5) { i ->
             val id = RouteTelemetry.begin("/r")
             RouteTelemetry.complete("/r", id, (i + 1).toLong(), RouteTelemetry.Outcome.SUCCESS)
@@ -56,7 +56,7 @@ class RouteTelemetryTest {
     }
 
     @Test
-    fun `timeout and error outcomes are classified`() {
+    fun timeoutAndErrorOutcomesAreClassified() {
         val t = RouteTelemetry.begin("/t")
         RouteTelemetry.complete("/t", t, 999, RouteTelemetry.Outcome.TIMEOUT)
         val e = RouteTelemetry.begin("/e")
@@ -68,7 +68,7 @@ class RouteTelemetryTest {
     }
 
     @Test
-    fun `thread-bound progress reports scanned and matches`() {
+    fun threadBoundProgressReportsScannedAndMatches() {
         val opId = RouteTelemetry.begin("/api/decx/search_global_key", total = 0)
         RouteTelemetry.bindThread(opId)
         try {
@@ -94,7 +94,7 @@ class RouteTelemetryTest {
     }
 
     @Test
-    fun `reset clears active ops and stats`() {
+    fun resetClearsActiveOpsAndStats() {
         val opId = RouteTelemetry.begin("/z")
         RouteTelemetry.complete("/z", opId, 7, RouteTelemetry.Outcome.SUCCESS)
         assertThat(RouteTelemetry.activeSnapshot()).isEmpty()
@@ -105,7 +105,7 @@ class RouteTelemetryTest {
     }
 
     @Test
-    fun `concurrent begins and completes all counted`() {
+    fun concurrentBeginsAndCompletesAllCounted() {
         val n = 50
         val threads = (1..n).map { i ->
             Thread {

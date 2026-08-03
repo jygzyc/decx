@@ -66,7 +66,7 @@ class DecxApiImpl(
     override fun getClassXref(cls: String): DecxApiResult =
         contextService.handleGetClassXref(cls)
 
-    override fun getImplementOfInterface(iface: String): DecxApiResult =
+    override fun getImplementations(iface: String): DecxApiResult =
         contextService.handleGetImplementOfInterface(iface)
 
     override fun getSubclasses(cls: String): DecxApiResult =

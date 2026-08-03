@@ -14,7 +14,7 @@ object DecxKind {
     const val FIELD_XREF = "field_xref"
     const val CLASS_XREF = "class_xref"
     const val IMPLEMENTATIONS = "implementations"
-    const val SUB_CLASSES = "sub_classes"
+    const val SUBCLASSES = "subclasses"
     const val APP_MANIFEST = "app_manifest"
     const val MAIN_ACTIVITY = "main_activity"
     const val APPLICATION = "application"
@@ -80,15 +80,15 @@ object DecxRoutes {
             DecxRoute("/api/decx/get_method_xref", DecxKind.METHOD_XREF) { api, params -> api.getMethodXref(params.string("mth")) },
             DecxRoute("/api/decx/get_field_xref", DecxKind.FIELD_XREF) { api, params -> api.getFieldXref(params.string("fld")) },
             DecxRoute("/api/decx/get_class_xref", DecxKind.CLASS_XREF) { api, params -> api.getClassXref(params.string("cls")) },
-            DecxRoute("/api/decx/get_implement", DecxKind.IMPLEMENTATIONS) { api, params -> api.getImplementOfInterface(params.string("iface")) },
-            DecxRoute("/api/decx/get_sub_classes", DecxKind.SUB_CLASSES) { api, params -> api.getSubclasses(params.string("cls")) }
+            DecxRoute("/api/decx/get_implementations", DecxKind.IMPLEMENTATIONS) { api, params -> api.getImplementations(params.string("iface")) },
+            DecxRoute("/api/decx/get_subclasses", DecxKind.SUBCLASSES) { api, params -> api.getSubclasses(params.string("cls")) }
         )
     )
 
     val android = DecxRouteGroup(
         name = "android",
         routes = listOf(
-            DecxRoute("/api/decx/get_aidl", DecxKind.AIDL_INTERFACES) { api, params -> api.getAidlInterfaces(params.filter()) },
+            DecxRoute("/api/decx/get_aidl_interfaces", DecxKind.AIDL_INTERFACES) { api, params -> api.getAidlInterfaces(params.filter()) },
             DecxRoute("/api/decx/get_app_manifest", DecxKind.APP_MANIFEST) { api, _ -> api.getAppManifest() },
             DecxRoute("/api/decx/get_main_activity", DecxKind.MAIN_ACTIVITY) { api, _ -> api.getMainActivity() },
             DecxRoute("/api/decx/get_application", DecxKind.APPLICATION) { api, _ -> api.getApplication() },

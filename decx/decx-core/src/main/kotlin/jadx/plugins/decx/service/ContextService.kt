@@ -393,7 +393,7 @@ class ContextService(override val decompiler: JadxDecompiler) : DecompilerBacked
         val query = mapOf("target" to cls)
         return try {
             val clazz = decompiler.searchJavaClassOrItsParentByOrigFullName(cls)
-                ?: return DecxApiResult.fail(AnalysisResultUtils.error(DecxKind.SUB_CLASSES, query, DecxError.CLASS_NOT_FOUND, cls))
+                ?: return DecxApiResult.fail(AnalysisResultUtils.error(DecxKind.SUBCLASSES, query, DecxError.CLASS_NOT_FOUND, cls))
             val subClasses = decompiler.classesWithInners.filter {
                 it.smali.contains(".super L${clazz.fullName.replace(".", "/")};")
             }
@@ -406,9 +406,9 @@ class ContextService(override val decompiler: JadxDecompiler) : DecompilerBacked
                     meta = mapOf("superclass" to cls)
                 )
             }
-            DecxApiResult.ok(AnalysisResultUtils.success(DecxKind.SUB_CLASSES, query, items))
+            DecxApiResult.ok(AnalysisResultUtils.success(DecxKind.SUBCLASSES, query, items))
         } catch (e: Exception) {
-            DecxApiResult.fail(AnalysisResultUtils.error(DecxKind.SUB_CLASSES, query, DecxError.SERVER_INTERNAL_ERROR, e.message ?: "unknown"))
+            DecxApiResult.fail(AnalysisResultUtils.error(DecxKind.SUBCLASSES, query, DecxError.SERVER_INTERNAL_ERROR, e.message ?: "unknown"))
         }
     }
 }
