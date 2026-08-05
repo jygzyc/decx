@@ -19,6 +19,27 @@ interface CliPackageMetadata {
   version: string;
 }
 
+/**
+ * Windows .cmd/.bat shims cannot be spawned directly by Node; they need a
+ * shell. Without this, spawnSync throws EINVAL on win32.
+ */
+export function npmUpdateNeedsShell(command: string, platform: NodeJS.Platform = process.platform): boolean {
+  return platform === "win32" && /\.(cmd|bat)$/i.test(command);
+}
+
+/**
+ * Build the spawnSync input for an npm update. When a Windows shell is
+ * required, pass the whole command line as a single quoted string so no args
+ * are forwarded (avoids Node DEP0190 and keeps the shell invocation safe).
+ */
+export function buildNpmUpdateSpawn(command: string, args: string[]) {
+  if (!npmUpdateNeedsShell(command)) {
+    return { command, args, shell: false as const };
+  }
+  const quote = (a: string) => (/\s/.test(a) ? `"${a.replace(/"/g, "\\\"")}"` : a);
+  return { command: [command, ...args].map(quote).join(" "), args: [], shell: true as const };
+}
+
 function readCliPackageJson(startDir: string = path.dirname(fileURLToPath(import.meta.url))): Partial<CliPackageMetadata> {
   let dir: string | undefined = startDir;
   while (dir) {
@@ -213,10 +234,12 @@ export function makeSelfCommand(): Command {
       const npmCommand = resolveNpmUpdateCommand(cliPackage.name);
       console.error(`  Running: ${npmCommand.display} ...`);
 
-      const result = spawnSync(npmCommand.command, npmCommand.args, {
+      const spawn = buildNpmUpdateSpawn(npmCommand.command, npmCommand.args);
+      const result = spawnSync(spawn.command, spawn.args, {
         stdio: "inherit",
         timeout: 120_000,
         env: npmCommand.env,
+        shell: spawn.shell,
       });
 
       if (result.error) {

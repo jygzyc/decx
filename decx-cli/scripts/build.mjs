@@ -13,7 +13,9 @@ import { rmSync, readdirSync, statSync, existsSync, readFileSync, writeFileSync,
 import { join, dirname } from "path";
 import { execSync } from "child_process";
 
-const ROOT = join(dirname(new URL(import.meta.url).pathname), "..");
+import { fileURLToPath } from "url";
+
+const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 const REPO_ROOT = join(ROOT, "..");
 const DIST = join(ROOT, "dist");
 const SRC = join(ROOT, "src");
@@ -123,7 +125,13 @@ if (existsSync(BIN)) {
   }
 
   const archive = join(DIST, "bin.tar.gz");
-  execSync(`tar -czf ${JSON.stringify(archive)} -C ${JSON.stringify(BIN)} .`, {
+  // On Windows, GNU tar (e.g. Git Bash's) misparses `E:\...` paths as a remote
+  // host. Prefer the system bsdtar shim that understands native paths.
+  const tarBin =
+    process.platform === "win32" && existsSync("C:\\Windows\\System32\\tar.exe")
+      ? "C:\\Windows\\System32\\tar.exe"
+      : "tar";
+  execSync(`${tarBin} -czf ${JSON.stringify(archive)} -C ${JSON.stringify(BIN)} .`, {
     cwd: ROOT,
     stdio: "pipe",
   });

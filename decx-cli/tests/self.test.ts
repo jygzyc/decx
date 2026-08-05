@@ -5,6 +5,7 @@ import {
   buildCliUpdateArgs,
   executeSelfInstall,
   getCliPackageMetadata,
+  npmUpdateNeedsShell,
   resolveNpmUpdateCommand,
 } from "../src/commands/self.js";
 import { VERSION } from "../src/core/version.js";
@@ -83,6 +84,14 @@ describe("self command metadata", () => {
       "@custom/decx-cli@latest",
     ]);
     expect(cmd.env.PATH?.split(path.delimiter)[0]).toBe("/node/bin");
+  });
+
+  it("requires a shell for .cmd shims on Windows but not for node binaries", () => {
+    expect(npmUpdateNeedsShell("C:\\Program Files\\nodejs\\npm.cmd", "win32")).toBe(true);
+    expect(npmUpdateNeedsShell("C:\\Program Files\\nodejs\\npm.bat", "win32")).toBe(true);
+    expect(npmUpdateNeedsShell("C:\\Program Files\\nodejs\\npm", "win32")).toBe(false);
+    expect(npmUpdateNeedsShell("/usr/bin/npm", "darwin")).toBe(false);
+    expect(npmUpdateNeedsShell("/usr/bin/npm", "linux")).toBe(false);
   });
 
   it("uses dedicated clients explicitly and maps all other or empty selections to agents", () => {
