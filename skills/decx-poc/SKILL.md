@@ -15,22 +15,25 @@ Default ceiling: `build-ready` unless the user explicitly asks for compile or de
 
 ## Workflow
 
-1. Load `references/poc-workflow.md` and read one finalized finding writeup.
+1. Read one finalized finding writeup.
 2. Re-check the finding's entry→impact path.
 3. Load `references/poc-spec.md` and build one PoC Spec.
 4. Stop if the spec is incomplete.
 5. Load `references/index.md` and one matching PoC reference.
-6. Create/reuse project with `scripts/setup-poc.mjs`.
+6. Build the `poc-<target>/` project per the contract in `references/poc-base.md`. `<target>` must match `^[a-z][a-z0-9]*$`.
 7. Implement one exploit id.
 8. Compile/deploy only when explicitly requested.
+
+Final Output — return: `state`, `projectPath`, `findingId`, `exploitId`, `trigger`, `successSignal`, `requirements`, `filesChanged`, `buildStatus`, `runtimeStatus`, `remainingManualSteps`.
 
 ## Commands
 
 ```bash
-node skills/decx-poc/scripts/setup-poc.mjs <target>
 node skills/decx-poc/scripts/check-env.mjs
 cd poc-<target>/app && timeout 300 ./gradlew assembleDebug --no-daemon
 ```
+
+On Windows use `gradlew.bat assembleDebug --no-daemon` instead (no `timeout`).
 
 ## Rules
 
@@ -47,10 +50,8 @@ cd poc-<target>/app && timeout 300 ./gradlew assembleDebug --no-daemon
 
 ## References
 
-- `references/poc-workflow.md`
 - `references/poc-spec.md`
 - `references/index.md`
 - `references/poc-base.md`
-- `assets/README.md`
 - `references/poc-app-*.md`
 - `references/poc-framework-service.md`

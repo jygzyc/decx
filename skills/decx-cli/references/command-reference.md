@@ -18,6 +18,7 @@
 - adb-backed `decx android` commands such as `system-services` and `permission-info` do not use `--port <port>`.
 - When only one session is alive and neither `--port` nor `-s` is specified, the CLI auto-selects it.
 - `-s, --session <name>` selects a session by name as an alternative to `--port <port>`.
+- All session-backed commands also accept `--page <n>` for pagination.
 - `process list` does not take `--port <port>`.
 - `process close` can close by name, by `--port <port>`, or all sessions with `--all`.
 - `process status` checks a named session or a specific `--port`; with neither, it auto-selects the only alive session and otherwise checks the configured default port. Do not pass both a name and `--port`.
@@ -95,8 +96,8 @@ All session-backed `android` commands support `-s, --session <name>` as an alter
 | `decx android dynamic-receivers --port <port>` | List dynamic receivers (`--limit`, `--include-package`, `--exclude-package`, `--no-regex`) |
 | `decx android aidl-interfaces --port <port>` | List AIDL interfaces (`--limit`, `--include-package`, `--exclude-package`, `--no-regex`) |
 | `decx android framework-service-implementation "<interface>" --port <port>` | Resolve framework service implementation |
-| `decx android device system-services --serial <serial> [--grep <keyword>]` | List live Binder/system services as JSON |
-| `decx android device permission-info "<permission>" --serial <serial>` | Resolve one permission as JSON |
+| `decx android device system-services [--serial <serial>] [--adb-path <path>] [--grep <keyword>]` | List live Binder/system services as JSON |
+| `decx android device permission-info "<permission>" [--serial <serial>] [--adb-path <path>]` | Resolve one permission as JSON |
 | `decx android resources --port <port>` | List resource file names (`--include`, `--no-regex`) |
 | `decx android resource-file "<res>" --port <port>` | Read one resource file |
 | `decx android strings --port <port>` | Read `strings.xml` |
@@ -107,9 +108,9 @@ For `system-services`, consume `services[].name` and `services[].interfaces` fro
 
 | Command | Purpose |
 |--------|---------|
-| `decx android framework collect --serial <serial>` | Pull framework files from a connected device |
+| `decx android framework collect [--serial <serial>]` | Pull framework files from a connected device |
 | `decx android framework process [oem]` | Process local framework source and pack `framework_<brand>_<vendor>.jar` |
-| `decx android framework run --serial <serial> [--port <port>]` | Collect, process, pack, and open the generated framework jar |
+| `decx android framework run [--serial <serial>] [--port <port>]` | Collect, process, pack, and open the generated framework jar |
 | `decx android framework open --port <port>` | Open the generated framework jar |
 | `decx android framework open "<jar>" --port <port>` | Open a provided framework jar |
 
@@ -133,7 +134,7 @@ Framework common options (`collect`, `process`, `run`):
 --port <port>     server port when opening
 ```
 
-`framework process` accepts optional `[oem]` as its only positional argument. When omitted, DECX resolves OEM from `.artifact.json` under `--out-dir`, then falls back to a connected device. Supported values are `vivo`, `oppo`, `xiaomi`, `honor`, `google`, and `samsung`. Do not pass a source directory as a positional argument.
+`framework process` accepts optional `[oem]` as its only positional argument. When omitted, DECX resolves OEM from `.artifact.json` under `--out-dir`, then falls back to a connected device. Do not pass a source directory as a positional argument.
 
 `framework open` takes optional `[jar]`, `--port <port>`, and `-n <name>`.
 
@@ -197,16 +198,6 @@ decx android device permission-info "<permission>" --serial <serial>
 decx android framework process [oem] --source-dir "<dir>" --out-dir "<dir>"
 decx android framework open "<framework-jar>" --port <port>
 ```
-
-Do not mix session and adb argument styles:
-
-- `decx code *` -> always session-backed; use `--port <port>` or `-s <name>` when auto-selection is ambiguous
-- `decx android manifest`, `launcher-activity`, `application`, `exported-components`, `deep-links`, `dynamic-receivers`, `aidl-interfaces`, `resource-file`, `framework-service-implementation`, `strings`, and `resources` are session-backed; use `--port <port>` or `-s <name>` when auto-selection is ambiguous
-- `decx android device system-services`, `permission-info` -> adb-backed, no `--port <port>`
-- `decx android framework collect` -> adb-backed, no DECX `--port`
-- `decx android framework process` -> local when `[oem]` or artifact metadata resolves OEM; otherwise adb is used only as the fallback OEM source
-- `decx android framework run` -> hybrid: adb for collection, `--port` for opening the generated jar
-- `decx android framework open` -> session-backed after jar resolution; adb options only affect generated-jar resolution when `[jar]` is omitted
 
 ## Common Patterns
 

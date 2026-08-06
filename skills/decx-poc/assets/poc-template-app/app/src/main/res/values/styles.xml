@@ -1,8 +1,0 @@
-<?xml version="1.0" encoding="utf-8"?>
-<resources>
-    <style name="Theme.PoC" parent="Theme.AppCompat.Light.DarkActionBar">
-        <item name="colorPrimary">#FF6D00</item>
-        <item name="colorPrimaryDark">#E65100</item>
-        <item name="colorAccent">#FF6D00</item>
-    </style>
-</resources>

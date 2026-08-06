@@ -23,7 +23,4 @@ description: Activity PoC routing for exported access, redirect, result, task/UI
 
 ## Implementation Slots
 
-- register one exploit id in `ExploitRegistry`;
-- build one launch/capture/UI-assisted method;
-- add Manifest helper only when `supportComponents` requires it;
-- log `successSignal`.
+- build one launch/capture/UI-assisted method.

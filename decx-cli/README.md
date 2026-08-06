@@ -48,6 +48,7 @@ decx self update [-p]           # Update decx-server.jar and the currently insta
 | `--port <port>` | Server port (omit to auto-assign a free random port in 30000–40000) |
 | `--force` | Force start even if session exists |
 | `-n, --name <name>` | Custom session name |
+| `--mcp` | Also start the MCP Streamable HTTP server on port + 1 |
 
 All standard [jadx-cli options](https://github.com/skylot/jadx) are passed through directly, including JADX `-P<key>=<value>` project properties. `decx process open` enables `--show-bad-code` by default, and common passthrough options also include `--deobf`, `--no-res`, `-j`/`--threads-count`, `--no-imports`, `--no-debug-info`, `--escape-unicode`, `--log-level`.
 
@@ -63,8 +64,8 @@ decx android exported-components [--type <pattern>] [--no-regex] # List exported
 decx android deep-links                   # List deep link schemes
 decx android dynamic-receivers [--limit <n>] [--include-package <pattern>] [--exclude-package <pattern>] [--no-regex] # List dynamic broadcast receivers
 decx android framework-service-implementation <interface> # Find system service implementations
-decx android device system-services [--serial <serial>] [--grep <kw>] # List Android system services as structured JSON
-decx android device permission-info <permission> [--serial <serial>]        # Show structured permission details
+decx android device system-services [--serial <serial>] [--adb-path <path>] [--grep <kw>] # List Android system services as structured JSON
+decx android device permission-info <permission> [--serial <serial>] [--adb-path <path>]        # Show structured permission details
 decx android resources [--include <pattern>] [--no-regex] # List resource file names
 decx android resource-file <res>             # Get resource file content
 decx android strings                         # Get strings.xml content

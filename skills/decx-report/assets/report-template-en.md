@@ -13,14 +13,14 @@
 
 | ID | Risk | Title | Entry | Impact |
 |---|---|---|---|---|
-| `{{issue.id}}` | `{{issue.rating}}` | `{{issue.title}}` | `{{issue.entry}}` | `{{issue.impact}}` |
+| `{{issue.id}}` | `{{issue.rating}}` | `{{issue.title}}` | `{{issue.entrypoint}}` | `{{issue.impact}}` |
 
 ## {{issue.id}} {{issue.title}}
 
 ### 1. Target Context
 
-- Target kind: `{{issue.targetKind}}`
-- Entry: `{{issue.entry}}`
+- Target: `{{issue.target}}`
+- Entrypoint: `{{issue.entrypoint}}`
 - Trigger: `{{issue.trigger}}`
 - Impact: `{{issue.impact}}`
 
@@ -28,13 +28,14 @@
 
 - Reachability: `{{issue.reachability}}`
 - Control: `{{issue.control}}`
-- Guard / identity: `{{issue.guardOrIdentity}}`
+- Guard: `{{issue.guard}}`
 - Sink: `{{issue.sink}}`
-- Evidence path: `{{issue.evidencePath}}`
+- Evidence: `{{issue.evidence}}`
 
 ### 3. Composition Analysis
 
-`{{issue.composition}}`
+- Verdict: `{{issue.compositionVerdict}}`
+- Detail: `{{issue.compositionDetail}}`
 
 ### 4. Remediation
 

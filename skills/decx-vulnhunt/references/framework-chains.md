@@ -1,6 +1,6 @@
 ## Composite Framework Chains
 
-Framework findings are strongest when the trace crosses caller identity, user/profile, async, provider, launch, token, callback, or transition boundaries. Prefer this matrix before single-pattern lookup.
+Framework findings are strongest when the trace crosses caller identity, user/profile, async, provider, launch, token, callback, or transition boundaries.
 
 | Chain shape | High-signal code behavior | Load first |
 |---|---|---|

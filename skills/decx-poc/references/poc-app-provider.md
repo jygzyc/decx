@@ -24,7 +24,10 @@ description: Provider PoC routing for query, file, call, batch, getType, and gra
 
 ## Implementation Slots
 
-- register one exploit id;
 - call exactly one provider API family from the spec;
-- do not invent grant acquisition;
-- log `successSignal`.
+- do not invent grant acquisition.
+
+## Exploit Techniques
+
+- `openFile()` mode quirks: (a) mode `"rw"` checks only the write permission and ignores read; (b) on older versions `"rt"`/`"ra"` were accepted and only read-checked (truncate slipped through) — Android 17+ throws.
+- system-triggered access: a protected provider's `openFile()`/`getType()` can be fired by the system, e.g. put the URI into an icon the system displays; on old patch levels `ActivityManager.openContentUri()` let the system open it as itself and hand back the fd.

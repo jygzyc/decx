@@ -28,9 +28,13 @@ function check(name, fn, optional = false) {
 
 function sdkHome() {
   const home = process.env.ANDROID_HOME || process.env.ANDROID_SDK_ROOT;
-  if (!home) throw new Error('ANDROID_HOME or ANDROID_SDK_ROOT is not set');
-  if (!existsSync(home)) throw new Error(`directory does not exist: ${home}`);
-  return home;
+  if (home) {
+    if (!existsSync(home)) throw new Error(`directory does not exist: ${home}`);
+    return home;
+  }
+  // Fallback: SDK not exported, but sdkmanager on PATH means an SDK is manageable.
+  execSync('sdkmanager --version 2>&1', { encoding: 'utf-8' });
+  throw new Error('ANDROID_HOME or ANDROID_SDK_ROOT is not set (sdkmanager is available; set it to the SDK root)');
 }
 
 check('Android SDK home', () => sdkHome());
@@ -47,6 +51,9 @@ check('SDK platforms', () => {
 check('JDK (java)', () => {
   const m = execSync('java -version 2>&1', { encoding: 'utf-8' }).match(/version "(\d+)/);
   if (!m || +m[1] < 11) throw new Error('requires JDK >= 11');
+  if (+m[1] > 17) {
+    console.log('  [WARN] newer JDK detected: pick a Gradle/AGP pair that supports this JDK (see poc-base.md version selection rule)');
+  }
   return m[0];
 });
 check('JDK (javac)', () => {

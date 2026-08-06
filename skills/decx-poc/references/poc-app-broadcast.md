@@ -23,7 +23,5 @@ description: Broadcast PoC routing for direct send, ordered interception, permis
 
 ## Implementation Slots
 
-- register one exploit id;
 - direct-send or register-then-trigger exactly as spec states;
-- do not add receiver if no capture/interception is required;
-- log `successSignal`.
+- do not add receiver if no capture/interception is required.

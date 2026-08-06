@@ -24,7 +24,9 @@ description: Service PoC routing for startService, bind/transact, Messenger, and
 
 ## Implementation Slots
 
-- register one exploit id;
 - choose start, bind/transact, or Messenger path only;
-- prefer direct transact when full AIDL reconstruction is unnecessary;
-- log `successSignal`.
+- prefer direct transact when full AIDL reconstruction is unnecessary.
+
+## Exploit Techniques
+
+- main-thread auth in `onBind()` is void: a victim Service calling `enforceCallingOrSelfPermission()` inside `onBind()` checks itself (main thread, not a binder thread) — the PoC just binds and calls; variant: same mistake in `Activity.onCreate()`.

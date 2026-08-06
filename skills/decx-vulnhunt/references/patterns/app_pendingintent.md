@@ -9,7 +9,7 @@ track: app
 Attacker influences PendingIntent creation, accepts one as extra, or triggers dispatch via notification/widget/alarm/shortcut/callback.
 
 ## Non-obvious
-- **Android 12+ default is `FLAG_MUTABLE`** (changed from `FLAG_IMMUTABLE`) — treat any caller-supplied or untyped PI as mutable
+- **Pre-API 31 PendingIntent defaults to mutable**; targetSdk 31+ has no default — omitting both `FLAG_MUTABLE` and `FLAG_IMMUTABLE` throws `IllegalArgumentException`. Detection rule: treat any PI without explicit `FLAG_IMMUTABLE` as mutable
 - `FLAG_UPDATE_CURRENT` + stable request code = collision primitive to replace stored PI
 - AppWidget host PI fires with desktop identity but victim's permission set
 - Fill-in mask replaces data, action, AND grants — `FLAG_GRANT_*` survives fill-in

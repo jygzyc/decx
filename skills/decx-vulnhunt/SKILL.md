@@ -22,11 +22,13 @@ Route reports to `decx-report`, PoC work to `decx-poc`, raw CLI usage to `decx-c
 
 Pick one track per target. Load `references/app-chains.md` (App) or `references/framework-chains.md` (Framework) for composite chains and single-pattern routing.
 
+References are a vulnerability knowledge base, not a workflow manual — this file controls execution. Every pattern card carries YAML frontmatter `track: app|framework`; only load cards matching the active track. A card should add one of: a routing signal, a non-obvious API/Binder/identity/permission quirk or version default, or a closed-form constraint that prevents false positives. Stop reading a card when it only repeats generic Android security knowledge.
+
 ## Analysis Workflow
 
 1. Open the target with the track's open command.
 2. Collect the track's attack surface.
-3. Match observed code to the track's chain pivots in `references/<track>-chains.md`, then load only the matching `references/patterns/<track>/*.md` card(s).
+3. Match observed code to the track's chain pivots in `references/<track>-chains.md` and pick the smallest chain that matches. Load one or two matching `references/patterns/<track>_*.md` cards for source/sink/guard/reject rules; do not load sibling cards by name alone — only when the trace crosses that boundary.
 4. Trace entry → control → guard → sink → impact with DECX commands. Record concrete evidence per step (class/method/line, trigger syntax, reachable sink).
 5. Apply `references/risk-rating.md` before calling any candidate a finding.
 6. Write one finding writeup per proven path (see Finding Writeup).
@@ -64,15 +66,26 @@ For both tracks, reject candidates based only on names/registration, inline-only
 
 ## Finding Writeup
 
-One proven path = one finding writeup. It must name: entrypoint + trigger, the traced path (with concrete evidence at each required kind), target/session, and the rating decision with rationale.
+One proven path = one finding writeup. Field contract (one field per line):
+
+- `id` — `F<n>`, numbered in analysis order; reused directly as report anchor and PoC spec id
+- `title`
+- `target` — target file + session name/port
+- `entrypoint` — component/service + exported/trigger condition
+- `trigger` — concrete trigger syntax
+- `path` — entry → control → guard → sink, with concrete evidence per step (class/method/line level)
+- `impact` — visible consequence
+- `rating` — per `references/risk-rating.md` + rationale
+- `evidence` — DECX command outputs / code location references
+
+`decx-report` and `decx-poc` consume this contract; field names in this section are the single source of truth.
 
 Hand finalized finding writeups to `decx-report` for reporting and `decx-poc` for PoC construction.
 
 ## References
 
-- `references/index.md` — track routing and load order
 - `references/app-chains.md` — App composite chains and single-pattern routing
 - `references/framework-chains.md` — Framework composite chains and single-pattern routing
 - `references/patterns/app_*.md` — App pattern cards (load only matching)
 - `references/patterns/framework_*.md` — Framework pattern cards (load only matching)
-- `references/risk-rating.md` — load only before calling a candidate a finding
+- `references/risk-rating.md` — single rating authority for both tracks; load only before calling a candidate a finding

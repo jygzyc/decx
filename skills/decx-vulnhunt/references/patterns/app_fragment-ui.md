@@ -18,8 +18,7 @@ Three primitive shapes:
 - `EXTRA_SHOW_FRAGMENT_ARGUMENTS` Bundle is also caller-controlled — fragment reached with forged args
 - `onCreate(savedInstanceState)` re-parses same untrusted fragment name on config change (chains to `object-parsing`)
 - **StrandHogg**: `allowTaskReparenting` + `taskAffinity` impersonate victim's task in overview
-- Floating window with `FLAG_NOT_TOUCH_MODAL | FLAG_NOT_FOCUSABLE | FLAG_WATCH_OUTSIDE_TOUCH` covers confirmation dialogs — taps pass through
-- `filterTouchesWhenObscured="true"` is default on Android 12+; pre-12 apps that don't set it are vulnerable
+- Floating-window tapjacking flags + `filterTouchesWhenObscured` version split: See [[framework_transition-control]]
 - `START_REDELIVER_INTENT` re-delivers attacker payload on every crash — stable DoS, no new Intent required
 - `onNewIntent` overwrites `getIntent()` without clearing extras — `singleTask`/`singleTop` attacker re-launches treated as continuation
 - Sensitive action closed in `onDestroy` (not `onPause`) keeps running when app backgrounds

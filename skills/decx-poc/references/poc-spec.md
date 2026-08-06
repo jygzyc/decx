@@ -2,6 +2,8 @@
 
 Build one spec before writing code.
 
+Input: one finalized finding writeup following the `decx-vulnhunt` Finding Writeup contract; writeup field names are authoritative. Overlapping fields share names with the writeup: `trigger`, `impact`, `evidence`.
+
 ## Required Fields
 
 - findingId
@@ -10,9 +12,9 @@ Build one spec before writing code.
 - impact
 - trigger
 - controllableInput
-- guardOutcome
+- guardOutcome (conclusion of the `guard` step in the writeup's `path`)
 - sink
-- impact
+- evidence
 - successSignal
 - requirements
 - pocShape
@@ -23,5 +25,4 @@ Build one spec before writing code.
 
 - Every field must come from the finalized finding writeup or its evidence artifacts.
 - Stop before project creation if any required field is missing.
-- One spec maps to one exploit id.
 - Do not infer helper components or acquisition steps.

@@ -19,10 +19,11 @@ Use `scenario-page` when the spec proves attacker-controlled URL/HTML reaches We
 
 ## Implementation Slots
 
-- add one link variant in `server/public/index.html` or `scenario.js`;
-- add one payload block in `server/public/payload.html`;
-- optionally register helper-app trigger if the spec requires app-side launch;
-- log `successSignal`.
+Server files and their contracts are defined in `poc-base.md` (`Server Contract` section):
+
+- add one link variant in the link builder page (`index.html`) or its variant generator (`scenario.js`);
+- add one payload block in the hosted payload page (`payload.html`);
+- optionally register helper-app trigger if the spec requires app-side launch.
 
 ## Variants
 
