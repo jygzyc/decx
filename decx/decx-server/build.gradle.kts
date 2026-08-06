@@ -1,3 +1,5 @@
+import java.util.zip.ZipFile
+
 plugins {
     alias(libs.plugins.kotlin.jvm)
     alias(libs.plugins.shadow)
@@ -26,12 +28,29 @@ tasks {
         archiveBaseName = "decx-server"
         archiveClassifier = ""
         archiveVersion = project.version.toString()
+        // Shadow 9.6 applies EXCLUDE before transformers by default, which leaves only
+        // the first JadxPlugin provider and silently drops DexInputPlugin. Without it,
+        // APK/DEX files load resources and generated R classes but no executable code.
+        filesMatching(listOf("META-INF/services/**", "META-INF/*.kotlin_module")) {
+            duplicatesStrategy = DuplicatesStrategy.INCLUDE
+        }
         mergeServiceFiles()
         manifest {
             attributes(
                 "Main-Class" to "jadx.plugins.decx.server.DecxServerApp",
                 "Implementation-Version" to project.version.toString()
             )
+        }
+        doLast {
+            val outputJar = archiveFile.get().asFile
+            val jadxPlugins = ZipFile(outputJar).use { zip ->
+                val entry = zip.getEntry("META-INF/services/jadx.api.plugins.JadxPlugin")
+                    ?: throw GradleException("Missing JADX plugin service descriptor in ${outputJar.name}")
+                zip.getInputStream(entry).bufferedReader().use { it.readText() }
+            }
+            check("jadx.plugins.input.dex.DexInputPlugin" in jadxPlugins) {
+                "Missing DexInputPlugin from merged JADX plugin service descriptor in ${outputJar.name}"
+            }
         }
     }
 
