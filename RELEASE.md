@@ -1,9 +1,8 @@
-# DECX v4.0.1
+# DECX v4.0.2
 
-DECX v4.0.1 is a patch release on top of v4.0.0: it adds the `decx self skills install` command, switches npm publishing to Trusted Publishing, and bumps a few dependencies.
+DECX v4.0.2 is a patch release on top of v4.0.1: it fixes APK/DEX code loading in the shadowed JARs and documents the Windows `self update` recovery path for pre-v4.0.1 CLIs.
 
-### Changes
+### Fix
 
-- CLI: new `decx self skills install --client <client>` command — downloads DECX skills from GitHub into `DECX_HOME/skills`, then symlinks them into private directories for Codex, Claude Code, and Cursor or the shared `~/.agents/skills` directory for every other or omitted client.
-- CI: npm publishing now uses Trusted Publishing (OIDC) instead of the `NPM_TOKEN` secret — the `publish-npm` job runs on Node 24 (npm ≥ 11.5.1 required for Trusted Publishing) and relies on `id-token: write`; the `NPM_TOKEN` repository secret is no longer needed and can be deleted.
-- Dependencies: logback 1.5.38 → 1.6.1, shadow 9.5.1 → 9.6.1, gradle/actions 6 → 6.2.0.
+- Build: fat JARs no longer drop JADX input plugins. Root cause: Shadow 9.6.1 applies `DuplicatesStrategy.EXCLUDE` before transformers by default, so duplicate Service Provider files were excluded before `mergeServiceFiles()` ran and `DexInputPlugin` was never written into the merged `META-INF/services/jadx.api.plugins.JadxPlugin` descriptor. As a result, `decx-server` loaded an APK's resources and generated R classes (the 16 classes seen in logs) but never read `classes.dex`. The `decx-server` / `decx-plugin` shadow JARs now set `DuplicatesStrategy.INCLUDE` for `META-INF/services/**` and `META-INF/*.kotlin_module` before merging, and the `decx-server` build verifies at build time that the merged descriptor contains `DexInputPlugin`.
+- Docs: README / README_zh / decx-cli README now document the Windows `spawnSync npm.cmd EINVAL` failure of `decx self update` on CLI versions older than v4.0.1 and the manual one-time recovery (`npm.cmd install -g @jygzyc/decx-cli@latest`).
