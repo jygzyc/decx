@@ -36,6 +36,16 @@ decx self install
 decx self skills install --client opencode --client codex
 ```
 
+#### Windows 上 `self update` 报 `spawnSync npm.cmd EINVAL`
+
+v4.0.1 之前的 CLI 在 Windows 上会直接启动 `npm.cmd`，部分 Node.js 版本会因此返回 `EINVAL`。旧版无法通过 `self update` 自行修复，需要先在 PowerShell 或 CMD 中手动更新一次：
+
+```powershell
+npm.cmd install -g @jygzyc/decx-cli@latest
+```
+
+重新打开终端后，运行 `decx --version`，确认版本为 v4.0.1 或更高，再使用 `decx self update`。如果仍然命中旧版本，可运行 `where.exe decx` 检查 PATH 中是否存在多个 DECX CLI。
+
 技能会先下载到 `~/.decx/skills`（或 `$DECX_HOME/skills`），再软链接到所选客户端目录：
 
 | Agent | 链接目标 |

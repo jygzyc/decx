@@ -200,6 +200,7 @@ Artifact segments are resolved like this:
 - The CLI package name is resolved from the installed package metadata instead of being hardcoded
 - `-p/--prerelease` currently affects the server JAR update path only
 - The CLI update step assumes the CLI was installed with global `npm`; if you installed it another way, update the package manager command yourself
+- On Windows, CLI versions older than v4.0.1 can fail with `spawnSync npm.cmd EINVAL`. Because the affected updater cannot bootstrap its own fix, run `npm.cmd install -g @jygzyc/decx-cli@latest` once from PowerShell or CMD, reopen the terminal, and verify `decx --version` reports v4.0.1 or newer. Use `where.exe decx` if PATH still selects an older installation
 
 ### code
 

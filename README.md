@@ -36,6 +36,16 @@ decx self install
 decx self skills install --client opencode --client codex
 ```
 
+#### Windows `spawnSync npm.cmd EINVAL` during `self update`
+
+CLI versions older than v4.0.1 started `npm.cmd` directly on Windows, which can return `EINVAL` with some Node.js versions. An affected CLI cannot bootstrap this fix through `self update`; update it once from PowerShell or CMD instead:
+
+```powershell
+npm.cmd install -g @jygzyc/decx-cli@latest
+```
+
+Reopen the terminal and run `decx --version` to confirm v4.0.1 or newer before using `decx self update` again. If an older version is still selected, run `where.exe decx` to check for multiple DECX CLI installations on PATH.
+
 Skills are downloaded to `~/.decx/skills` (or `$DECX_HOME/skills`) and linked into the selected client directories:
 
 | Agent | Link target |
