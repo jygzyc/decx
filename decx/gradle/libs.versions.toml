@@ -11,7 +11,7 @@ jackson = "2.22.1"
 slf4j = "2.0.18"
 logback = "1.6.1"
 assertj = "3.27.7"
-junit = "5.12.1"
+junit = "6.1.2"
 
 [plugins]
 kotlin-jvm = { id = "org.jetbrains.kotlin.jvm", version.ref = "kotlin" }
