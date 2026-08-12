@@ -1,0 +1,53 @@
+name: Release Decx CLI (npm)
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v7
+
+    - name: Verify tag matches version file
+      run: |
+        TAG_VERSION="${GITHUB_REF_NAME#v}"
+        FILE_VERSION="$(tr -d '[:space:]' < version)"
+        echo "tag version: $TAG_VERSION"
+        echo "version file: $FILE_VERSION"
+        if [ "$TAG_VERSION" != "$FILE_VERSION" ]; then
+          echo "::error::Tag '${GITHUB_REF_NAME}' does not match version file '${FILE_VERSION}'. Update the version file and re-tag."
+          exit 1
+        fi
+
+    - uses: actions/setup-node@v7
+      with:
+        # npm trusted publishing requires npm 11.5.1 or newer.
+        node-version: '24'
+        registry-url: 'https://registry.npmjs.org'
+
+    - name: Install, test and build
+      working-directory: decx-cli
+      run: |
+        npm install
+        npm test
+        npm run build
+
+    - name: Detect prerelease tag
+      id: version
+      run: |
+        case "${GITHUB_REF_NAME#v}" in
+          *-*) echo "prerelease=true" >> $GITHUB_OUTPUT ;;
+          *)   echo "prerelease=false" >> $GITHUB_OUTPUT ;;
+        esac
+
+    - name: Publish to npm
+      if: steps.version.outputs.prerelease == 'false'
+      run: npm publish --access public --provenance
+      working-directory: decx-cli/dist

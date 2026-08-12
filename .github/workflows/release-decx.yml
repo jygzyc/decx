@@ -1,0 +1,71 @@
+name: Release Decx
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v7
+
+    - name: Verify tag matches version file
+      run: |
+        TAG_VERSION="${GITHUB_REF_NAME#v}"
+        FILE_VERSION="$(tr -d '[:space:]' < version)"
+        echo "tag version: $TAG_VERSION"
+        echo "version file: $FILE_VERSION"
+        if [ "$TAG_VERSION" != "$FILE_VERSION" ]; then
+          echo "::error::Tag '${GITHUB_REF_NAME}' does not match version file '${FILE_VERSION}'. Update the version file and re-tag."
+          exit 1
+        fi
+
+    - name: Set version
+      id: version
+      run: |
+        VERSION="${GITHUB_REF_NAME#v}"
+        echo "value=$VERSION" >> $GITHUB_OUTPUT
+        # Versions with a prerelease suffix (e.g. 4.2.0-rc.1) publish as GitHub prereleases.
+        case "$VERSION" in
+          *-*) echo "prerelease=true" >> $GITHUB_OUTPUT ;;
+          *)   echo "prerelease=false" >> $GITHUB_OUTPUT ;;
+        esac
+
+    - name: Set up JDK 17
+      uses: actions/setup-java@v5
+      with:
+        java-version: '17'
+        distribution: 'temurin'
+
+    - name: Setup Gradle
+      uses: gradle/actions/setup-gradle@v6.2.0
+
+    - name: Build with Gradle
+      run: ./gradlew test dist
+      working-directory: decx
+
+    - name: Verify release artifacts
+      run: |
+        ls -la decx/build/dist/
+        test -f "decx/build/dist/jadx_decx_plugin-${{ steps.version.outputs.value }}.jar"
+        test -f "decx/build/dist/decx-server-${{ steps.version.outputs.value }}.jar"
+
+    - name: Create Release
+      uses: softprops/action-gh-release@v3
+      with:
+        tag_name: ${{ github.ref_name }}
+        name: ${{ github.ref_name }}
+        files: |
+          decx/build/dist/jadx_decx_plugin-${{ steps.version.outputs.value }}.jar
+          decx/build/dist/decx-server-${{ steps.version.outputs.value }}.jar
+        body_path: RELEASE.md
+        draft: false
+        prerelease: ${{ steps.version.outputs.prerelease == 'true' }}
+        generate_release_notes: false
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
