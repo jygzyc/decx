@@ -28,6 +28,8 @@ function compareSemver(a: string, b: string): number {
 const INSTALL_DIR = decxPath("bin");
 const INSTALL_PATH = path.join(INSTALL_DIR, "decx-server.jar");
 
+const GITHUB_RELEASES_API = "https://api.github.com/repos/jygzyc/decx/releases";
+
 export interface ReleaseAsset {
   name: string;
   browser_download_url: string;
@@ -48,6 +50,38 @@ interface InstallDecxServerOptions {
   installDir?: string;
   installPath?: string;
   logger?: Pick<Console, "error">;
+}
+
+function releasesEndpoint(prerelease: boolean): string {
+  return prerelease
+    ? `${GITHUB_RELEASES_API}?per_page=10`
+    : `${GITHUB_RELEASES_API}/latest`;
+}
+
+type ReleaseFetchResult =
+  | { ok: true; release: ReleaseSummary }
+  | { ok: false; message: string };
+
+/** Fetch the latest stable release, or the newest prerelease. */
+async function fetchReleaseSummary(
+  prerelease: boolean,
+  fetchImpl: typeof fetch = DEFAULT_FETCH,
+  timeoutMs?: number,
+): Promise<ReleaseFetchResult> {
+  const res = await fetchImpl(releasesEndpoint(prerelease), {
+    headers: { "Accept": "application/vnd.github+json" },
+    ...(timeoutMs !== undefined ? { signal: AbortSignal.timeout(timeoutMs) } : {}),
+  });
+  if (!res.ok) {
+    return { ok: false, message: `GitHub API error: HTTP ${res.status}` };
+  }
+  if (prerelease) {
+    const releases = await res.json() as Array<ReleaseSummary & { prerelease: boolean }>;
+    const pre = releases.find((r) => r.prerelease);
+    if (!pre) return { ok: false, message: "No prerelease found" };
+    return { ok: true, release: pre };
+  }
+  return { ok: true, release: await res.json() as ReleaseSummary };
 }
 
 /**
@@ -105,30 +139,11 @@ export async function checkForServerUpdate(
   currentVersion: string,
   prerelease: boolean = false
 ): Promise<{ available: boolean; latestVersion: string }> {
-  const endpoint = prerelease
-    ? "https://api.github.com/repos/jygzyc/decx/releases?per_page=10"
-    : "https://api.github.com/repos/jygzyc/decx/releases/latest";
+  const fetched = await fetchReleaseSummary(prerelease, DEFAULT_FETCH, 5_000);
+  if (!fetched.ok) return { available: false, latestVersion: currentVersion };
 
-  const res = await fetch(endpoint, {
-    headers: { "Accept": "application/vnd.github+json" },
-    signal: AbortSignal.timeout(5_000),
-  });
-  if (!res.ok) return { available: false, latestVersion: currentVersion };
-
-  let latestTag: string;
-  if (prerelease) {
-    const releases = await res.json() as Array<{ tag_name: string; prerelease: boolean }>;
-    const pre = releases.find((r) => r.prerelease);
-    if (!pre) return { available: false, latestVersion: currentVersion };
-    latestTag = pre.tag_name;
-  } else {
-    const release = await res.json() as { tag_name: string };
-    latestTag = release.tag_name;
-  }
-
-  const latest = latestTag.replace(/^v/, "");
-  const current = currentVersion.replace(/^v/, "");
-  const available = compareSemver(latest, current) > 0;
+  const latest = normalizeVersion(fetched.release.tag_name);
+  const available = compareSemver(latest, currentVersion.replace(/^v/, "")) > 0;
   return { available, latestVersion: latest };
 }
 
@@ -151,29 +166,11 @@ export async function installDecxServer(
   try {
     logger.error(`  Fetching latest ${prerelease ? "prerelease" : "release"} info from GitHub...`);
 
-    const endpoint = prerelease
-      ? "https://api.github.com/repos/jygzyc/decx/releases?per_page=10"
-      : "https://api.github.com/repos/jygzyc/decx/releases/latest";
-
-    const res = await fetchImpl(endpoint, {
-      headers: { "Accept": "application/vnd.github+json" },
-    });
-    if (!res.ok) {
-      return { ok: false, message: `GitHub API error: HTTP ${res.status}` };
+    const fetched = await fetchReleaseSummary(prerelease, fetchImpl);
+    if (!fetched.ok) {
+      return { ok: false, message: fetched.message };
     }
-
-    let release: ReleaseSummary;
-
-    if (prerelease) {
-      const releases = await res.json() as Array<ReleaseSummary & { prerelease: boolean }>;
-      const pre = releases.find((r) => r.prerelease);
-      if (!pre) {
-        return { ok: false, message: "No prerelease found" };
-      }
-      release = pre;
-    } else {
-      release = await res.json() as ReleaseSummary;
-    }
+    const release = fetched.release;
 
     const asset = selectDecxServerAsset(release.assets);
 

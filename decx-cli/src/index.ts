@@ -11,8 +11,10 @@ import { makeProcessCommand } from "./commands/process.js";
 import { makeCodeCommand } from "./commands/code.js";
 import { makeAndroidCommand } from "./commands/android.js";
 import { makeSelfCommand } from "./commands/self.js";
-import { ROOT_DESCRIPTION } from "./core/constants.js";
 import { VERSION } from "./core/version.js";
+
+export const ROOT_DESCRIPTION =
+  "DECX - Decompiler + X, CLI for deeper analysis of decompiled Java code, powered by JADX and custom extensions";
 
 export function createProgram(): Command {
   return new Command()

@@ -13,6 +13,7 @@ import { checkForServerUpdate, installDecxServer, type InstallDecxServerResult }
 import { DecxError, ServerError, withErrorHandler } from "../utils/errors.js";
 import { VERSION } from "../core/version.js";
 import { installSkills, parseSkillClients } from "../core/skills-installer.js";
+import { collectOption } from "./shared-options.js";
 
 interface CliPackageMetadata {
   name: string;
@@ -165,10 +166,6 @@ export async function executeSelfInstall(
   };
 }
 
-function collectClient(value: string, previous: string[]): string[] {
-  return [...previous, value];
-}
-
 export function makeSelfCommand(): Command {
   const cmd = new Command("self");
   cmd.description("Install and update the bundled decx-server.jar and npm CLI package");
@@ -192,7 +189,7 @@ export function makeSelfCommand(): Command {
     .command("install")
     .summary("Download or refresh DECX skills")
     .description(`Download DECX skills into DECX_HOME/skills and link them for selected clients. Codex, Claude Code, and Cursor use dedicated directories; every other client uses ~/.agents/skills. With no --client, ~/.agents/skills is used.`)
-    .option("-c, --client <client>", "Target client (repeatable or comma-separated; defaults to ~/.agents/skills)", collectClient, [])
+    .option("-c, --client <client>", "Target client (repeatable or comma-separated; defaults to ~/.agents/skills)", collectOption, [])
     .action(withErrorHandler(async (opts: { client: string[] }) => {
       const fmt = new Formatter();
       fmt.output(installSkills(parseSkillClients(opts.client)));

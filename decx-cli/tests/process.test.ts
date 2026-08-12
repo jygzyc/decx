@@ -14,9 +14,8 @@ import {
   defaultJavaHeap,
   extractPassthroughArgs,
   normalizeJadxPassthroughArgs,
-  selectAvailableServerPort,
 } from "../src/core/launcher.js";
-import { parseServerPort } from "../src/core/ports.js";
+import { parseServerPort, selectAvailableServerPort } from "../src/core/ports.js";
 import type { Session } from "../src/core/types.js";
 
 function createProgram(): Command {

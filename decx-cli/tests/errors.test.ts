@@ -7,7 +7,6 @@ import {
   ProcessError,
   ServerError,
   FileError,
-  ConfigError,
   withErrorHandler,
 } from "../src/utils/errors.js";
 import { jest } from "@jest/globals";
@@ -37,12 +36,6 @@ describe("Error classes", () => {
     const err = new FileError("not found", "/tmp/foo.apk");
     expect(err.code).toBe("FILE_ERROR");
     expect(err.details).toEqual({ filePath: "/tmp/foo.apk" });
-  });
-
-  it("ConfigError stores key in details", () => {
-    const err = new ConfigError("bad config", "server.port");
-    expect(err.code).toBe("CONFIG_ERROR");
-    expect(err.details).toEqual({ key: "server.port" });
   });
 });
 

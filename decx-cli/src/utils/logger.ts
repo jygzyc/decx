@@ -35,7 +35,7 @@ function resolveLogFile(sessionName?: string): string {
 }
 
 // ============================================================================
-// API call logging
+// Entry types
 // ============================================================================
 
 export interface ApiLogEntry {
@@ -48,23 +48,6 @@ export interface ApiLogEntry {
   error?: string;
 }
 
-/**
- * Append an API call log entry to a session log file. Never throws.
- */
-export function logApiCall(sessionName: string, entry: Omit<ApiLogEntry, "ts" | "type">): void {
-  try {
-    ensureLogDir();
-    const logFile = resolveLogFile(sessionName);
-    appendFileSync(logFile, JSON.stringify({ ...entry, ts: new Date().toISOString(), type: "api" } as ApiLogEntry) + "\n", "utf-8");
-  } catch {
-    // Silent failure — logging must never break the CLI
-  }
-}
-
-// ============================================================================
-// CLI event logging
-// ============================================================================
-
 export interface CliEventEntry {
   ts: string;
   type: "cli";
@@ -72,22 +55,6 @@ export interface CliEventEntry {
   action: string;
   [key: string]: unknown;
 }
-
-/**
- * Append a CLI event log entry. Never throws.
- */
-export function logCliEvent(entry: Omit<CliEventEntry, "ts" | "type">): void {
-  try {
-    ensureLogDir();
-    appendFileSync(GENERAL_LOG, JSON.stringify({ ...entry, ts: new Date().toISOString(), type: "cli" } as CliEventEntry) + "\n", "utf-8");
-  } catch {
-    // Silent failure
-  }
-}
-
-// ============================================================================
-// Error logging
-// ============================================================================
 
 export interface ErrorLogEntry {
   ts: string;
@@ -98,14 +65,27 @@ export interface ErrorLogEntry {
   [key: string]: unknown;
 }
 
-/**
- * Append an error log entry. Never throws.
- */
-export function logError(entry: Omit<ErrorLogEntry, "ts" | "type">): void {
+/** Append one JSON line to a log file. Never throws — logging must not break the CLI. */
+function appendJsonLine(logFile: string, entry: object): void {
   try {
     ensureLogDir();
-    appendFileSync(GENERAL_LOG, JSON.stringify({ ...entry, ts: new Date().toISOString(), type: "error" } as ErrorLogEntry) + "\n", "utf-8");
+    appendFileSync(logFile, JSON.stringify({ ...entry, ts: new Date().toISOString() }) + "\n", "utf-8");
   } catch {
-    // Silent failure
+    // Silent failure — logging must never break the CLI
   }
+}
+
+/** Append an API call log entry to a session log file. Never throws. */
+export function logApiCall(sessionName: string, entry: Omit<ApiLogEntry, "ts" | "type">): void {
+  appendJsonLine(resolveLogFile(sessionName), { ...entry, type: "api" });
+}
+
+/** Append a CLI event log entry. Never throws. */
+export function logCliEvent(entry: Omit<CliEventEntry, "ts" | "type">): void {
+  appendJsonLine(GENERAL_LOG, { ...entry, type: "cli" });
+}
+
+/** Append an error log entry. Never throws. */
+export function logError(entry: Omit<ErrorLogEntry, "ts" | "type">): void {
+  appendJsonLine(GENERAL_LOG, { ...entry, type: "error" });
 }

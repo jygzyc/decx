@@ -2,12 +2,12 @@ import { Command } from "commander";
 import { resolveCommandClient } from "../core/client-helper.js";
 import type { ExportedComponentOptions, ResourceFilterOptions } from "../core/client.js";
 import { withErrorHandler } from "../utils/errors.js";
-import { collectOption, addPackageFilterOptions, parseClassFilterOptions } from "./shared-options.js";
+import { collectOption, addPackageFilterOptions, parseClassFilterOptions, parsePage, parseStringList } from "./shared-options.js";
 
 function parseExportedComponentOptions(opts: Record<string, unknown>): ExportedComponentOptions {
   return {
-    includes: Array.isArray(opts.type) ? opts.type.map(String) : [],
-    excludes: Array.isArray(opts.excludeType) ? opts.excludeType.map(String) : [],
+    includes: parseStringList(opts.type),
+    excludes: parseStringList(opts.excludeType),
     ...(opts.regex === false ? { regex: false } : {}),
   };
 }
@@ -15,14 +15,10 @@ function parseExportedComponentOptions(opts: Record<string, unknown>): ExportedC
 function parseResourceFilterOptions(opts: Record<string, unknown>): ResourceFilterOptions {
   return {
     filter: {
-      includes: Array.isArray(opts.include) ? opts.include.map(String) : [],
+      includes: parseStringList(opts.include),
       ...(opts.regex === false ? { regex: false } : {}),
     },
   };
-}
-
-function parsePage(opts: Record<string, unknown>): number {
-  return opts.page ? parseInt(String(opts.page)) : 1;
 }
 
 export function registerAndroidAppAnalysisCommands(cmd: Command): void {

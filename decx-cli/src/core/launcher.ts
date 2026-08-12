@@ -5,7 +5,6 @@
 import { spawn, execSync } from "child_process";
 import * as path from "path";
 import { totalmem } from "os";
-import { createServer } from "net";
 import { existsSync, mkdirSync, openSync, closeSync, readFileSync } from "fs";
 import { hashFile } from "../utils/hash.js";
 import { FileError, ProcessError, ServerError } from "../utils/errors.js";
@@ -15,7 +14,7 @@ import { logCliEvent } from "../utils/logger.js";
 import { decxPath } from "./paths.js";
 import { Manager } from "./config.js";
 import { resolveFileInput } from "./file-input.js";
-import { MAX_SERVER_PORT, RANDOM_PORT_RANGE_MAX, RANDOM_PORT_RANGE_MIN, parseServerPort } from "./ports.js";
+import { parseServerPort, selectAvailableServerPort } from "./ports.js";
 
 export interface OpenAnalysisTargetOptions {
   port?: string;
@@ -134,57 +133,6 @@ export function normalizeJadxPassthroughArgs(args: string[] = []): string[] {
   return result;
 }
 
-async function canBindPort(port: number): Promise<boolean> {
-  return new Promise((resolve) => {
-    const server = createServer();
-
-    server.once("error", () => resolve(false));
-    server.listen({ port, host: "127.0.0.1", exclusive: true }, () => {
-      server.close(() => resolve(true));
-    });
-  });
-}
-
-function randomPortInRange(min: number, max: number): number {
-  return Math.floor(Math.random() * (max - min + 1)) + min;
-}
-
-export async function selectAvailableServerPort(
-  preferredPort: number | undefined,
-  mcp: boolean = false,
-): Promise<number> {
-  // Honor an explicitly requested port when it is free.
-  if (preferredPort !== undefined) {
-    const port = parseServerPort(preferredPort);
-    if (await isServerPortAvailable(port, mcp)) {
-      return port;
-    }
-  }
-
-  // Otherwise pick a random port in the default range until one is free.
-  for (let i = 0; i < 100; i++) {
-    const port = randomPortInRange(RANDOM_PORT_RANGE_MIN, RANDOM_PORT_RANGE_MAX);
-    if (await isServerPortAvailable(port, mcp)) {
-      return port;
-    }
-  }
-
-  throw new ProcessError(
-    `Failed to find an available port in [${RANDOM_PORT_RANGE_MIN}, ${RANDOM_PORT_RANGE_MAX}]`,
-  );
-}
-
-export async function isServerPortAvailable(
-  port: number,
-  mcp: boolean = false,
-): Promise<boolean> {
-  port = parseServerPort(port);
-  if (mcp && port >= MAX_SERVER_PORT) return false;
-  if (!await canBindPort(port)) return false;
-  if (mcp && !await canBindPort(port + 1)) return false;
-  return true;
-}
-
 export async function openAnalysisTarget(
   filePath: string,
   opts: OpenAnalysisTargetOptions = {},
@@ -270,7 +218,7 @@ export async function openAnalysisTarget(
     processExitCode = code;
   });
 
-  const session = await mgr.createSession(fileName, fileHash, resolvedFile, proc.pid, port, scripts);
+  const session = mgr.createSession(fileName, fileHash, resolvedFile, proc.pid, port, scripts);
   const timeout = 300; // seconds
   const ready = await waitForServer(port, timeout, logPath, () => processExited);
   if (ready) {

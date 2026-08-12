@@ -2,7 +2,7 @@ import { Command } from "commander";
 import { resolveCommandClient } from "../core/client-helper.js";
 import type { ClassGrepOptions, GlobalSearchOptions, SourceFilterOptions } from "../core/client.js";
 import { withErrorHandler } from "../utils/errors.js";
-import { addPackageFilterOptions, parseClassFilterOptions } from "./shared-options.js";
+import { addPackageFilterOptions, parseClassFilterOptions, parseOptionalInt, parsePage, parseStringList } from "./shared-options.js";
 
 function addGlobalSearchOptions(cmd: Command): Command {
   return addPackageFilterOptions(cmd)
@@ -17,11 +17,12 @@ function addClassGrepOptions(cmd: Command): Command {
 }
 
 function parseGlobalSearchOptions(opts: Record<string, unknown>): GlobalSearchOptions {
+  const limit = parseOptionalInt(opts.limit);
   return {
     search: {
-      ...(opts.limit ? { limit: parseInt(String(opts.limit), 10) } : {}),
-      includes: Array.isArray(opts.includePackage) ? opts.includePackage.map(String) : [],
-      excludes: Array.isArray(opts.excludePackage) ? opts.excludePackage.map(String) : [],
+      ...(limit !== undefined ? { limit } : {}),
+      includes: parseStringList(opts.includePackage),
+      excludes: parseStringList(opts.excludePackage),
       caseSensitive: opts.caseSensitive === true,
       regex: opts.regex !== false,
     },
@@ -31,7 +32,7 @@ function parseGlobalSearchOptions(opts: Record<string, unknown>): GlobalSearchOp
 function parseClassGrepOptions(opts: Record<string, unknown>): ClassGrepOptions {
   return {
     grep: {
-      limit: parseInt(String(opts.limit), 10),
+      limit: parseOptionalInt(opts.limit) ?? 0,
       caseSensitive: opts.caseSensitive === true,
       regex: opts.regex !== false,
     },
@@ -39,9 +40,10 @@ function parseClassGrepOptions(opts: Record<string, unknown>): ClassGrepOptions 
 }
 
 function parseSourceFilterOptions(opts: Record<string, unknown>): SourceFilterOptions {
+  const limit = parseOptionalInt(opts.limit);
   return {
     filter: {
-      ...(opts.limit ? { limit: parseInt(String(opts.limit), 10) } : {}),
+      ...(limit !== undefined ? { limit } : {}),
     },
   };
 }
@@ -60,7 +62,7 @@ export function makeCodeCommand(): Command {
     .option("--page <n>", "Result page number to fetch", String)
     .action(withErrorHandler(async (opts, command) => {
       const { fmt, client } = resolveCommandClient(opts, command);
-      const page = opts.page ? parseInt(opts.page) : 1;
+      const page = parsePage(opts);
       fmt.output(await client.getClasses(parseClassFilterOptions(opts), page));
     }));
 
@@ -70,7 +72,7 @@ export function makeCodeCommand(): Command {
     .option("--page <n>", "Result page number to fetch", String)
     .action(withErrorHandler(async (keyword: string, opts, command) => {
       const { fmt, client } = resolveCommandClient(opts, command);
-      const page = opts.page ? parseInt(opts.page) : 1;
+      const page = parsePage(opts);
       fmt.output(await client.searchGlobalKey(keyword, parseGlobalSearchOptions(opts), page));
     }));
 
@@ -81,7 +83,7 @@ export function makeCodeCommand(): Command {
     .option("--page <n>", "Result page number to fetch", String)
     .action(withErrorHandler(async (className: string, opts, command) => {
       const { fmt, client } = resolveCommandClient(opts, command);
-      const page = opts.page ? parseInt(opts.page) : 1;
+      const page = parsePage(opts);
       fmt.output(await client.getClassContext(className, page));
     }));
 
@@ -94,7 +96,7 @@ export function makeCodeCommand(): Command {
     .option("--page <n>", "Result page number to fetch", String)
     .action(withErrorHandler(async (className: string, opts, command) => {
       const { fmt, client } = resolveCommandClient(opts, command);
-      const page = opts.page ? parseInt(opts.page) : 1;
+      const page = parsePage(opts);
       fmt.output(await client.getClassSource(className, opts.smali ?? false, parseSourceFilterOptions(opts), page));
     }));
 
@@ -106,7 +108,7 @@ export function makeCodeCommand(): Command {
     .option("--page <n>", "Result page number to fetch", String)
     .action(withErrorHandler(async (sig: string, opts, command) => {
       const { fmt, client } = resolveCommandClient(opts, command);
-      const page = opts.page ? parseInt(opts.page) : 1;
+      const page = parsePage(opts);
       fmt.output(await client.getMethodSource(sig, opts.smali ?? false, page));
     }));
 
@@ -117,7 +119,7 @@ export function makeCodeCommand(): Command {
     .option("--page <n>", "Result page number to fetch", String)
     .action(withErrorHandler(async (sig: string, opts, command) => {
       const { fmt, client } = resolveCommandClient(opts, command);
-      const page = opts.page ? parseInt(opts.page) : 1;
+      const page = parsePage(opts);
       fmt.output(await client.getMethodContext(sig, page));
     }));
 
@@ -128,7 +130,7 @@ export function makeCodeCommand(): Command {
     .option("--page <n>", "Result page number to fetch", String)
     .action(withErrorHandler(async (sig: string, opts, command) => {
       const { fmt, client } = resolveCommandClient(opts, command);
-      const page = opts.page ? parseInt(opts.page) : 1;
+      const page = parsePage(opts);
       fmt.output(await client.getMethodCfg(sig, page));
     }));
 
@@ -138,7 +140,7 @@ export function makeCodeCommand(): Command {
     .option("--page <n>", "Result page number to fetch", String)
     .action(withErrorHandler(async (className: string, keyword: string, opts, command) => {
       const { fmt, client } = resolveCommandClient(opts, command);
-      const page = opts.page ? parseInt(opts.page) : 1;
+      const page = parsePage(opts);
       fmt.output(await client.searchClassKey(className, keyword, parseClassGrepOptions(opts), page));
     }));
 
@@ -149,7 +151,7 @@ export function makeCodeCommand(): Command {
     .option("--page <n>", "Result page number to fetch", String)
     .action(withErrorHandler(async (name: string, opts, command) => {
       const { fmt, client } = resolveCommandClient(opts, command);
-      const page = opts.page ? parseInt(opts.page) : 1;
+      const page = parsePage(opts);
       fmt.output(await client.searchMethod(name, page));
     }));
 
@@ -160,7 +162,7 @@ export function makeCodeCommand(): Command {
     .option("--page <n>", "Result page number to fetch", String)
     .action(withErrorHandler(async (sig: string, opts, command) => {
       const { fmt, client } = resolveCommandClient(opts, command);
-      const page = opts.page ? parseInt(opts.page) : 1;
+      const page = parsePage(opts);
       fmt.output(await client.getMethodXref(sig, page));
     }));
 
@@ -171,7 +173,7 @@ export function makeCodeCommand(): Command {
     .option("--page <n>", "Result page number to fetch", String)
     .action(withErrorHandler(async (className: string, opts, command) => {
       const { fmt, client } = resolveCommandClient(opts, command);
-      const page = opts.page ? parseInt(opts.page) : 1;
+      const page = parsePage(opts);
       fmt.output(await client.getClassXref(className, page));
     }));
 
@@ -182,7 +184,7 @@ export function makeCodeCommand(): Command {
     .option("--page <n>", "Result page number to fetch", String)
     .action(withErrorHandler(async (fieldName: string, opts, command) => {
       const { fmt, client } = resolveCommandClient(opts, command);
-      const page = opts.page ? parseInt(opts.page) : 1;
+      const page = parsePage(opts);
       fmt.output(await client.getFieldXref(fieldName, page));
     }));
 
@@ -193,7 +195,7 @@ export function makeCodeCommand(): Command {
     .option("--page <n>", "Result page number to fetch", String)
     .action(withErrorHandler(async (iface: string, opts, command) => {
       const { fmt, client } = resolveCommandClient(opts, command);
-      const page = opts.page ? parseInt(opts.page) : 1;
+      const page = parsePage(opts);
       fmt.output(await client.getImplementations(iface, page));
     }));
 
@@ -204,7 +206,7 @@ export function makeCodeCommand(): Command {
     .option("--page <n>", "Result page number to fetch", String)
     .action(withErrorHandler(async (className: string, opts, command) => {
       const { fmt, client } = resolveCommandClient(opts, command);
-      const page = opts.page ? parseInt(opts.page) : 1;
+      const page = parsePage(opts);
       fmt.output(await client.getSubclasses(className, page));
     }));
 
