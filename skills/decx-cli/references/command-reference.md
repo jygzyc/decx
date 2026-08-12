@@ -48,15 +48,18 @@ Open options:
 -n, --name <name>     explicit session name
 --mcp                 also start MCP Streamable HTTP server on port + 1
 --force               reopen despite a conflicting session
+--script <file>       Jadx Kotlin script (.jadx.kts) run during decompilation; repeatable
 ```
 
 `process open` always starts `decx-server.jar` with JVM `-Xmx` set to two thirds of machine memory, rounded down. There is no CLI heap override.
 It accepts local paths and `http(s)://` URLs. URLs are downloaded into DECX tmp storage before the server starts.
 Standard JADX args after `process open` are forwarded with DECX defaults: `--deobf` is removed, and `--show-bad-code`, `--no-imports`, and `-Pdex-input.verify-checksum=no` are added when absent.
+`--script` files are positional inputs to `decx-server` and are evaluated by the bundled `jadx-script-kotlin` plugin during decompilation (top-level code at load, `jadx.afterLoad { }` blocks after classes load).
 
 Reuse and conflict behavior:
 
-- any alive session with the same file hash: DECX must reuse that session, regardless of the requested name
+- any alive session with the same file hash and the same script set: DECX must reuse that session, regardless of the requested name
+- same file hash but a different script set: DECX errors unless `--force` is used (scripts run at decompile time, so the script set is part of the session identity)
 - no matching alive file + requested name belongs to a different file: DECX errors unless `--force` or a new `--name` is used
 - stale same-name record for the same file: DECX removes the stale record and starts a new session
 - `--force`: DECX skips hash reuse and starts a new session
@@ -138,6 +141,8 @@ Framework common options (`collect`, `process`, `run`):
 
 `framework open` takes optional `[jar]`, `--port <port>`, and `-n <name>`.
 
+Platform note: framework processing extracts APEX filesystem images with Linux-only tools (`debugfs`, `erofs-utils`). On Windows, DECX runs these tools through WSL (`wsl.exe`) with automatic path translation and falls back to the packaged `extract.erofs`; without WSL the command fails with an explicit "Windows requires WSL" error. On Linux/macOS the tools run natively or via the packaged binaries.
+
 ## Self Commands
 
 | Command | Purpose |
@@ -147,6 +152,8 @@ Framework common options (`collect`, `process`, `run`):
 | `decx self skills install -c <client>` | Download skills from GitHub; Codex, Claude Code, and Cursor use dedicated directories, while every other or omitted client uses `~/.agents/skills` |
 | `decx self update` | Update CLI and server |
 | `decx self update -p` | Update with prerelease server |
+
+`-p/--prerelease` installs the newest GitHub prerelease. Prereleases are published only from prerelease tags such as `v4.2.0-rc.1`; when none exists, the install fails with "No prerelease found".
 
 ## Identifier Formats
 
