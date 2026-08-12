@@ -3,25 +3,39 @@ import * as path from "path";
 import { AdbClient } from "./adb.js";
 import type { FrameworkCollectionResult, FrameworkOem } from "./types.js";
 
-const OEM_DIRS: Record<FrameworkOem, string[]> = {
-  vivo: ["/system/framework", "/system/apex", "/vendor/framework", "/system_ext/framework"],
+const DEFAULT_FRAMEWORK_DIRS = [
+  "/system/framework",
+  "/system/apex",
+  "/vendor/framework",
+  "/system_ext/framework",
+];
+
+// OEM-specific collection directories; every OEM not listed here falls back to
+// DEFAULT_FRAMEWORK_DIRS.
+const OEM_DIRS: Partial<Record<FrameworkOem, string[]>> = {
   oppo: ["/system/framework", "/system/apex", "/system_ext/framework"],
   xiaomi: ["/system/framework", "/system/apex", "/system_ext/framework", "/vendor/framework"],
-  honor: ["/system/framework", "/system/apex", "/vendor/framework", "/system_ext/framework"],
-  google: ["/system/framework", "/system/apex", "/vendor/framework", "/system_ext/framework"],
-  samsung: ["/system/framework", "/system/apex", "/vendor/framework", "/system_ext/framework"]
 };
+
+const SUPPORTED_FRAMEWORK_OEMS: readonly FrameworkOem[] = [
+  "vivo",
+  "oppo",
+  "xiaomi",
+  "honor",
+  "google",
+  "samsung",
+];
 
 const FILE_TYPES = [".apk", ".jar", ".apex", ".capex", ".dex"];
 
 function isFrameworkOem(value: string): value is FrameworkOem {
-  return Object.prototype.hasOwnProperty.call(OEM_DIRS, value);
+  return (SUPPORTED_FRAMEWORK_OEMS as readonly string[]).includes(value);
 }
 
 export function normalizeOem(value: string): FrameworkOem {
   const lowered = value.toLowerCase();
   if (!isFrameworkOem(lowered)) {
-    throw new Error(`Unsupported OEM '${value}'. Supported: ${Object.keys(OEM_DIRS).join(", ")}`);
+    throw new Error(`Unsupported OEM '${value}'. Supported: ${SUPPORTED_FRAMEWORK_OEMS.join(", ")}`);
   }
   return lowered;
 }
@@ -40,7 +54,7 @@ function filterScanOutput(output: string): string[] {
 }
 
 export function getOemSearchPaths(oem: FrameworkOem): string[] {
-  return OEM_DIRS[oem];
+  return OEM_DIRS[oem] ?? DEFAULT_FRAMEWORK_DIRS;
 }
 
 export async function collectFrameworkFiles(

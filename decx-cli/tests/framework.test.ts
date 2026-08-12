@@ -1,9 +1,9 @@
 import { existsSync, mkdirSync, rmSync, writeFileSync } from "fs";
 import * as path from "path";
 import { cleanFrameworkOutputs, cleanFrameworkTempDirs } from "../src/android/framework-processor.js";
-import { normalizeOem } from "../src/android/framework-collector.js";
+import { getOemSearchPaths, normalizeOem } from "../src/android/framework-collector.js";
 import { resolveFrameworkJarPath, resolveFrameworkLayout, resolveProcessOem, summarizeFrameworkArtifact } from "../src/android/framework.js";
-import { resolveFrameworkTools } from "../src/android/framework-tools.js";
+import { resolveFrameworkTools, translateWslArgs, windowsPathToWsl } from "../src/android/framework-tools.js";
 import { resetTestDir, testPath } from "./test-paths.js";
 
 function writeArtifact(outDir: string, vendor: string, oem: string = "xiaomi"): string {
@@ -65,6 +65,21 @@ describe("framework OEM handling", () => {
     ).rejects.toThrow("Framework OEM could not be resolved");
 
     rmSync(outDir, { recursive: true, force: true });
+  });
+});
+
+describe("framework OEM search paths", () => {
+  const defaultDirs = ["/system/framework", "/system/apex", "/vendor/framework", "/system_ext/framework"];
+
+  it("uses the default collection directories for non-listed OEMs", () => {
+    for (const oem of ["vivo", "honor", "google", "samsung"] as const) {
+      expect(getOemSearchPaths(oem)).toEqual(defaultDirs);
+    }
+  });
+
+  it("keeps the oppo and xiaomi overrides", () => {
+    expect(getOemSearchPaths("oppo")).toEqual(["/system/framework", "/system/apex", "/system_ext/framework"]);
+    expect(getOemSearchPaths("xiaomi")).toEqual(["/system/framework", "/system/apex", "/system_ext/framework", "/vendor/framework"]);
   });
 });
 
@@ -203,8 +218,25 @@ describe("framework platform support", () => {
     Object.defineProperty(process, "platform", { value: originalPlatform });
   });
 
-  it("shows an explicit unsupported message on Windows", () => {
+  it("throws WSL guidance on Windows when WSL is unavailable", () => {
     Object.defineProperty(process, "platform", { value: "win32" });
-    expect(() => resolveFrameworkTools()).toThrow("Windows is not supported");
+    expect(() => resolveFrameworkTools(undefined, { wslAvailable: false })).toThrow("Windows requires WSL");
+  });
+});
+
+describe("wsl path translation", () => {
+  it("converts Windows drive paths to WSL /mnt paths", () => {
+    expect(windowsPathToWsl("C:\\Users\\foo\\bar.img")).toBe("/mnt/c/Users/foo/bar.img");
+    expect(windowsPathToWsl("E:/code/decx/apex.img")).toBe("/mnt/e/code/decx/apex.img");
+    expect(windowsPathToWsl("/already/posix")).toBe("/already/posix");
+  });
+
+  it("translates standalone and embedded paths in tool arguments", () => {
+    expect(translateWslArgs(["C:\\a\\b.img"])).toEqual(["/mnt/c/a/b.img"]);
+    expect(translateWslArgs(["--extract=C:\\out\\dir", "C:\\in\\img"])).toEqual([
+      "--extract=/mnt/c/out/dir",
+      "/mnt/c/in/img",
+    ]);
+    expect(translateWslArgs(["-R", "rdump ./ C:\\out\\dir"])).toEqual(["-R", "rdump ./ /mnt/c/out/dir"]);
   });
 });

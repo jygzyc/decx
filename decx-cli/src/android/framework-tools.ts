@@ -5,15 +5,9 @@ import { fileURLToPath } from "url";
 import { execFileSync, spawnSync } from "child_process";
 import { FileError } from "../utils/errors.js";
 import { decxPath } from "../core/paths.js";
-import type { FrameworkToolPaths } from "./types.js";
+import type { FrameworkTool, FrameworkToolPaths } from "./types.js";
 
 const archiveCacheKeys = new Map<string, string>();
-
-function assertSupportedFrameworkPlatform(): void {
-  if (process.platform === "win32") {
-    throw new FileError("Windows is not supported for 'decx android framework' yet.");
-  }
-}
 
 function commandExists(command: string): boolean {
   const probe = process.platform === "win32" ? "where" : "which";
@@ -23,10 +17,44 @@ function commandExists(command: string): boolean {
 
 function currentArchDir(): string {
   if (process.arch === "arm64") return "arm64";
-  if (process.arch === "x64") return process.platform === "darwin" ? "x86_64" : "x86_64";
+  if (process.arch === "x64") return "x86_64";
   if (process.arch === "arm") return "aarch64";
   return process.arch;
 }
+
+// ── WSL helpers ────────────────────────────────────────────────────────────
+// `decx android framework` extracts APEX filesystem images with debugfs and
+// erofs-utils, which have no native Windows binaries. On Windows those tools are
+// delegated to WSL, and Windows absolute paths in their arguments are translated
+// to the matching /mnt/<drive>/... paths.
+
+function wslRun(args: string[]): { ok: boolean; stdout: string } {
+  const result = spawnSync("wsl.exe", args, { encoding: "utf-8" });
+  return { ok: !result.error && result.status === 0, stdout: (result.stdout ?? "").trim() };
+}
+
+function wslAvailable(): boolean {
+  return process.platform === "win32" && wslRun(["-e", "sh", "-c", "exit 0"]).ok;
+}
+
+function wslHasCommand(command: string): boolean {
+  return wslRun(["-e", "sh", "-c", `command -v ${command}`]).ok;
+}
+
+function windowsPathToWsl(p: string): string {
+  const match = p.match(/^([A-Za-z]):[\\/](.*)$/);
+  if (!match) return p;
+  return `/mnt/${match[1].toLowerCase()}/${match[2].replace(/\\/g, "/")}`;
+}
+
+export { windowsPathToWsl };
+
+/** Translate Windows absolute paths (standalone or embedded in flag values). */
+export function translateWslArgs(args: string[]): string[] {
+  return args.map((arg) => arg.replace(/[A-Za-z]:[\\/][^\s"'`]+/g, windowsPathToWsl));
+}
+
+// ── Packaged native binaries ───────────────────────────────────────────────
 
 function packagedBinPath(...parts: string[]): string {
   const entryDir = path.dirname(fileURLToPath(import.meta.url));
@@ -57,7 +85,12 @@ function extractPackagedBinArchive(parts: string[]): string | null {
   if (!existsSync(cacheFile)) {
     mkdirSync(cacheDir, { recursive: true });
     try {
-      execFileSync("tar", ["-xzf", archive, "-C", cacheDir], { stdio: "ignore" });
+      // Prefer bsdtar on Windows (GNU tar from Git Bash misparses `E:\...` paths).
+      const tarBin =
+        process.platform === "win32" && existsSync("C:\\Windows\\System32\\tar.exe")
+          ? "C:\\Windows\\System32\\tar.exe"
+          : "tar";
+      execFileSync(tarBin, ["-xzf", archive, "-C", cacheDir], { stdio: "ignore" });
     } catch {
       throw new FileError(`Failed to extract packaged binaries from ${archive}`);
     }
@@ -73,13 +106,7 @@ function archiveCacheKey(archive: string): string {
   return key;
 }
 
-function resolvePackagedErofsExtractor(): string | null {
-  const platformDir =
-    process.platform === "darwin" ? "darwin" :
-    process.platform === "linux" ? "linux" :
-    null;
-  if (!platformDir) return null;
-
+function resolvePackagedErofsExtractor(platformDir: string): string | null {
   const candidate = packagedBinPath(platformDir, currentArchDir(), "extract.erofs");
   if (!existsSync(candidate)) return null;
   try {
@@ -90,18 +117,79 @@ function resolvePackagedErofsExtractor(): string | null {
   return candidate;
 }
 
-function resolveDebugfs(): string | null {
-  if (commandExists("debugfs")) return "debugfs";
-  if (process.platform !== "linux") return null;
+// ── Tool resolution ────────────────────────────────────────────────────────
 
-  const candidate = packagedBinPath("linux", currentArchDir(), "debugfs");
-  if (!existsSync(candidate)) return null;
-  try {
-    chmodSync(candidate, 0o755);
-  } catch {
-    // Best effort.
+function resolveDebugfs(wslOk: boolean): FrameworkTool {
+  if (commandExists("debugfs")) {
+    return { argv: ["debugfs"] };
   }
-  return candidate;
+
+  if (process.platform === "win32") {
+    if (wslOk && wslHasCommand("debugfs")) {
+      return { argv: ["wsl.exe", "-e", "debugfs"], translatePaths: true };
+    }
+    throw new FileError(
+      "debugfs not found. On Windows, 'decx android framework' runs its Linux-only tools in WSL: " +
+        "install WSL and make sure debugfs is available there (e.g. 'sudo apt install e2fsprogs').",
+    );
+  }
+
+  const packaged = packagedBinPath("linux", currentArchDir(), "debugfs");
+  if (existsSync(packaged)) {
+    try {
+      chmodSync(packaged, 0o755);
+    } catch {
+      // Best effort.
+    }
+    return { argv: [packaged] };
+  }
+
+  throw new FileError(
+    "debugfs not found. Install e2fsprogs (e.g. 'apt install e2fsprogs') so debugfs is on PATH.",
+  );
+}
+
+function resolveErofsExtractor(wslOk: boolean): FrameworkTool {
+  if (commandExists("fsck.erofs")) {
+    return { argv: ["fsck.erofs"] };
+  }
+  if (commandExists("extract.erofs")) {
+    return { argv: ["extract.erofs"] };
+  }
+
+  if (process.platform === "win32") {
+    if (!wslOk) {
+      throw new FileError(
+        "Windows requires WSL for 'decx android framework' (it needs Linux-only erofs-utils). " +
+          "Install WSL (wsl --install) or run this command on Linux/macOS.",
+      );
+    }
+    if (wslHasCommand("fsck.erofs")) {
+      return { argv: ["wsl.exe", "-e", "fsck.erofs"], translatePaths: true };
+    }
+    if (wslHasCommand("extract.erofs")) {
+      return { argv: ["wsl.exe", "-e", "extract.erofs"], translatePaths: true };
+    }
+    // Fall back to the packaged Linux x86_64 extract.erofs, run through WSL.
+    const packaged = packagedBinPath("linux", "x86_64", "extract.erofs");
+    if (existsSync(packaged)) {
+      return { argv: ["wsl.exe", windowsPathToWsl(packaged)], translatePaths: true };
+    }
+    throw new FileError(
+      "No EROFS extractor found. On Windows, install erofs-utils in WSL " +
+        "(e.g. 'sudo apt install erofs-utils') or run this command on Linux/macOS.",
+    );
+  }
+
+  const platformDir = process.platform === "darwin" ? "darwin" : "linux";
+  const packaged = resolvePackagedErofsExtractor(platformDir);
+  if (packaged) {
+    return { argv: [packaged] };
+  }
+
+  throw new FileError(
+    "No EROFS extractor found. Install fsck.erofs/extract.erofs (erofs-utils) or use the packaged binary.",
+  );
 }
 
 function resolveAdb(adbPath?: string): string {
@@ -110,25 +198,24 @@ function resolveAdb(adbPath?: string): string {
   throw new FileError("adb not found. Use --adb-path or install Android platform-tools.");
 }
 
-function resolveErofsExtractor(): string {
-  if (commandExists("fsck.erofs")) return "fsck.erofs";
-  if (commandExists("extract.erofs")) return "extract.erofs";
-  const packaged = resolvePackagedErofsExtractor();
-  if (packaged) return packaged;
-  throw new FileError("No EROFS extractor found. Install fsck.erofs/extract.erofs or use the packaged binary.");
-}
-
-export function resolveFrameworkTools(adbPath?: string): FrameworkToolPaths {
-  assertSupportedFrameworkPlatform();
-  const debugfs = resolveDebugfs();
-  if (!debugfs) {
-    throw new FileError("debugfs not found. Install e2fsprogs and ensure debugfs is on PATH.");
+export function resolveFrameworkTools(
+  adbPath?: string,
+  options: { wslAvailable?: boolean } = {},
+): FrameworkToolPaths {
+  // On Windows the filesystem-image tools (debugfs, erofs-utils) have no native
+  // binaries; they are delegated to WSL. Require WSL up front with a clear error.
+  const wslOk = options.wslAvailable ?? wslAvailable();
+  if (process.platform === "win32" && !wslOk) {
+    throw new FileError(
+      "Windows requires WSL for 'decx android framework': it needs Linux-only debugfs/erofs-utils " +
+        "to extract APEX filesystem images. Install WSL (wsl --install) or run this command on Linux/macOS.",
+    );
   }
 
   return {
     adb: resolveAdb(adbPath),
-    debugfs,
-    erofsExtractor: resolveErofsExtractor(),
+    debugfs: resolveDebugfs(wslOk),
+    erofsExtractor: resolveErofsExtractor(wslOk),
   };
 }
 

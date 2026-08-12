@@ -31,10 +31,17 @@ export interface PermissionInfo {
   [key: string]: string | null | undefined;
 }
 
+export interface FrameworkTool {
+  /** Full argv to spawn (binary plus any leading args), e.g. ["wsl.exe", "-e", "debugfs"]. */
+  argv: string[];
+  /** When true, Windows absolute paths in arguments are translated to WSL paths. */
+  translatePaths?: boolean;
+}
+
 export interface FrameworkToolPaths {
   adb: string;
-  debugfs: string;
-  erofsExtractor: string;
+  debugfs: FrameworkTool;
+  erofsExtractor: FrameworkTool;
 }
 
 export interface FrameworkPathLayout {

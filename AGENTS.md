@@ -101,6 +101,8 @@ Notable details:
 - `decx android device` provides adb-backed inspection commands:
   `system-services`, `permission-info`
 - Framework processing is implemented in native TypeScript under `decx-cli/src/android/`
+- Zip/jar read-write operations are centralized in `decx-cli/src/android/zip-utils.ts` and are cross-platform: Windows 10+ uses the bundled bsdtar (`C:\Windows\System32\tar.exe`, no `zip`/`unzip` dependency), other platforms use Info-ZIP `zip`/`unzip`
+- Framework APEX filesystem-image extraction (debugfs/erofs-utils) has no native Windows binaries; on Windows `decx-cli/src/android/framework-tools.ts` delegates those tools to WSL (`wsl.exe`) with `/mnt/<drive>/...` path translation (`translateWslArgs`), falling back to the packaged `linux/x86_64/extract.erofs`. Without WSL, `decx android framework` errors with an explicit "Windows requires WSL" message
 - ADB interaction is centralized in `decx-cli/src/android/adb.ts`
 - `decx android device system-services` returns structured JSON for live Binder/system services and supports `--serial`, `--adb-path`, and `--grep`
 - `decx android device permission-info <permission>` returns one structured JSON object for a permission and supports `--serial` and `--adb-path`

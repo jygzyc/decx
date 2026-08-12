@@ -1,8 +1,8 @@
 import { copyFileSync, existsSync, mkdirSync, readdirSync, rmSync, writeFileSync } from "fs";
 import * as path from "path";
 import { randomBytes } from "crypto";
-import { spawnSync } from "child_process";
 import { FileError } from "../utils/errors.js";
+import { createZipArchive } from "./zip-utils.js";
 import type { FrameworkPackResult, FrameworkPathLayout } from "./types.js";
 
 const FRAMEWORK_MANIFEST = `Manifest-Version: 1.0
@@ -52,23 +52,14 @@ export async function packFrameworkJar(layout: FrameworkPathLayout): Promise<Fra
     copyFileSync(filePath, path.join(stagingDir, path.basename(filePath)));
   }
 
-  const result = spawnSync(
-    "zip",
-    ["-q", "-r", layout.jarPath, "META-INF", ...stagedFiles.map((filePath) => path.basename(filePath))],
-    {
-      cwd: stagingDir,
-      encoding: "utf-8",
-    },
-  );
-
-  rmSync(stagingDir, { recursive: true, force: true });
-
-  if (result.error) {
-    throw new FileError(`Failed to execute zip: ${result.error.message}`);
-  }
-
-  if (result.status !== 0) {
-    throw new FileError(result.stderr?.trim() || result.stdout?.trim() || "Failed to create out.jar");
+  try {
+    createZipArchive(
+      layout.jarPath,
+      ["META-INF", ...stagedFiles.map((filePath) => path.basename(filePath))],
+      stagingDir,
+    );
+  } finally {
+    rmSync(stagingDir, { recursive: true, force: true });
   }
 
   return {
