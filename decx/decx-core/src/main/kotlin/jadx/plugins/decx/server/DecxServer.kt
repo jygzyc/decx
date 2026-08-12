@@ -8,6 +8,7 @@ import jadx.plugins.decx.DecxConstants
 import jadx.plugins.decx.api.DecxApi
 import jadx.plugins.decx.api.DecxRoutes
 import jadx.plugins.decx.api.DecxApiImpl
+import jadx.plugins.decx.extension.DecxExtensions
 import jadx.plugins.decx.utils.DecompileGuard
 import jadx.plugins.decx.utils.SymbolIndex
 import jadx.plugins.decx.utils.RouteTelemetry
@@ -71,11 +72,15 @@ class DecxServer(
             app = Javalin.create { config ->
                 config.startup.showJavalinBanner = false
                 config.routes.get("/health") { ctx -> handleHealthCheck(ctx) }
-                DecxRoutes.all.forEach { route ->
+                (DecxRoutes.all + DecxExtensions.routes).forEach { route ->
                     config.routes.post(route.path) { ctx -> handleRoute(ctx, route.path) }
                 }
             }.start(overridePort)
             started = true
+            LogUtils.info(
+                "Extensions: active=${DecxExtensions.active.map { it.id }}, " +
+                    "status=${DecxExtensions.status()}"
+            )
 
             LogUtils.info("Server started on port $overridePort")
             setupShutdownHook()

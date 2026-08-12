@@ -27,9 +27,11 @@ AI Assistant / CLI
 
 | Path | Stack | Role |
 |---|---|---|
-| `decx/decx-core/` | Kotlin, JVM 17 | Shared API, HTTP transport, services, models, utilities |
+| `decx/decx-core/` | Kotlin, JVM 17 | Shared API, HTTP transport, services, models, utilities, DecxExtension SPI |
 | `decx/decx-plugin/` | Kotlin, Shadow JAR | JADX GUI plugin, lifecycle, UI, in-process MCP server management |
 | `decx/decx-server/` | Kotlin, Shadow JAR | Standalone headless server with `DecxServerApp` main class |
+| `decx/decx-taint-protocol/` | Kotlin | NDJSON wire protocol shared by taint orchestrator (decx-core) and worker |
+| `decx/decx-taint-worker/` | Kotlin, Shadow JAR | Standalone Tai-e worker JVM process (`TaintWorkerMain`) |
 | `decx-cli/` | TypeScript, Node.js 22.5+ | User CLI for session management and analysis commands |
 | `skills/decx-cli/` | Skill `decx-cli` | DECX CLI usage, general analysis, and workflow routing |
 | `skills/decx-vulnhunt/` | Skill `decx-vulnhunt` | Android vulnerability hunting workflow (App + Framework tracks) |
@@ -110,6 +112,17 @@ Notable details:
 - `search_class_key` greps within one class and requires a `grep` object with `limit`, `caseSensitive`, and `regex`
 - Framework build metadata is stored per-output-directory under `.artifact.json`; legacy `.meta.json` is no longer used
 - `decx android framework open` / `run` ultimately create normal process sessions via `decx process open`; framework artifacts are not stored as a separate session kind
+
+### Taint analysis engine (Tai-e)
+
+- Taint analysis is mounted as a **`DecxExtension` SPI** (ServiceLoader): `extension/DecxExtension.kt` interface, `extension/DecxExtensions.kt` registry, `taint/TaintExtension.kt` implementation — all in `decx-core`
+- Routes are injected **dynamically**: when `TaintExtension.isAvailable()` is true, `/api/decx/taint/*` routes plus MCP tools are registered; otherwise the core jadx surface is completely unaffected (no collision, no degradation)
+- Endpoints (all POST): `status`, `analyze`, `capabilities`, `templates` under `/api/decx/taint/`
+- `analyze` accepts a **YAML config**: `preset` (built-in preset inheritance) + field-level overrides (`analysis` / `limits` / `taint`) + `raw` escape hatch (Tai-e `pta` options / extra CLI flags). Presets ship in `decx-core/src/main/resources/taint/templates/*.yml` (`privacy-leak`, `quick-scan`); parsing/merging lives in `taint/config/TaintConfigParser.kt`
+- The engine runs in a **separate worker JVM** (`decx-taint-worker`, fat jar with Tai-e 0.5.4 + modified Soot/FlowDroid patches), spawned by `taint/TaintWorkerPool.kt`; communication is NDJSON over stdin/stdout via `decx-taint-protocol` (`WorkerMessage` / `WorkerProtocol`)
+- Worker classpath isolation matters: the Tai-e **modified jars** (`lib/sootclasses-modified.jar` + `lib/flowdroidclasses-modified.jar`, fetched from the Tai-e repo) must precede the worker fat jar, or Android mode throws `NoSuchMethodError: LayoutFileParser.<init>(...)`
+- Runtime environment lives under **`DECX_HOME`** (`~/.decx` or `DECX_HOME` env var): `tai-e/lib/` (modified jars), `tai-e/worker/` (worker fat jar), `tai-e/java-benchmarks/JREs/` (downloaded on demand — **not** shipped in any jar), `platforms/` (Android platform jars, user-provided or installed); dev fallbacks probe sibling module build output (`decx-taint-poc`, `decx-taint-worker`)
+- Android analysis requires the APK's JRE version under `java-benchmarks/JREs/jre1.X/` (version inferred from targetSdk by Tai-e) and an Android SDK `platforms/` dir (`-ajs`)
 ### Skill workflow details
 
 - Skill architecture and authoring rules are defined in `skills/AGENTS.md`.
@@ -131,6 +144,7 @@ cd decx
 ./gradlew dist
 ./gradlew :decx-plugin:shadowJar
 ./gradlew :decx-server:shadowJar
+./gradlew :decx-taint-worker:shadowJar
 ./gradlew test
 ```
 
@@ -138,6 +152,7 @@ Artifacts copied by Gradle:
 
 - `decx/build/dist/jadx_decx_plugin-<version>.jar`
 - `decx/build/dist/decx-server-<version>.jar`
+- `decx/decx-taint-worker/build/libs/decx-taint-worker-all.jar` (taint worker fat jar)
 
 Version source:
 
@@ -261,6 +276,13 @@ This binary:
 1. Update `decx/decx-core/src/main/kotlin/jadx/plugins/decx/server/McpToolRegistry.kt`
 2. Point the tool at an existing `DecxRoutes` endpoint when possible
 3. Only add new server APIs if the capability does not already exist
+
+### Add a DecxExtension (optional engine surface)
+
+1. Implement `jadx.plugins.decx.extension.DecxExtension` in `decx-core` (routes reuse `DecxRouteGroup`/`DecxRoute`, MCP tools reuse `McpTool`)
+2. Register the implementation in `META-INF/services/jadx.plugins.decx.extension.DecxExtension`
+3. Keep `isAvailable()` truthful: when the extension's environment is missing it must return `false` so no routes/tools are injected
+4. Heavy work belongs in a worker process, not in the extension class
 
 ### Change plugin lifecycle or MCP startup
 

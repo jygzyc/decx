@@ -1,0 +1,10 @@
+<configuration>
+    <appender name="STDOUT" class="ch.qos.logback.core.ConsoleAppender">
+        <encoder><pattern>%msg%n</pattern></encoder>
+    </appender>
+    <!-- Tai-e taint result lines: "Detected N taint flow(s):" + each TaintFlow -->
+    <logger name="pascal.taie.analysis.pta.plugin.taint.TaintAnalysis" level="INFO" additivity="false">
+        <appender-ref ref="STDOUT"/>
+    </logger>
+    <root level="WARN"/>
+</configuration>

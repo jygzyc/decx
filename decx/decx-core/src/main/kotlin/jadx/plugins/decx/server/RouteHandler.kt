@@ -1,8 +1,10 @@
 package jadx.plugins.decx.server
 
 import jadx.plugins.decx.api.DecxApi
+import jadx.plugins.decx.api.DecxApiResult
 import jadx.plugins.decx.api.DecxRequestParams
 import jadx.plugins.decx.api.DecxRoutes
+import jadx.plugins.decx.extension.DecxExtensions
 import jadx.plugins.decx.utils.AnalysisResultUtils
 import jadx.plugins.decx.utils.LogUtils
 
@@ -18,9 +20,16 @@ class RouteHandler(private val api: DecxApi) {
         }
     }
 
-    private fun dispatch(path: String, payload: Map<String, Any>) =
-        DecxRoutes.routeOf(path)?.invoke(api, DecxRequestParams(payload))
+    private fun dispatch(path: String, payload: Map<String, Any>): DecxApiResult {
+        val route = DecxRoutes.routeOf(path)
+            ?: DecxExtensions.routeOf(path)
             ?: throw IllegalArgumentException("Unknown endpoint: $path")
+        return route.invoke(api, DecxRequestParams(payload))
+    }
 
-    fun pathToKind(path: String): String = DecxRoutes.kindOf(path)
+    fun pathToKind(path: String): String {
+        val builtin = DecxRoutes.kindOf(path)
+        if (builtin != "unknown") return builtin
+        return DecxExtensions.kindOf(path) ?: "unknown"
+    }
 }

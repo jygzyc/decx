@@ -1,0 +1,39 @@
+# Android privacy source/sink config, ported from Tai-e android-benchmarks
+# (pascal-lab/android-benchmarks/suite/taint-config.yml). Used by Tai-e pta
+# in android mode to detect privacy-leak / injection taint flows in APKs.
+sources:
+  - { kind: call, method: "<android.telephony.TelephonyManager: java.lang.String getImei()>", index: result }
+  - { kind: call, method: "<android.telephony.TelephonyManager: java.lang.String getDeviceId()>", index: result }
+  - { kind: call, method: "<android.telephony.TelephonyManager: java.lang.String getSubscriberId()>", index: result }
+  - { kind: call, method: "<android.telephony.TelephonyManager: java.lang.String getSimSerialNumber()>", index: result }
+  - { kind: call, method: "<android.location.Location: double getLatitude()>", index: result }
+  - { kind: call, method: "<android.location.Location: double getLongitude()>", index: result }
+  - { kind: call, method: "<android.widget.EditText: android.text.Editable getText()>", index: result }
+
+sinks:
+  - { method: "<android.telephony.SmsManager: void sendTextMessage(java.lang.String,java.lang.String,java.lang.String,android.app.PendingIntent,android.app.PendingIntent)>", index: 2 }
+  - { method: "<android.util.Log: int i(java.lang.String,java.lang.String)>", index: 1 }
+  - { method: "<android.util.Log: int d(java.lang.String,java.lang.String)>", index: 1 }
+  - { method: "<android.util.Log: int v(java.lang.String,java.lang.String)>", index: 1 }
+  - { method: "<android.util.Log: int e(java.lang.String,java.lang.String)>", index: 1 }
+  - { method: "<java.net.URL: java.net.URLConnection openConnection()>", index: base }
+  - { method: "<java.lang.ProcessBuilder: java.lang.Process start()>", index: base }
+  - { method: "<java.io.OutputStreamWriter: java.io.Writer append(java.lang.CharSequence)>", index: 0 }
+  - { method: "<java.io.Writer: java.io.Writer append(java.lang.CharSequence)>", index: 0 }
+  - { method: "<org.apache.http.client.HttpClient: org.apache.http.HttpResponse execute(org.apache.http.client.methods.HttpUriRequest)>", index: 0 }
+
+transfers:
+  - { method: "<java.lang.String: java.lang.String concat(java.lang.String)>", from: base, to: result }
+  - { method: "<java.lang.String: java.lang.String concat(java.lang.String)>", from: 0, to: result }
+  - { method: "<java.lang.String: void <init>(char[])>", from: 0, to: base }
+  - { method: "<java.lang.StringBuilder: java.lang.StringBuilder append(java.lang.String)>", from: 0, to: base }
+  - { method: "<java.lang.StringBuilder: java.lang.StringBuilder append(java.lang.String)>", from: 0, to: result }
+  - { method: "<java.lang.StringBuilder: java.lang.StringBuilder append(java.lang.String)>", from: base, to: result }
+  - { method: "<java.lang.StringBuilder: java.lang.String toString()>", from: base, to: result }
+  - { method: "<java.lang.Object: java.lang.String toString()>", from: base, to: result }
+  - { method: "<java.lang.Double: java.lang.String toString(double)>", from: 0, to: result }
+  - { method: "<java.lang.ProcessBuilder: java.lang.ProcessBuilder command(java.lang.String[])>", from: 0, to: base }
+  - { method: "<java.net.URL: void <init>(java.lang.String)>", from: 0, to: base }
+
+sanitizers: []
+call-site-mode: true

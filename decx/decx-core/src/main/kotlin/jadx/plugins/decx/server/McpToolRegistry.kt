@@ -1,5 +1,7 @@
 package jadx.plugins.decx.server
 
+import jadx.plugins.decx.extension.DecxExtensions
+
 data class McpTool(
     val name: String,
     val description: String,
@@ -32,7 +34,7 @@ object McpToolRegistry {
     private val excludePackagesProp = arrayProp("Exclude class names, interface names, component tag names, or resource paths matching these filters. Interpreted as regex by default.")
     private val regexProp = prop("boolean", "Interpret key/include/exclude filters as regular expressions. Defaults to true; set false for literal substring matching where supported.")
 
-    val tools: List<McpTool> = listOf(healthTool()) + commonTools() + contextTools() + androidTools() + uiTools()
+    val tools: List<McpTool> = listOf(healthTool()) + commonTools() + contextTools() + androidTools() + uiTools() + DecxExtensions.mcpTools
 
     private val toolsByName: Map<String, McpTool> = tools.associateBy { it.name }
     private val toolsByRoute: Map<String, List<McpTool>> = tools.groupBy { it.routePath }
