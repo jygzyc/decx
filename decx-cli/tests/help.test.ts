@@ -11,8 +11,7 @@ import { makeProcessCommand } from "../src/commands/process.js";
 import { makeCodeCommand } from "../src/commands/code.js";
 import { makeAndroidCommand } from "../src/commands/android.js";
 import { makeSelfCommand } from "../src/commands/self.js";
-import { ROOT_DESCRIPTION } from "../src/core/constants.js";
-import { main } from "../src/index.js";
+import { main, ROOT_DESCRIPTION } from "../src/index.js";
 
 function createProgram(): Command {
   const program = new Command();

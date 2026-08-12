@@ -51,8 +51,15 @@ function isDecxProcess(pid: number): boolean {
   }
 }
 
-export function createSession(name: string, hash: string, apkPath: string, pid: number, port: number): Session {
-  const session: Session = { name, hash, pid, port, path: apkPath, startedAt: Date.now() };
+export function createSession(
+  name: string,
+  hash: string,
+  apkPath: string,
+  pid: number,
+  port: number,
+  scripts?: string[],
+): Session {
+  const session: Session = { name, hash, pid, port, path: apkPath, startedAt: Date.now(), scripts };
   atomicWriteJson(sessionFilePath(name), session);
   return session;
 }

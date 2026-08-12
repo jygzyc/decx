@@ -1,11 +1,14 @@
-import { closeSync, copyFileSync, existsSync, mkdirSync, openSync, readdirSync, readFileSync, rmSync } from "fs";
+import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync } from "fs";
 import * as os from "os";
 import * as path from "path";
 import { spawnSync } from "child_process";
 import { FileError } from "../utils/errors.js";
+import { extractZipEntry, listZipEntries } from "./zip-utils.js";
+import { translateWslArgs } from "./framework-tools.js";
 import type {
   FrameworkPathLayout,
   FrameworkProcessResult,
+  FrameworkTool,
   FrameworkToolPaths,
 } from "./types.js";
 
@@ -27,13 +30,15 @@ function walkFiles(dir: string, found: string[] = []): string[] {
   return found;
 }
 
-function runTool(command: string, args: string[]): string {
-  const result = spawnSync(command, args, { encoding: "utf-8" });
+function runTool(tool: FrameworkTool, args: string[]): string {
+  const finalArgs = tool.translatePaths ? translateWslArgs(args) : args;
+  const result = spawnSync(tool.argv[0], [...tool.argv.slice(1), ...finalArgs], { encoding: "utf-8" });
+  const label = tool.argv.join(" ");
   if (result.error) {
-    throw new FileError(`Failed to execute ${command}: ${result.error.message}`);
+    throw new FileError(`Failed to execute ${label}: ${result.error.message}`);
   }
   if (result.status !== 0) {
-    throw new FileError(result.stderr?.trim() || result.stdout?.trim() || `${command} failed`);
+    throw new FileError(result.stderr?.trim() || result.stdout?.trim() || `${label} failed`);
   }
   return result.stdout ?? "";
 }
@@ -43,35 +48,6 @@ function detectFilesystemType(filePath: string): "erofs" | "ext4" | "ext2" {
   if (fd.subarray(1024, 1028).equals(Buffer.from([0xe2, 0xe1, 0xf5, 0xe0]))) return "erofs";
   if (fd.subarray(1080, 1082).equals(Buffer.from([0x53, 0xef]))) return "ext4";
   return "ext2";
-}
-
-function listZipEntries(inputFile: string): string[] {
-  return runTool("unzip", ["-Z1", inputFile])
-    .split(/\r?\n/)
-    .map((line) => line.trim())
-    .filter(Boolean);
-}
-
-function extractZipEntry(inputFile: string, entryName: string, targetPath: string): void {
-  const outputFd = openSync(targetPath, "w");
-  try {
-    const result = spawnSync("unzip", ["-p", inputFile, entryName], {
-      stdio: ["ignore", outputFd, "pipe"],
-    });
-    if (result.error) {
-      throw new FileError(`Failed to read '${entryName}' from ${inputFile}: ${result.error.message}`);
-    }
-    if (result.status !== 0) {
-      throw new FileError(
-        result.stderr?.toString().trim() || `Failed to extract '${entryName}' from ${inputFile}`,
-      );
-    }
-  } catch (error) {
-    rmSync(targetPath, { force: true });
-    throw error;
-  } finally {
-    closeSync(outputFd);
-  }
 }
 
 function extractDexFromZip(inputFile: string, outputDir: string, prefix: string): void {
@@ -109,7 +85,8 @@ function extractFilesystemImage(
   mkdirSync(extractDir, { recursive: true });
   const fsType = detectFilesystemType(imagePath);
   if (fsType === "erofs") {
-    if (path.basename(tools.erofsExtractor) === "fsck.erofs") {
+    const erofsBin = path.basename(tools.erofsExtractor.argv[tools.erofsExtractor.argv.length - 1]);
+    if (erofsBin === "fsck.erofs") {
       runTool(tools.erofsExtractor, [`--extract=${extractDir}`, "--overwrite", imagePath]);
       return;
     }

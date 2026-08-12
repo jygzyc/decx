@@ -83,6 +83,9 @@ Notable details:
 - `decx process open <file>` launches `java -jar decx-server.jar ...`
 - `decx process open <file>` starts the JVM with `-Xmx` set to 2/3 of machine memory rounded down
 - `decx process open <file>` is also reused by `decx android framework open` and `decx android framework run`
+- `decx process open <file> --script <s1.jadx.kts> [--script <s2.jadx.kts> ...]` runs Jadx Kotlin scripts during decompilation; scripts are passed to decx-server as positional input files after the main target
+- Scripts execute at decompile time (top-level code at load, `jadx.afterLoad { }` blocks after classes load); the server bundles the `jadx-script-kotlin` plugin
+- Session reuse is keyed on the target file **plus** the exact script set; opening the same file with a different script set errors until `--force`
 - Standard `jadx-cli` flags are passed through by `process open`
 - `process open` auto-injects `--show-bad-code`, `--no-imports`, and `-Pdex-input.verify-checksum=no` (each skipped if already present), and intentionally strips `--deobf` because DECX relies on original symbol names
 - No DECX command binds `-P` to `--port`; `-P<key>=<value>` tokens are forwarded to jadx-cli by `process open` as JADX project properties. Use `--port` everywhere for the server port
@@ -100,6 +103,8 @@ Notable details:
 - `decx android device` provides adb-backed inspection commands:
   `system-services`, `permission-info`
 - Framework processing is implemented in native TypeScript under `decx-cli/src/android/`
+- Zip/jar read-write operations are centralized in `decx-cli/src/android/zip-utils.ts` and are cross-platform: Windows 10+ uses the bundled bsdtar (`C:\Windows\System32\tar.exe`, no `zip`/`unzip` dependency), other platforms use Info-ZIP `zip`/`unzip`
+- Framework APEX filesystem-image extraction (debugfs/erofs-utils) has no native Windows binaries; on Windows `decx-cli/src/android/framework-tools.ts` delegates those tools to WSL (`wsl.exe`) with `/mnt/<drive>/...` path translation (`translateWslArgs`), falling back to the packaged `linux/x86_64/extract.erofs`. Without WSL, `decx android framework` errors with an explicit "Windows requires WSL" message
 - ADB interaction is centralized in `decx-cli/src/android/adb.ts`
 - `decx android device system-services` returns structured JSON for live Binder/system services and supports `--serial`, `--adb-path`, and `--grep`
 - `decx android device permission-info <permission>` returns one structured JSON object for a permission and supports `--serial` and `--adb-path`
@@ -153,6 +158,8 @@ Artifacts copied by Gradle:
 - `decx/build/dist/jadx_decx_plugin-<version>.jar`
 - `decx/build/dist/decx-server-<version>.jar`
 - `decx/decx-taint-worker/build/libs/decx-taint-worker-all.jar` (taint worker fat jar)
+
+Jadx script plugin: `jadx-script-kotlin` is not on Maven Central. `decx-server`'s `fetchJadxScriptPlugin` task downloads its GitHub release zip once and extracts the plugin jar; the scripting runtime (Kotlin scripting, ktlint, kotlin-logging) comes from Maven Central. Offline builds can set `DECX_JADX_SCRIPT_ZIP=/path/to/jadx-script-kotlin-<ver>.zip`. The fat jar uses Zip64 (>65535 entries) and its `META-INF/services/jadx.api.plugins.JadxPlugin` merge is verified to contain both `DexInputPlugin` and `JadxScriptKotlinPlugin`.
 
 Version source:
 
@@ -251,9 +258,12 @@ This binary:
 - parses `--port`
 - parses `--mcp` (opt-in MCP server on `port + 1`)
 - forwards remaining args to JADX CLI parsing
-- validates an input file exists
+- validates the input file exists (and any `.jadx.kts` script files)
+- defaults the log level to INFO (jadx-cli's PROGRESS mode sets root OFF, which would silence script `log` output); `--log-level` / `-q` / `-v` still override
 - warms up the decompiler
 - starts `DecxServer`
+
+Jadx Kotlin scripts: pass `.jadx.kts` files as additional positional inputs (the CLI does this via `process open --script`). The bundled `jadx-script-kotlin` plugin evaluates them during `decompiler.load()` (top-level code) and registers `afterLoad` blocks as a `JadxAfterLoadPass`.
 
 ## Common Change Patterns
 

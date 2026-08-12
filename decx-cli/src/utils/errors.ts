@@ -55,16 +55,6 @@ export class FileError extends DecxError {
 }
 
 /**
- * Configuration errors.
- */
-export class ConfigError extends DecxError {
-  constructor(message: string, key?: string) {
-    super(message, "CONFIG_ERROR", { key });
-    this.name = "ConfigError";
-  }
-}
-
-/**
  * Error handler for CLI commands.
  */
 export function handleCliError(error: unknown, formatter: Formatter): never {
@@ -97,17 +87,4 @@ export function withErrorHandler<T extends unknown[], R>(
       handleCliError(error, new Formatter());
     }
   };
-}
-
-/**
- * Assert condition and throw formatted error if false.
- */
-export function assert(
-  condition: boolean,
-  message: string,
-  ErrorClass: typeof DecxError = DecxError
-): asserts condition {
-  if (!condition) {
-    throw new ErrorClass(message);
-  }
 }

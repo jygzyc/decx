@@ -6,23 +6,15 @@ import { existsSync, readFileSync } from "fs";
 import * as path from "path";
 import type { Config } from "./types.js";
 import * as session from "./session.js";
-import { decxHome, decxPath, userHome } from "./paths.js";
+import { decxHome } from "./paths.js";
 import { atomicWriteJson } from "../utils/fs.js";
 
-const HOME = userHome();
-const CONFIG_DIR = decxHome();
-const CONFIG_FILE = path.join(CONFIG_DIR, "config.json");
-
-export function expandPath(p: string): string {
-  if (p.startsWith("~/") || p === "~") return path.join(HOME, p.slice(1));
-  return p;
-}
+const CONFIG_FILE = path.join(decxHome(), "config.json");
 
 function defaultConfig(): Config {
   return {
-    serverJar: { path: null, version: "1.0.0", installDir: decxPath("bin") },
-    server: { defaultPort: 25419, timeout: 30 },
-    output: { defaultDir: decxPath("output"), decompileDir: decxPath("decompiled") },
+    serverJar: { version: "1.0.0" },
+    server: { defaultPort: 25419 },
   };
 }
 
@@ -59,12 +51,11 @@ export class Manager {
 
   get serverJar() { return this.config.serverJar; }
   get server() { return this.config.server; }
-  get output() { return this.config.output; }
 
   // --- Session delegates ---
 
-  async createSession(name: string, hash: string, apkPath: string, pid: number, port: number) {
-    return session.createSession(name, hash, apkPath, pid, port);
+  createSession(name: string, hash: string, apkPath: string, pid: number, port: number, scripts?: string[]) {
+    return session.createSession(name, hash, apkPath, pid, port, scripts);
   }
 
   getSession(name: string) { return session.readSession(name); }
@@ -72,8 +63,6 @@ export class Manager {
   removeSession(name: string) { session.deleteSession(name); }
 
   autoSelectSession() { return session.autoSelectSession(); }
-
-  listSessions() { return session.listAllSessions(); }
 
   listAliveSessions() {
     return session.listAllSessions().filter(s => session.isSessionAlive(s));

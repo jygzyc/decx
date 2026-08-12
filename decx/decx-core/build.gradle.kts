@@ -41,6 +41,7 @@ sourceSets {
 val generateVersionProperties by tasks.registering {
     val outputFile = generatedVersionResourcesDir.map { it.file("version.properties") }
     val versionString = project.version.toString()
+    inputs.property("version", versionString)
     outputs.file(outputFile)
 
     doLast {

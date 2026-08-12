@@ -4,15 +4,15 @@ import { Formatter } from "../utils/formatter.js";
 import { Manager } from "../core/config.js";
 import { DecxError, ProcessError, handleCliError } from "../utils/errors.js";
 import { findDecxServerJar } from "../core/installer.js";
-import { parseServerPort } from "../core/ports.js";
+import { parseServerPort, isServerPortAvailable } from "../core/ports.js";
 import {
   openAnalysisTarget,
   checkServer,
-  isServerPortAvailable,
   killProcessGroup,
   extractPassthroughArgs,
 } from "../core/launcher.js";
 import { logCliEvent } from "../utils/logger.js";
+import { collectOption } from "./shared-options.js";
 
 export function makeProcessCommand(): Command {
   const cmd = new Command("process");
@@ -82,6 +82,7 @@ export function makeProcessCommand(): Command {
     .option("--mcp", "Also start MCP Streamable HTTP server on port + 1")
     .option("--force", "Start a new server even when a matching file/session already exists")
     .option("-n, --name <name>", "Session name used by -s/--session (default: input filename without extension)")
+    .option("--script <file>", "Jadx Kotlin script (.jadx.kts) run during decompilation; may be repeated", collectOption, [])
     .action(async (filePath: string, opts) => {
       const fmt = new Formatter();
       try {
@@ -90,6 +91,7 @@ export function makeProcessCommand(): Command {
         force: opts.force ?? false,
         name: opts.name,
         mcp: opts.mcp ?? false,
+        scripts: opts.script ?? [],
         passthroughArgs: extractPassthroughArgs(),
       }));
       } catch (err) { handleCliError(err, fmt); }

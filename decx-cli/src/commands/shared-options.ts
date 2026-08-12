@@ -5,6 +5,21 @@ export function collectOption(value: string, previous: string[]): string[] {
   return previous;
 }
 
+/** Parse a repeatable option value into a string array (commander passes [] by default). */
+export function parseStringList(value: unknown): string[] {
+  return Array.isArray(value) ? value.map(String) : [];
+}
+
+/** Parse an optional integer option value. */
+export function parseOptionalInt(value: unknown): number | undefined {
+  return value ? parseInt(String(value), 10) : undefined;
+}
+
+/** Parse the shared --page option (default 1). */
+export function parsePage(opts: Record<string, unknown>): number {
+  return parseOptionalInt(opts.page) ?? 1;
+}
+
 export function addPackageFilterOptions(cmd: Command): Command {
   return cmd
     .option("--limit <n>", "Maximum number of returned items")
@@ -21,11 +36,12 @@ export function parseClassFilterOptions(opts: Record<string, unknown>): {
     regex?: boolean;
   };
 } {
+  const limit = parseOptionalInt(opts.limit);
   return {
     filter: {
-      ...(opts.limit ? { limit: parseInt(String(opts.limit), 10) } : {}),
-      includes: Array.isArray(opts.includePackage) ? opts.includePackage.map(String) : [],
-      excludes: Array.isArray(opts.excludePackage) ? opts.excludePackage.map(String) : [],
+      ...(limit !== undefined ? { limit } : {}),
+      includes: parseStringList(opts.includePackage),
+      excludes: parseStringList(opts.excludePackage),
       ...(opts.regex === false ? { regex: false } : {}),
     },
   };

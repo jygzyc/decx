@@ -29,6 +29,10 @@ tasks {
         archiveBaseName = "jadx_decx_plugin"
         archiveClassifier = ""
         archiveVersion = project.version.toString()
+        // Service transformers must see duplicate provider files (Shadow 9.6+).
+        filesMatching(listOf("META-INF/services/**", "META-INF/*.kotlin_module")) {
+            duplicatesStrategy = DuplicatesStrategy.INCLUDE
+        }
         mergeServiceFiles()
         manifest {
             attributes("Implementation-Version" to project.version.toString())

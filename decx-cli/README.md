@@ -49,6 +49,9 @@ decx self update [-p]           # Update decx-server.jar and the currently insta
 | `--force` | Force start even if session exists |
 | `-n, --name <name>` | Custom session name |
 | `--mcp` | Also start the MCP Streamable HTTP server on port + 1 |
+| `--script <file>` | Jadx Kotlin script (`.jadx.kts`) run during decompilation; may be repeated |
+
+`--script` uses the [Jadx scripting API](https://github.com/skylot/jadx/wiki/Jadx-scripts-guide): top-level code runs while the decompiler loads, and `jadx.afterLoad { }` blocks run after classes are loaded. The server bundles the `jadx-script-kotlin` plugin, so no extra install step is needed. Session reuse is keyed on the target file **plus** the script set; use `--force` to restart with a different set.
 
 All standard [jadx-cli options](https://github.com/skylot/jadx) are passed through directly, including JADX `-P<key>=<value>` project properties. `decx process open` enables `--show-bad-code` by default, and common passthrough options also include `--deobf`, `--no-res`, `-j`/`--threads-count`, `--no-imports`, `--no-debug-info`, `--escape-unicode`, `--log-level`.
 
@@ -200,6 +203,7 @@ Artifact segments are resolved like this:
 - The CLI package name is resolved from the installed package metadata instead of being hardcoded
 - `-p/--prerelease` currently affects the server JAR update path only
 - The CLI update step assumes the CLI was installed with global `npm`; if you installed it another way, update the package manager command yourself
+- On Windows, CLI versions older than v4.0.1 can fail with `spawnSync npm.cmd EINVAL`. Because the affected updater cannot bootstrap its own fix, run `npm.cmd install -g @jygzyc/decx-cli@latest` once from PowerShell or CMD, reopen the terminal, and verify `decx --version` reports v4.0.1 or newer. Use `where.exe decx` if PATH still selects an older installation
 
 ### code
 

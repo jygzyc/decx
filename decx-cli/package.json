@@ -18,7 +18,7 @@
     }
   },
   "scripts": {
-    "clean": "rm -rf dist",
+    "clean": "node -e \"require('fs').rmSync('dist',{recursive:true,force:true})\"",
     "build": "node scripts/build.mjs",
     "dev": "node --import tsx src/index.ts",
     "typecheck": "tsc --noEmit",

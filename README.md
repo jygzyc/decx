@@ -36,6 +36,16 @@ decx self install
 decx self skills install --client opencode --client codex
 ```
 
+#### Windows `spawnSync npm.cmd EINVAL` during `self update`
+
+CLI versions older than v4.0.1 started `npm.cmd` directly on Windows, which can return `EINVAL` with some Node.js versions. An affected CLI cannot bootstrap this fix through `self update`; update it once from PowerShell or CMD instead:
+
+```powershell
+npm.cmd install -g @jygzyc/decx-cli@latest
+```
+
+Reopen the terminal and run `decx --version` to confirm v4.0.1 or newer before using `decx self update` again. If an older version is still selected, run `where.exe decx` to check for multiple DECX CLI installations on PATH.
+
 Skills are downloaded to `~/.decx/skills` (or `$DECX_HOME/skills`) and linked into the selected client directories:
 
 | Agent | Link target |
@@ -107,6 +117,7 @@ Notes:
 - Session-backed `code` and `android` commands support `--page <n>` and can target a session with `-s, --session <name>` or a port with `--port <port>`.
 - `decx code class-source` supports `--limit <n>` to return at most N source lines.
 - `decx process open <file>` passes standard `jadx-cli` flags through, enables `--show-bad-code` and `--no-imports` by default, and strips `--deobf` because DECX analysis requires original names.
+- `decx process open <file> --script s1.jadx.kts --script s2.jadx.kts` runs [Jadx Kotlin scripts](https://github.com/skylot/jadx/wiki/Jadx-scripts-guide) during decompilation; the server bundles the `jadx-script-kotlin` plugin, so top-level code runs at load and `afterLoad` blocks after classes load. Reuse is keyed on the target file plus the script set.
 - `decx android resources` supports file-name filtering with `--include` and `--no-regex`.
 - `decx android device system-services` and `permission-info` are adb-backed commands. They use `--serial` / `--adb-path`, not `--port <port>`.
 - `decx android framework run` collects from the connected device, processes, packs, and opens the final framework JAR by default; `process [oem]` is for local framework dumps and can resolve OEM from `.artifact.json` or a connected device when omitted.
