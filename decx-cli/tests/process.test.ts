@@ -80,13 +80,14 @@ describe("process command structure", () => {
       expect(open.registeredArguments.length).toBeGreaterThanOrEqual(1);
     });
 
-    it("has --port, --force, --name, and --mcp options", () => {
+    it("has --port, --force, --name, --mcp, and --script options", () => {
       const open = findCommand(processCmd, ["open"])!;
       const flags = getOptionFlags(open);
       expect(flags.some(f => f.includes("--port"))).toBe(true);
       expect(flags.some(f => f.includes("--force"))).toBe(true);
       expect(flags.some(f => f.includes("--name"))).toBe(true);
       expect(flags.some(f => f.includes("--mcp"))).toBe(true);
+      expect(flags.some(f => f.includes("--script"))).toBe(true);
       expect(flags.some(f => f.includes("--heap"))).toBe(false);
     });
   });
@@ -261,6 +262,61 @@ describe("process open session reuse by sha256", () => {
     });
     expect(decision).toEqual({ action: "spawn" });
   });
+
+  it("reuses an alive session with the same file hash and the same script set", () => {
+    const alive = makeSession({ name: "foo", hash: "abc", scripts: ["rename.jadx.kts"] });
+    const decision = decideOpenReuse({
+      fileHash: "abc",
+      fileName: "foo",
+      force: false,
+      aliveSessions: [alive],
+      existingByName: null,
+      scripts: ["rename.jadx.kts"],
+    });
+    expect(decision).toEqual({ action: "reuse", session: alive });
+  });
+
+  it("reuses an alive session without scripts when none are requested", () => {
+    const alive = makeSession({ name: "foo", hash: "abc" });
+    const decision = decideOpenReuse({
+      fileHash: "abc",
+      fileName: "foo",
+      force: false,
+      aliveSessions: [alive],
+      existingByName: null,
+      scripts: [],
+    });
+    expect(decision).toEqual({ action: "reuse", session: alive });
+  });
+
+  it("errors when the file is running with a different script set", () => {
+    const alive = makeSession({ name: "foo", hash: "abc", scripts: ["old.jadx.kts"] });
+    const decision = decideOpenReuse({
+      fileHash: "abc",
+      fileName: "foo",
+      force: false,
+      aliveSessions: [alive],
+      existingByName: alive,
+      scripts: ["new.jadx.kts"],
+    });
+    expect(decision.action).toBe("error");
+    if (decision.action === "error") {
+      expect(decision.message).toContain("different script set");
+    }
+  });
+
+  it("does not reuse a session with the same file hash but a different script set", () => {
+    const alive = makeSession({ name: "foo", hash: "abc", scripts: ["a.jadx.kts"] });
+    const decision = decideOpenReuse({
+      fileHash: "abc",
+      fileName: "foo",
+      force: true,
+      aliveSessions: [alive],
+      existingByName: null,
+      scripts: ["b.jadx.kts"],
+    });
+    expect(decision).toEqual({ action: "spawn" });
+  });
 });
 
 describe("extractPassthroughArgs", () => {
@@ -323,6 +379,21 @@ describe("extractPassthroughArgs", () => {
 
     expect(extractPassthroughArgs()).toEqual(["--deobf"]);
   });
+
+  it("strips --script and its value so scripts are not forwarded to jadx", () => {
+    process.argv = [
+      "node",
+      "decx",
+      "process",
+      "open",
+      "app.apk",
+      "--script",
+      "rename.jadx.kts",
+      "--deobf",
+    ];
+
+    expect(extractPassthroughArgs()).toEqual(["--deobf"]);
+  });
 });
 
 describe("buildDecxServerJavaArgs", () => {
@@ -361,6 +432,32 @@ describe("buildDecxServerJavaArgs", () => {
       "--mcp",
       "--show-bad-code",
     ]);
+  });
+
+  it("appends Jadx Kotlin script files as positional inputs after jadx args", () => {
+    expect(buildDecxServerJavaArgs(
+      "server.jar",
+      "app.apk",
+      25419,
+      ["--show-bad-code"],
+      undefined,
+      ["rename.jadx.kts", "log.jadx.kts"],
+    )).toEqual([
+      `-Xmx${defaultJavaHeap()}`,
+      "-jar",
+      "server.jar",
+      "app.apk",
+      "--port",
+      "25419",
+      "--show-bad-code",
+      "rename.jadx.kts",
+      "log.jadx.kts",
+    ]);
+  });
+
+  it("appends no scripts when none are given", () => {
+    const args = buildDecxServerJavaArgs("server.jar", "app.apk", 25419, [], undefined, []);
+    expect(args).not.toContain(".jadx.kts");
   });
 });
 

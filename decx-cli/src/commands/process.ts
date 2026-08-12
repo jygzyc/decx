@@ -14,6 +14,12 @@ import {
 } from "../core/launcher.js";
 import { logCliEvent } from "../utils/logger.js";
 
+/** Collect repeated --script options into an array. */
+function collectScript(value: string, previous: string[]): string[] {
+  previous.push(value);
+  return previous;
+}
+
 export function makeProcessCommand(): Command {
   const cmd = new Command("process");
   cmd.description("Start, inspect, list, and stop DECX analysis server sessions");
@@ -82,6 +88,7 @@ export function makeProcessCommand(): Command {
     .option("--mcp", "Also start MCP Streamable HTTP server on port + 1")
     .option("--force", "Start a new server even when a matching file/session already exists")
     .option("-n, --name <name>", "Session name used by -s/--session (default: input filename without extension)")
+    .option("--script <file>", "Jadx Kotlin script (.jadx.kts) run during decompilation; may be repeated", collectScript, [])
     .action(async (filePath: string, opts) => {
       const fmt = new Formatter();
       try {
@@ -90,6 +97,7 @@ export function makeProcessCommand(): Command {
         force: opts.force ?? false,
         name: opts.name,
         mcp: opts.mcp ?? false,
+        scripts: opts.script ?? [],
         passthroughArgs: extractPassthroughArgs(),
       }));
       } catch (err) { handleCliError(err, fmt); }

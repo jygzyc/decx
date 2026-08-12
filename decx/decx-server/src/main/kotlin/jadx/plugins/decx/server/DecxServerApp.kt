@@ -2,6 +2,7 @@ package jadx.plugins.decx.server
 
 import jadx.api.JadxDecompiler
 import jadx.cli.JadxCLIArgs
+import jadx.cli.LogHelper
 import jadx.plugins.decx.Decx
 import jadx.plugins.decx.DecxConstants
 import jadx.plugins.decx.utils.PluginUtils
@@ -10,12 +11,15 @@ import jadx.plugins.decx.utils.PluginUtils
  * DECX Server — Java Intelligence Analysis Platform.
  *
  * Usage:
- *   java -jar decx-server.jar <file> [options]
+ *   java -jar decx-server.jar <file> [<file.jadx.kts> ...] [options]
  *
  * DECX Options:
  *   -p, --port <port>           HTTP server port (default: 25419)
  *   --mcp                       Also start MCP Streamable HTTP server on port + 1
  *   --no-mcp                    Disable MCP server (default)
+ *
+ * Jadx Kotlin scripts (.jadx.kts) can be passed as additional input files; they are
+ * evaluated during decompilation (top-level code at load, `afterLoad` after load).
  *
  * All standard jadx-cli options are also supported.
  * Run with --help for details.
@@ -39,6 +43,13 @@ object DecxServerApp {
 		val jadxArgs = try {
 			val cliArgs = JadxCLIArgs()
 			if (!cliArgs.processArgs(jadxRawArgs)) return
+			// jadx-cli defaults to PROGRESS log mode, which sets the root logger to OFF
+			// (only a few classes get INFO). For a headless server that writes session
+			// logs, default to INFO so jadx/script log output is visible; users can still
+			// override with --log-level, -q or -v.
+			if (!jadxRawArgs.any { it == "--log-level" || it.startsWith("--log-level=") || it == "-q" || it == "-v" }) {
+				LogHelper.setLogLevel(LogHelper.LogLevelEnum.INFO)
+			}
 			cliArgs.toJadxArgs()
 		} catch (e: Exception) {
 			System.err.println("Error: ${e.message}")
@@ -60,11 +71,23 @@ object DecxServerApp {
 			System.exit(1)
 			return
 		}
+		val scriptFiles = inputFiles.filter { it.name.endsWith(".jadx.kts") }
+		for (scriptFile in scriptFiles) {
+			if (!scriptFile.exists()) {
+				System.err.println("Error: Script file not found: ${scriptFile.absolutePath}")
+				System.exit(1)
+				return
+			}
+		}
 
 		println("DECX Server")
 		println("==========")
 		println("File:   ${inputFile.absolutePath}")
 		println("Port:   $port")
+		if (scriptFiles.isNotEmpty()) {
+			println("Scripts:")
+			scriptFiles.forEach { println("  - ${it.absolutePath}") }
+		}
 		println()
 
 		println("[*] Initializing decompiler...")
@@ -169,10 +192,11 @@ object DecxServerApp {
 DECX Server — Java Intelligence Analysis Platform
 
 Usage:
-  java -jar decx-server.jar <file> [options]
+  java -jar decx-server.jar <file> [<file.jadx.kts> ...] [options]
 
 Arguments:
   <file>                   Path to APK, DEX, JAR, AAR, or class file
+  <file.jadx.kts>          Optional Jadx Kotlin script(s) run during decompilation
 
 DECX Options:
   -p, --port <port>           HTTP server port (default: ${DecxConstants.DEFAULT_PORT})
@@ -199,6 +223,7 @@ Examples:
   java -jar decx-server.jar app.apk --mcp
   java -jar decx-server.jar library.jar -j 8 --no-res --show-bad-code
   java -jar decx-server.jar app.apk --deobf --no-imports
+  java -jar decx-server.jar app.apk rename.jadx.kts --port 9000
 
 MCP:
   Enable with --mcp. MCP listens on HTTP port + 1, e.g. --port 9000 exposes http://127.0.0.1:9001/mcp

@@ -7,6 +7,7 @@ export interface Session {
   port: number;
   path: string;
   startedAt: number;
+  scripts?: string[];
   oem?: string;
   vendor?: string;
   rootDir?: string;

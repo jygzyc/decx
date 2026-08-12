@@ -1,4 +1,12 @@
 <configuration>
+    <!-- Console appender must be declared at top level and referenced from <root>;
+         logback 1.6+ drops appenders nested inside <root>. -->
+    <appender name="STDOUT" class="ch.qos.logback.core.ConsoleAppender">
+        <encoder>
+            <pattern>%level : %logger{0} - %msg%n</pattern>
+        </encoder>
+    </appender>
+
     <!-- DECX logs -->
     <logger name="jadx.plugins.decx" level="INFO"/>
 
@@ -8,10 +16,6 @@
     <logger name="kotlinx" level="WARN"/>
 
     <root level="INFO">
-        <appender name="STDOUT" class="ch.qos.logback.core.ConsoleAppender">
-            <encoder>
-                <pattern>%level : %logger{0} - %msg%n</pattern>
-            </encoder>
-        </appender>
+        <appender-ref ref="STDOUT"/>
     </root>
 </configuration>

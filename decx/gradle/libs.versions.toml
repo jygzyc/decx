@@ -10,6 +10,10 @@ kotlinxSerialization = "1.11.0"
 jackson = "2.22.1"
 slf4j = "2.0.18"
 logback = "1.6.1"
+jadxScriptKotlin = "1.1.2"
+kotlinScripting = "2.3.20"
+ktlint = "1.8.0"
+kotlinLogging = "7.0.13"
 assertj = "3.27.7"
 junit = "5.12.1"
 
@@ -25,6 +29,15 @@ jadx-gui = { group = "io.github.skylot", name = "jadx-gui", version.ref = "jadx"
 jadx-cli = { group = "io.github.skylot", name = "jadx-cli", version.ref = "jadx" }
 jadx-smali-input = { group = "io.github.skylot", name = "jadx-smali-input", version.ref = "jadx" }
 kotlin-reflect = { group = "org.jetbrains.kotlin", name = "kotlin-reflect", version.ref = "kotlin" }
+kotlin-scripting-jvm-host = { group = "org.jetbrains.kotlin", name = "kotlin-scripting-jvm-host", version.ref = "kotlinScripting" }
+kotlin-scripting-ide-services = { group = "org.jetbrains.kotlin", name = "kotlin-scripting-ide-services", version.ref = "kotlinScripting" }
+kotlin-scripting-compiler-embeddable = { group = "org.jetbrains.kotlin", name = "kotlin-scripting-compiler-embeddable", version.ref = "kotlinScripting" }
+kotlin-scripting-dependencies = { group = "org.jetbrains.kotlin", name = "kotlin-scripting-dependencies", version.ref = "kotlinScripting" }
+kotlin-scripting-dependencies-maven = { group = "org.jetbrains.kotlin", name = "kotlin-scripting-dependencies-maven", version.ref = "kotlinScripting" }
+kotlin-compiler-embeddable = { group = "org.jetbrains.kotlin", name = "kotlin-compiler-embeddable", version.ref = "kotlinScripting" }
+ktlint-rule-engine = { group = "com.pinterest.ktlint", name = "ktlint-rule-engine", version.ref = "ktlint" }
+ktlint-ruleset-standard = { group = "com.pinterest.ktlint", name = "ktlint-ruleset-standard", version.ref = "ktlint" }
+kotlin-logging-jvm = { group = "io.github.oshai", name = "kotlin-logging-jvm", version.ref = "kotlinLogging" }
 kotlinx-coroutines-bom = { group = "org.jetbrains.kotlinx", name = "kotlinx-coroutines-bom", version.ref = "kotlinxCoroutines" }
 kotlinx-serialization-bom = { group = "org.jetbrains.kotlinx", name = "kotlinx-serialization-bom", version.ref = "kotlinxSerialization" }
 gson = { group = "com.google.code.gson", name = "gson", version.ref = "gson" }

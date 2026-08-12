@@ -63,8 +63,8 @@ export class Manager {
 
   // --- Session delegates ---
 
-  async createSession(name: string, hash: string, apkPath: string, pid: number, port: number) {
-    return session.createSession(name, hash, apkPath, pid, port);
+  async createSession(name: string, hash: string, apkPath: string, pid: number, port: number, scripts?: string[]) {
+    return session.createSession(name, hash, apkPath, pid, port, scripts);
   }
 
   getSession(name: string) { return session.readSession(name); }

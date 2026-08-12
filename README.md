@@ -117,6 +117,7 @@ Notes:
 - Session-backed `code` and `android` commands support `--page <n>` and can target a session with `-s, --session <name>` or a port with `--port <port>`.
 - `decx code class-source` supports `--limit <n>` to return at most N source lines.
 - `decx process open <file>` passes standard `jadx-cli` flags through, enables `--show-bad-code` and `--no-imports` by default, and strips `--deobf` because DECX analysis requires original names.
+- `decx process open <file> --script s1.jadx.kts --script s2.jadx.kts` runs [Jadx Kotlin scripts](https://github.com/skylot/jadx/wiki/Jadx-scripts-guide) during decompilation; the server bundles the `jadx-script-kotlin` plugin, so top-level code runs at load and `afterLoad` blocks after classes load. Reuse is keyed on the target file plus the script set.
 - `decx android resources` supports file-name filtering with `--include` and `--no-regex`.
 - `decx android device system-services` and `permission-info` are adb-backed commands. They use `--serial` / `--adb-path`, not `--port <port>`.
 - `decx android framework run` collects from the connected device, processes, packs, and opens the final framework JAR by default; `process [oem]` is for local framework dumps and can resolve OEM from `.artifact.json` or a connected device when omitted.

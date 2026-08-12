@@ -22,6 +22,7 @@ export interface OpenAnalysisTargetOptions {
   force?: boolean;
   name?: string;
   mcp?: boolean;
+  scripts?: string[];
   passthroughArgs?: string[];
 }
 
@@ -35,6 +36,7 @@ export function buildDecxServerJavaArgs(
   port: number,
   jadxArgs: string[],
   mcp?: boolean,
+  scripts: string[] = [],
 ): string[] {
   const args = [
     `-Xmx${defaultJavaHeap()}`,
@@ -46,6 +48,9 @@ export function buildDecxServerJavaArgs(
   ];
   if (mcp) args.push("--mcp");
   args.push(...jadxArgs);
+  // Jadx Kotlin scripts are positional input files handled by the bundled
+  // jadx-script-kotlin plugin (evaluated during decompilation).
+  args.push(...scripts);
   return args;
 }
 
@@ -55,6 +60,7 @@ export interface OpenReuseInput {
   force: boolean;
   aliveSessions: Session[];
   existingByName: Session | null;
+  scripts?: string[];
 }
 
 export type OpenReuseDecision =
@@ -62,20 +68,38 @@ export type OpenReuseDecision =
   | { action: "error"; message: string }
   | { action: "spawn"; removeStaleName?: string };
 
+function sameScripts(a: string[] | undefined, b: string[]): boolean {
+  const aa = a ?? [];
+  return aa.length === b.length && aa.every((s, i) => s === b[i]);
+}
+
 /**
  * Decide what `process open` should do with a file whose sha256 is `fileHash`:
  * reuse an already-loaded session, refuse on a name collision with a different
- * file, or spawn a fresh server (optionally clearing a stale same-name record).
- * Pure — no I/O — so it can be unit-tested.
+ * file or script set, or spawn a fresh server (optionally clearing a stale
+ * same-name record). Pure — no I/O — so it can be unit-tested.
  */
 export function decideOpenReuse(input: OpenReuseInput): OpenReuseDecision {
-  const { fileHash, fileName, force, aliveSessions, existingByName } = input;
+  const { fileHash, fileName, force, aliveSessions, existingByName, scripts = [] } = input;
 
   if (!force) {
-    // Reuse any alive session that already holds this exact file (by sha256),
-    // regardless of the session name.
-    const reuse = aliveSessions.find((s) => s.hash === fileHash);
+    // Reuse any alive session that already holds this exact file (by sha256) and
+    // was started with the same script set (scripts run at decompile time, so a
+    // different set requires a fresh server).
+    const reuse = aliveSessions.find((s) => s.hash === fileHash && sameScripts(s.scripts, scripts));
     if (reuse) return { action: "reuse", session: reuse };
+
+    // A live session holds this file but with a different script set: refuse to
+    // silently reuse the wrong server; the user must opt into a restart.
+    const liveWithDifferentScripts = aliveSessions.find((s) => s.hash === fileHash && !sameScripts(s.scripts, scripts));
+    if (liveWithDifferentScripts) {
+      return {
+        action: "error",
+        message:
+          `Session '${fileName}' is already running for this APK with a different script set. ` +
+          `Use --force to restart with the new scripts.`,
+      };
+    }
 
     // A record under the requested name already exists for a *different* file:
     // refuse to shadow it so the name keeps pointing at one APK.
@@ -178,6 +202,16 @@ export async function openAnalysisTarget(
     throw new FileError(`File not found: ${resolvedFile}`, resolvedFile);
   }
 
+  // Validate Jadx Kotlin scripts before spawning; they run during decompilation.
+  const scripts: string[] = [];
+  for (const script of opts.scripts ?? []) {
+    const resolvedScript = await resolveFileInput(script);
+    if (!existsSync(resolvedScript)) {
+      throw new FileError(`Script file not found: ${resolvedScript}`, resolvedScript);
+    }
+    scripts.push(resolvedScript);
+  }
+
   const fileName = opts.name || path.basename(resolvedFile, path.extname(resolvedFile));
   const fileHash = await hashFile(resolvedFile);
 
@@ -187,6 +221,7 @@ export async function openAnalysisTarget(
     force: opts.force ?? false,
     aliveSessions: mgr.listAliveSessions(),
     existingByName: mgr.getSession(fileName),
+    scripts,
   });
 
   if (decision.action === "reuse") {
@@ -208,6 +243,7 @@ export async function openAnalysisTarget(
     port,
     normalizeJadxPassthroughArgs(opts.passthroughArgs ?? []),
     opts.mcp,
+    scripts,
   );
   const logDir = decxPath("logs");
   mkdirSync(logDir, { recursive: true });
@@ -234,12 +270,12 @@ export async function openAnalysisTarget(
     processExitCode = code;
   });
 
-  const session = await mgr.createSession(fileName, fileHash, resolvedFile, proc.pid, port);
+  const session = await mgr.createSession(fileName, fileHash, resolvedFile, proc.pid, port, scripts);
   const timeout = 300; // seconds
   const ready = await waitForServer(port, timeout, logPath, () => processExited);
   if (ready) {
     logCliEvent({ command: "process", action: "open", session: session.name, pid: proc.pid, port, file: resolvedFile, mcp: opts.mcp ?? false });
-    return { name: session.name, hash: session.hash, pid: proc.pid, port, file: resolvedFile, log: logPath, mcp: opts.mcp ?? false, mcpPort: opts.mcp ? port + 1 : undefined, reused: false };
+    return { name: session.name, hash: session.hash, pid: proc.pid, port, file: resolvedFile, log: logPath, mcp: opts.mcp ?? false, mcpPort: opts.mcp ? port + 1 : undefined, scripts, reused: false };
   }
 
   mgr.removeSession(fileName);
@@ -377,7 +413,7 @@ export function extractPassthroughArgs(argv: readonly string[] = process.argv): 
   if (openIdx === -1) return [];
 
   const raw = cmdArgs.slice(openIdx + 1);
-  const decxFlagsWithValue = ["--port", "-n", "--name"];
+  const decxFlagsWithValue = ["--port", "-n", "--name", "--script"];
   const decxFlags = ["--force", "--mcp", "--no-mcp"];
 
   const result: string[] = [];
