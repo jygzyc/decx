@@ -140,18 +140,20 @@ export function resolveNpmUpdateCommand(
   };
 }
 
-type ServerVersionManager = Pick<Manager, "updateServerVersion">;
+type ServerVersionManager = Pick<Manager, "updateServerVersion" | "serverJar">;
 
 export async function executeSelfInstall(
   prerelease: boolean,
   deps: {
-    installDecxServerFn?: (prerelease?: boolean) => Promise<InstallDecxServerResult>;
+    installDecxServerFn?: (prerelease?: boolean, options?: { currentVersion?: string }) => Promise<InstallDecxServerResult>;
     manager?: ServerVersionManager;
   } = {}
 ): Promise<{ ok: true; version: string; path: string; message: string }> {
   const installDecxServerFn = deps.installDecxServerFn ?? installDecxServer;
   const manager = deps.manager ?? Manager.get();
-  const result = await installDecxServerFn(prerelease);
+  const result = await installDecxServerFn(prerelease, {
+    currentVersion: manager.serverJar.version,
+  });
 
   if (!result.ok) {
     throw new ServerError(result.message);
@@ -210,9 +212,12 @@ export function makeSelfCommand(): Command {
       console.error(`  Updating decx-server (current: v${currentVersion})...`);
 
       const updateInfo = await checkForServerUpdate(currentVersion, opts.prerelease);
-      if (updateInfo.available) {
+      if (updateInfo.error) {
+        console.error(`  Server update check failed: ${updateInfo.error}`);
+        console.error("  (unauthenticated GitHub API rate limit or network issue; retry later)");
+      } else if (updateInfo.available) {
         console.error(`  New version available: v${updateInfo.latestVersion}`);
-        const result = await installDecxServer(opts.prerelease);
+        const result = await installDecxServer(opts.prerelease, { currentVersion });
         if (result.ok) {
           mgr.updateServerVersion(result.version);
           console.error(`  ${result.message}`);

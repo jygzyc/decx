@@ -1,19 +1,10 @@
-# DECX v4.1.0
+# DECX v4.1.1
 
-DECX v4.1.0 adds Jadx Kotlin script support, makes the Android framework pipeline usable on Windows via WSL, and streamlines the CLI and its release workflow.
+DECX v4.1.1 fixes `decx self install` / `self update` for users hitting GitHub API rate limits and hardens the update path.
 
-### Features
+### Fixes
 
-- `decx process open <file> --script <file.jadx.kts> [--script <file2.jadx.kts> ...]` runs Jadx Kotlin scripts during decompilation. Scripts are passed to `decx-server` as positional inputs and evaluated by the bundled `jadx-script-kotlin` plugin (top-level code at load, `jadx.afterLoad { }` blocks after classes load). Session reuse is keyed on the target file plus the exact script set.
-- `decx android framework` now works on Windows: `debugfs` and the erofs extractor are delegated to WSL (`wsl.exe`) with `/mnt/<drive>/...` path translation, falling back to the packaged `linux/x86_64/extract.erofs`. Without WSL, the command fails with an explicit "Windows requires WSL" error.
-- Zip/jar operations no longer need `zip`/`unzip` on Windows: they use the built-in bsdtar (`C:\Windows\System32\tar.exe`).
-
-### Changes
-
-- Framework collection directories: only `oppo` and `xiaomi` keep OEM-specific directory lists; every other OEM uses the default collection set.
-- Build: `decx-core`'s `generateVersionProperties` now declares the version as a task input, so version bumps always refresh the embedded `version.properties` (previously stale after a version change).
-- CLI internals: removed dead code, consolidated duplicated option parsing, logging, and zip helpers, and moved server port selection into `core/ports.ts`.
-
-### Release process
-
-- GitHub Actions publishes only on `v*` tags: npm (`release-cli.yml`) and GitHub Releases (`release-decx.yml`) both verify the tag matches the `version` file before publishing. Main-branch pushes no longer publish or generate prereleases; tags with a prerelease suffix (e.g. `v4.2.0-rc.1`) publish as GitHub prereleases.
+- `decx self install` / `self update` no longer use the GitHub REST API, which is rate-limited to 60 requests/hour for unauthenticated clients. The latest stable version now comes from the npm registry (`@jygzyc/decx-cli` is published from the same tag as `decx-server.jar`), prereleases come from the GitHub releases atom feed, and the jar is downloaded from a deterministic `/releases/download/vX.Y.Z/decx-server-X.Y.Z.jar` URL. No GitHub token or `gh` CLI is required.
+- Update checks no longer silently report "Server already up to date" when the check itself failed: HTTP errors, rate limits, and network failures now produce an explicit error.
+- Fixed a Windows crash (`Assertion failed: !(handle->flags & UV_HANDLE_CLOSING)`) caused by `process.exit` racing undici teardown: the CLI now sets `process.exitCode` and lets the event loop drain naturally.
+- Replacing `decx-server.jar` while a session is running (the file is locked on Windows) now reports a clear error telling the user to close sessions, cleans up the partial download, and restores the previous jar.

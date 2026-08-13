@@ -73,6 +73,7 @@ Keep notes and outputs for work that may continue later in the working directory
 | command missing, rejected, or uncertain | run nearest `--help` before retrying |
 | target/name conflict on `process open` | use a new `--name` or `--force` |
 | unsupported framework OEM | supported values are `vivo`, `oppo`, `xiaomi`, `honor`, `google`, `samsung` |
+| `decx android framework` on Windows fails with "Windows requires WSL" | run inside WSL (install WSL and `debugfs`, e.g. `sudo apt install e2fsprogs`), or run on Linux/macOS |
 | need exact command syntax | read `references/command-reference.md` |
 
 ## Gotchas
@@ -82,6 +83,7 @@ Concrete failure modes from real sessions. These are not generic CLI tips; they 
 - **`--port` on adb-backed commands**: `decx android device system-services` and `decx android device permission-info` talk to adb, not the DECX HTTP server. `--port` written before the `device` subcommand is silently ignored (no error, no effect); written after it, the command fails with an unknown option error. Either way, never pass `--port`.
 - **`decx code search-global` without `--limit`**: without `--limit` the server returns all matches, potentially hundreds, which burns context and frequently hides the actual hit. Always set `--limit` to a small working set (start at 20-50) and refine.
 - **`process open` reuse is file-first**: when an alive session has the same file hash, DECX must reuse it even if a different `--name` was requested. A name collision matters only when no alive session matches the file; then use a fresh `--name`, pass `--force`, or close the conflicting session.
+- **`process open --script` is part of the reuse key**: scripts run at decompile time, so the same file with a different `--script` set than the alive session errors until `--force`. Reopening with the same scripts reuses the session.
 - **`decx android deep-links` / `dynamic-receivers` on a non-app target**: `decx android deep-links` returns a MANIFEST_NOT_FOUND error on targets without a manifest; `dynamic-receivers` is a code search and may return plausible-looking matches with no app semantics on a framework jar. For framework targets, use `decx android aidl-interfaces` and `decx android framework-service-implementation`.
 
 ## References

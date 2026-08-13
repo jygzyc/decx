@@ -1,5 +1,13 @@
 /**
  * decx-server.jar finder and installer.
+ *
+ * Release discovery deliberately avoids the GitHub REST API, which is
+ * rate-limited to 60 requests/hour per IP for unauthenticated clients:
+ * - the latest stable version comes from the npm registry (`@jygzyc/decx-cli`
+ *   is published from the same tag as the server jar)
+ * - prerelease versions come from the GitHub releases atom feed
+ * - jar assets are downloaded from deterministic /releases/download URLs
+ * None of these require the GitHub API, a token, or an installed `gh` CLI.
  */
 
 import * as path from "path";
@@ -9,6 +17,11 @@ import { decxPath } from "./paths.js";
 
 const DECX_SERVER_HOME: string | undefined = process.env.DECX_SERVER_HOME;
 const DEFAULT_FETCH = fetch;
+
+const NPM_PACKAGE = "@jygzyc/decx-cli";
+const NPM_LATEST_URL = `https://registry.npmjs.org/${NPM_PACKAGE}/latest`;
+const GITHUB_REPO = "jygzyc/decx";
+const RELEASES_ATOM_URL = `https://github.com/${GITHUB_REPO}/releases.atom`;
 
 /**
  * Compare two semver strings (e.g. "2.2.1" vs "2.3.0").
@@ -27,8 +40,6 @@ function compareSemver(a: string, b: string): number {
 
 const INSTALL_DIR = decxPath("bin");
 const INSTALL_PATH = path.join(INSTALL_DIR, "decx-server.jar");
-
-const GITHUB_RELEASES_API = "https://api.github.com/repos/jygzyc/decx/releases";
 
 export interface ReleaseAsset {
   name: string;
@@ -50,38 +61,85 @@ interface InstallDecxServerOptions {
   installDir?: string;
   installPath?: string;
   logger?: Pick<Console, "error">;
-}
-
-function releasesEndpoint(prerelease: boolean): string {
-  return prerelease
-    ? `${GITHUB_RELEASES_API}?per_page=10`
-    : `${GITHUB_RELEASES_API}/latest`;
+  /** Installed server version; when it matches the latest release, skip the download. */
+  currentVersion?: string;
 }
 
 type ReleaseFetchResult =
   | { ok: true; release: ReleaseSummary }
   | { ok: false; message: string };
 
-/** Fetch the latest stable release, or the newest prerelease. */
+function assetUrl(version: string): string {
+  return `https://github.com/${GITHUB_REPO}/releases/download/v${version}/decx-server-${version}.jar`;
+}
+
+/** Build a release summary from a version using deterministic asset naming. */
+function summaryForVersion(version: string): ReleaseSummary {
+  return {
+    tag_name: `v${version}`,
+    assets: [{ name: `decx-server-${version}.jar`, browser_download_url: assetUrl(version) }],
+  };
+}
+
+/** Matches version tags with a prerelease suffix, e.g. v4.2.0-rc.1. */
+const PRERELEASE_VERSION_RE = /^v?\d+\.\d+\.\d+-/;
+
+/**
+ * Discover the latest stable release (npm registry) or newest prerelease
+ * (GitHub releases atom feed). Both sources are unauthenticated and not
+ * subject to GitHub API rate limits.
+ */
 async function fetchReleaseSummary(
   prerelease: boolean,
   fetchImpl: typeof fetch = DEFAULT_FETCH,
-  timeoutMs?: number,
+  timeoutMs: number = 15_000,
 ): Promise<ReleaseFetchResult> {
-  const res = await fetchImpl(releasesEndpoint(prerelease), {
-    headers: { "Accept": "application/vnd.github+json" },
-    ...(timeoutMs !== undefined ? { signal: AbortSignal.timeout(timeoutMs) } : {}),
-  });
-  if (!res.ok) {
-    return { ok: false, message: `GitHub API error: HTTP ${res.status}` };
-  }
+  const signal = AbortSignal.timeout(timeoutMs);
+
   if (prerelease) {
-    const releases = await res.json() as Array<ReleaseSummary & { prerelease: boolean }>;
-    const pre = releases.find((r) => r.prerelease);
-    if (!pre) return { ok: false, message: "No prerelease found" };
-    return { ok: true, release: pre };
+    try {
+      const res = await fetchImpl(RELEASES_ATOM_URL, {
+        headers: { Accept: "application/atom+xml" },
+        signal,
+      });
+      if (res.ok) {
+        const text = await res.text();
+        const titles = [...text.matchAll(/<title>([^<]+)<\/title>/g)].map((m) => m[1].trim());
+        const pre = titles.find((title) => PRERELEASE_VERSION_RE.test(title));
+        if (pre) {
+          return { ok: true, release: summaryForVersion(pre.replace(/^v/, "")) };
+        }
+      }
+      return { ok: false, message: "No prerelease found" };
+    } catch (err) {
+      return {
+        ok: false,
+        message: `Failed to reach GitHub releases feed: ${err instanceof Error ? err.message : String(err)}`,
+      };
+    }
   }
-  return { ok: true, release: await res.json() as ReleaseSummary };
+
+  try {
+    const res = await fetchImpl(NPM_LATEST_URL, {
+      headers: { Accept: "application/json" },
+      signal,
+    });
+    if (res.ok) {
+      const data = await res.json() as { version?: string };
+      if (typeof data.version === "string" && data.version.length > 0) {
+        return { ok: true, release: summaryForVersion(data.version) };
+      }
+    }
+    return {
+      ok: false,
+      message: `Failed to fetch latest version from the npm registry (HTTP ${res.status})`,
+    };
+  } catch (err) {
+    return {
+      ok: false,
+      message: `Failed to reach npm registry: ${err instanceof Error ? err.message : String(err)}`,
+    };
+  }
 }
 
 /**
@@ -112,21 +170,25 @@ function replaceInstalledJar(tmpPath: string, installPath: string): void {
   const backupPath = `${installPath}.bak`;
   const hadExisting = existsSync(installPath);
 
-  if (hadExisting) {
-    renameSync(installPath, backupPath);
-  }
-
   try {
+    if (hadExisting) {
+      renameSync(installPath, backupPath);
+    }
     renameSync(tmpPath, installPath);
     if (hadExisting && existsSync(backupPath)) {
       unlinkSync(backupPath);
     }
   } catch (error) {
+    // Best-effort cleanup: drop the partial download and restore the old jar.
     if (existsSync(tmpPath)) {
-      unlinkSync(tmpPath);
+      try {
+        unlinkSync(tmpPath);
+      } catch { /* ignore */ }
     }
-    if (hadExisting && existsSync(backupPath)) {
-      renameSync(backupPath, installPath);
+    if (hadExisting && !existsSync(installPath) && existsSync(backupPath)) {
+      try {
+        renameSync(backupPath, installPath);
+      } catch { /* ignore */ }
     }
     throw error;
   }
@@ -134,13 +196,18 @@ function replaceInstalledJar(tmpPath: string, installPath: string): void {
 
 /**
  * Check if a newer server version is available.
+ * `error` is set when the check itself failed (network/API error) — callers
+ * must not treat that as "no update available".
  */
 export async function checkForServerUpdate(
   currentVersion: string,
-  prerelease: boolean = false
-): Promise<{ available: boolean; latestVersion: string }> {
-  const fetched = await fetchReleaseSummary(prerelease, DEFAULT_FETCH, 5_000);
-  if (!fetched.ok) return { available: false, latestVersion: currentVersion };
+  prerelease: boolean = false,
+  options: { fetchImpl?: typeof fetch } = {},
+): Promise<{ available: boolean; latestVersion: string; error?: string }> {
+  const fetched = await fetchReleaseSummary(prerelease, options.fetchImpl ?? DEFAULT_FETCH);
+  if (!fetched.ok) {
+    return { available: false, latestVersion: currentVersion, error: fetched.message };
+  }
 
   const latest = normalizeVersion(fetched.release.tag_name);
   const available = compareSemver(latest, currentVersion.replace(/^v/, "")) > 0;
@@ -149,7 +216,6 @@ export async function checkForServerUpdate(
 
 /**
  * Download and install the latest decx-server.jar from GitHub releases.
- * Returns [success, message, version?].
  */
 export async function installDecxServer(
   prerelease: boolean = false,
@@ -161,16 +227,33 @@ export async function installDecxServer(
     installDir = INSTALL_DIR,
     installPath = INSTALL_PATH,
     logger = console,
+    currentVersion,
   } = options;
 
   try {
-    logger.error(`  Fetching latest ${prerelease ? "prerelease" : "release"} info from GitHub...`);
+    logger.error(`  Fetching latest ${prerelease ? "prerelease" : "release"} info...`);
 
     const fetched = await fetchReleaseSummary(prerelease, fetchImpl);
     if (!fetched.ok) {
       return { ok: false, message: fetched.message };
     }
     const release = fetched.release;
+
+    const version = normalizeVersion(release.tag_name);
+
+    // Local and remote versions match: nothing to download.
+    if (
+      currentVersion !== undefined &&
+      currentVersion === version &&
+      existsSync(installPath)
+    ) {
+      return {
+        ok: true,
+        message: `decx-server is already up to date (v${version})`,
+        version,
+        path: installPath,
+      };
+    }
 
     const asset = selectDecxServerAsset(release.assets);
 
@@ -182,7 +265,10 @@ export async function installDecxServer(
 
     const downloadRes = await fetchImpl(asset.browser_download_url, { redirect: "follow" });
     if (!downloadRes.ok || !downloadRes.body) {
-      return { ok: false, message: `Download failed: HTTP ${downloadRes.status}` };
+      return {
+        ok: false,
+        message: `Download failed: HTTP ${downloadRes.status} (the release may still be publishing; retry shortly)`,
+      };
     }
 
     const tmpPath = `${installPath}.tmp`;
@@ -193,11 +279,19 @@ export async function installDecxServer(
 
     try {
       replaceInstalledJar(tmpPath, installPath);
-    } catch {
-      return { ok: false, message: "Failed to save downloaded file" };
+    } catch (err) {
+      const code = (err as NodeJS.ErrnoException)?.code;
+      if (code === "EPERM" || code === "EACCES" || code === "EBUSY") {
+        return {
+          ok: false,
+          message:
+            `Cannot replace ${installPath}: the file is in use by a running session. ` +
+            `Close sessions with 'decx process close --all' and retry.`,
+        };
+      }
+      return { ok: false, message: `Failed to save downloaded file: ${err instanceof Error ? err.message : String(err)}` };
     }
 
-    const version = normalizeVersion(release.tag_name);
     return {
       ok: true,
       message: `Installed decx-server ${release.tag_name} to ${installPath}`,

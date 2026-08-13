@@ -131,7 +131,7 @@ describe("self command metadata", () => {
         path: jarPath,
         message: `Installed decx-server v0.0.0 to ${jarPath}`,
       }),
-      manager: { updateServerVersion },
+      manager: { updateServerVersion, serverJar: { version: "0.0.0" } },
     });
 
     expect(updateServerVersion).toHaveBeenCalledWith("0.0.0");

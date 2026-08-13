@@ -56,8 +56,11 @@ export class FileError extends DecxError {
 
 /**
  * Error handler for CLI commands.
+ * Sets a non-zero exit code and lets the event loop drain naturally instead
+ * of calling process.exit — a hard exit races undici/libuv teardown on
+ * Windows and can crash Node with a libuv async assertion.
  */
-export function handleCliError(error: unknown, formatter: Formatter): never {
+export function handleCliError(error: unknown, formatter: Formatter): void {
   if (error instanceof DecxError) {
     error.format(formatter);
     logError({ code: error.code, message: error.message, name: error.name });
@@ -71,7 +74,7 @@ export function handleCliError(error: unknown, formatter: Formatter): never {
     formatter.error(String(error));
     logError({ message: String(error) });
   }
-  process.exit(1);
+  process.exitCode = 1;
 }
 
 /**
@@ -85,6 +88,7 @@ export function withErrorHandler<T extends unknown[], R>(
       return await fn(...args);
     } catch (error) {
       handleCliError(error, new Formatter());
+      return;
     }
   };
 }
