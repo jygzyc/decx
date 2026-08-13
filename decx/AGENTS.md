@@ -10,11 +10,30 @@ Broader repository context (CLI, skills, agent) is in the root `AGENTS.md`.
 decx-core (shared library, compile-only JADX dependency)
   → decx-plugin (JADX GUI plugin, Shadow JAR)
   → decx-server (standalone headless server, Shadow JAR with full JADX runtime)
+  → decx-taint (server-side taint extension, DecxExtension SPI impl)
+      → decx-taint-protocol (wire protocol shared with the Tai-e worker)
+      → decx-taint-worker (Tai-e worker fat jar, standalone process)
+decx-taint-poc (disposable Tai-e PoC, not shipped)
 ```
 
-- `decx-core/`: API contract (`api/`), HTTP & MCP server transport (`server/`), service layer (`service/`), utilities (`utils/`), public facade (`Decx.kt`)
+- `decx-core/`: API contract (`api/`), HTTP & MCP server transport (`server/`), service layer (`service/`), utilities (`utils/`), public facade (`Decx.kt`), extension SPI (`extension/`)
 - `decx-plugin/`: Plugin lifecycle management, Swing UI, MCP controls
 - `decx-server/`: `DecxServerApp` main class, fat JAR bundling
+- `decx-taint/`: Taint extension implementation (`taint/` package moved out of decx-core); only on the classpath of decx-server / decx-plugin
+
+## Extension SPI (taint is a plugin)
+
+`decx-core` has **no taint code**. Optional analysis capabilities mount through
+`extension/DecxExtension.kt`, discovered via `ServiceLoader`
+(`META-INF/services/jadx.plugins.decx.extension.DecxExtension`):
+
+- `decx-taint` implements the SPI and ships the service registration file;
+  `decx-server` and `decx-plugin` bundle it as a dependency, so taint routes
+  (`/api/decx/taint/*`) and MCP tools exist only when the module is loaded.
+- `DecxExtensions.isAvailable()` gates registration: without the Tai-e worker
+  environment the extension is silent and contributes no routes/tools.
+- To add a new capability, create a module implementing `DecxExtension`;
+  never add capability code back into `decx-core`.
 
 ## Architecture Layers
 

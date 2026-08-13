@@ -5,6 +5,7 @@ plugins {
 
 dependencies {
     implementation(project(":decx-core"))
+    implementation(project(":decx-taint"))
     compileOnly(libs.jadx.core) {
         isChanging = false
     }

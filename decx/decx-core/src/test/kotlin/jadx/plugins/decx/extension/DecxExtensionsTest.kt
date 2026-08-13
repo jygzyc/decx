@@ -6,24 +6,26 @@ import org.junit.jupiter.api.Test
 
 /**
  * Verifies the DecxExtension SPI end-to-end at the registry level:
- *  - the taint extension is discovered via ServiceLoader
+ *  - a test extension is discovered via ServiceLoader
  *  - its route is registered and resolvable
  *  - it does not collide with built-in jadx routes
  *  - the route handler can resolve both built-in and extension paths
+ *
+ * The real taint extension lives in the decx-taint module and is covered by
+ * its own discovery test there; decx-core itself has no taint code.
  */
 class DecxExtensionsTest {
 
     @Test
-    fun `taint extension is discovered via ServiceLoader`() {
+    fun `test extension is discovered via ServiceLoader`() {
         val ids = DecxExtensions.all.map { it.id }
-        assertThat(ids).contains("taint")
+        assertThat(ids).contains("test-ext")
     }
 
     @Test
-    fun `taint extension availability is environment-dependent but stable`() {
-        val taint = DecxExtensions.all.first { it.id == "taint" }
-        // Must not throw; result reflects whether the worker env is installed.
-        assertThat(runCatching { taint.isAvailable() }.isSuccess).isTrue()
+    fun `extension availability is evaluated without throwing`() {
+        val testExt = DecxExtensions.all.first { it.id == "test-ext" }
+        assertThat(runCatching { testExt.isAvailable() }.isSuccess).isTrue()
     }
 
     @Test
@@ -37,7 +39,12 @@ class DecxExtensionsTest {
     }
 
     @Test
+    fun `extension route is resolvable by path`() {
+        assertThat(DecxExtensions.routeOf("/api/decx/test-ext/ping")).isNotNull()
+    }
+
+    @Test
     fun `unknown extension path resolves to null`() {
-        assertThat(DecxExtensions.routeOf("/api/decx/taint/does_not_exist")).isNull()
+        assertThat(DecxExtensions.routeOf("/api/decx/test-ext/does_not_exist")).isNull()
     }
 }

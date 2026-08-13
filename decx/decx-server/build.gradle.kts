@@ -84,6 +84,7 @@ val fetchJadxScriptPlugin by tasks.registering(FetchJadxScriptPluginTask::class)
 
 dependencies {
     implementation(project(":decx-core"))
+    implementation(project(":decx-taint"))
     implementation(libs.jadx.core) {
         isChanging = false
     }

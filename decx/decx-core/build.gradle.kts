@@ -7,14 +7,10 @@ val generatedVersionResourcesDir = layout.buildDirectory.dir("generated/resource
 dependencies {
     implementation(platform(libs.kotlinx.coroutines.bom))
     implementation(platform(libs.kotlinx.serialization.bom))
-    implementation(project(":decx-taint-protocol"))
     implementation(libs.gson)
     implementation(libs.javalin)
     implementation(libs.mcp.kotlin.sdk.server)
     implementation(libs.ktor.server.cio)
-    implementation(libs.jackson.databind)
-    implementation(libs.jackson.dataformat.yaml)
-    implementation(libs.jackson.module.kotlin)
     compileOnly(libs.jadx.core) {
         isChanging = false
     }
@@ -28,8 +24,6 @@ dependencies {
     testImplementation(libs.junit.jupiter)
     testRuntimeOnly("org.junit.platform:junit-platform-launcher")
     testImplementation(libs.assertj.core)
-    testImplementation(libs.mockito.core)
-    testImplementation(libs.mockito.kotlin)
 }
 
 sourceSets {
