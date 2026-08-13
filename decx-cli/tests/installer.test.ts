@@ -111,6 +111,43 @@ describe("installer", () => {
     expect(selectDecxServerAsset(assets)).toEqual(assets[1]);
   });
 
+  it("skips the download when the installed version matches the latest release", async () => {
+    const installDir = resetTestDir("install", "installer-skip");
+    const installPath = path.join(installDir, "decx-server.jar");
+    const logger = { error: jest.fn() };
+
+    writeFileSync(installPath, "existing-jar", "utf-8");
+
+    const fetchImpl = jest.fn(async (url: string | URL | Request) => {
+      const href = typeof url === "string" ? url : url instanceof URL ? url.href : url.url;
+      if (href.includes("registry.npmjs.org")) {
+        return jsonResponse({ version: "2.6.0" });
+      }
+      throw new Error("download should not be attempted");
+    }) as typeof fetch;
+
+    try {
+      const result = await installDecxServer(false, {
+        installDir,
+        installPath,
+        fetchImpl,
+        logger,
+        currentVersion: "2.6.0",
+      });
+
+      expect(result).toEqual({
+        ok: true,
+        version: "2.6.0",
+        path: installPath,
+        message: "decx-server is already up to date (v2.6.0)",
+      });
+      expect(readFileSync(installPath, "utf-8")).toBe("existing-jar");
+      expect(fetchImpl).toHaveBeenCalledTimes(1);
+    } finally {
+      rmSync(installDir, { recursive: true, force: true });
+    }
+  });
+
   it("overwrites an existing installed jar and returns normalized version/path metadata", async () => {
     const installDir = resetTestDir("install", "installer");
     const installPath = path.join(installDir, "decx-server.jar");

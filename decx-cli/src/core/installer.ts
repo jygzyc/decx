@@ -61,6 +61,8 @@ interface InstallDecxServerOptions {
   installDir?: string;
   installPath?: string;
   logger?: Pick<Console, "error">;
+  /** Installed server version; when it matches the latest release, skip the download. */
+  currentVersion?: string;
 }
 
 type ReleaseFetchResult =
@@ -225,6 +227,7 @@ export async function installDecxServer(
     installDir = INSTALL_DIR,
     installPath = INSTALL_PATH,
     logger = console,
+    currentVersion,
   } = options;
 
   try {
@@ -235,6 +238,22 @@ export async function installDecxServer(
       return { ok: false, message: fetched.message };
     }
     const release = fetched.release;
+
+    const version = normalizeVersion(release.tag_name);
+
+    // Local and remote versions match: nothing to download.
+    if (
+      currentVersion !== undefined &&
+      currentVersion === version &&
+      existsSync(installPath)
+    ) {
+      return {
+        ok: true,
+        message: `decx-server is already up to date (v${version})`,
+        version,
+        path: installPath,
+      };
+    }
 
     const asset = selectDecxServerAsset(release.assets);
 
@@ -273,7 +292,6 @@ export async function installDecxServer(
       return { ok: false, message: `Failed to save downloaded file: ${err instanceof Error ? err.message : String(err)}` };
     }
 
-    const version = normalizeVersion(release.tag_name);
     return {
       ok: true,
       message: `Installed decx-server ${release.tag_name} to ${installPath}`,
