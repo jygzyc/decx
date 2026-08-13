@@ -40,14 +40,14 @@ describe("Error classes", () => {
 });
 
 describe("withErrorHandler", () => {
-  const mockExit = jest.spyOn(process, "exit").mockImplementation((() => {
-    throw new Error("process.exit");
-  }) as () => never);
   const mockConsole = jest.spyOn(console, "error").mockImplementation(() => {});
   const mockLog = jest.spyOn(console, "log").mockImplementation(() => {});
 
+  afterEach(() => {
+    process.exitCode = undefined;
+  });
+
   afterAll(() => {
-    mockExit.mockRestore();
     mockConsole.mockRestore();
     mockLog.mockRestore();
   });
@@ -59,9 +59,10 @@ describe("withErrorHandler", () => {
     expect(handler).toHaveBeenCalled();
   });
 
-  it("catches DecxError and formats it", async () => {
+  it("catches DecxError, formats it, and sets a non-zero exit code", async () => {
     const handler = jest.fn<() => Promise<string>>().mockRejectedValue(new ProcessError("test", 123));
     const wrapped = withErrorHandler(handler);
-    await expect(wrapped()).rejects.toThrow("process.exit");
+    await wrapped();
+    expect(process.exitCode).toBe(1);
   });
 });
