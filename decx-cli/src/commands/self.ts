@@ -210,7 +210,10 @@ export function makeSelfCommand(): Command {
       console.error(`  Updating decx-server (current: v${currentVersion})...`);
 
       const updateInfo = await checkForServerUpdate(currentVersion, opts.prerelease);
-      if (updateInfo.available) {
+      if (updateInfo.error) {
+        console.error(`  Server update check failed: ${updateInfo.error}`);
+        console.error("  (unauthenticated GitHub API rate limit or network issue; retry later)");
+      } else if (updateInfo.available) {
         console.error(`  New version available: v${updateInfo.latestVersion}`);
         const result = await installDecxServer(opts.prerelease);
         if (result.ok) {

@@ -134,13 +134,27 @@ function replaceInstalledJar(tmpPath: string, installPath: string): void {
 
 /**
  * Check if a newer server version is available.
+ * `error` is set when the check itself failed (network/API error) — callers
+ * must not treat that as "no update available".
  */
 export async function checkForServerUpdate(
   currentVersion: string,
-  prerelease: boolean = false
-): Promise<{ available: boolean; latestVersion: string }> {
-  const fetched = await fetchReleaseSummary(prerelease, DEFAULT_FETCH, 5_000);
-  if (!fetched.ok) return { available: false, latestVersion: currentVersion };
+  prerelease: boolean = false,
+  fetchImpl: typeof fetch = DEFAULT_FETCH,
+): Promise<{ available: boolean; latestVersion: string; error?: string }> {
+  let fetched: ReleaseFetchResult;
+  try {
+    fetched = await fetchReleaseSummary(prerelease, fetchImpl, 15_000);
+  } catch (err) {
+    return {
+      available: false,
+      latestVersion: currentVersion,
+      error: `GitHub API request failed: ${err instanceof Error ? err.message : String(err)}`,
+    };
+  }
+  if (!fetched.ok) {
+    return { available: false, latestVersion: currentVersion, error: fetched.message };
+  }
 
   const latest = normalizeVersion(fetched.release.tag_name);
   const available = compareSemver(latest, currentVersion.replace(/^v/, "")) > 0;

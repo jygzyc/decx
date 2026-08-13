@@ -2,12 +2,70 @@ import { jest } from "@jest/globals";
 import { existsSync, readFileSync, rmSync, writeFileSync } from "fs";
 import * as path from "path";
 import {
+  checkForServerUpdate,
   findDecxServerJar,
   installDecxServer,
   selectDecxServerAsset,
   type ReleaseAsset,
 } from "../src/core/installer.js";
 import { DECX_TEST_SERVER_JAR, resetTestDir } from "./test-paths.js";
+
+describe("checkForServerUpdate", () => {
+  it("reports a newer available version", async () => {
+    const fetchImpl = jest.fn(async () => new Response(JSON.stringify({
+      tag_name: "v4.2.0",
+      assets: [],
+    }), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    })) as typeof fetch;
+
+    await expect(checkForServerUpdate("4.0.2", false, fetchImpl)).resolves.toEqual({
+      available: true,
+      latestVersion: "4.2.0",
+    });
+  });
+
+  it("reports the HTTP error instead of claiming the server is up to date", async () => {
+    const fetchImpl = jest.fn(async () => new Response("rate limit", {
+      status: 403,
+      headers: { "content-type": "application/json" },
+    })) as typeof fetch;
+
+    await expect(checkForServerUpdate("4.0.2", false, fetchImpl)).resolves.toEqual({
+      available: false,
+      latestVersion: "4.0.2",
+      error: "GitHub API error: HTTP 403",
+    });
+  });
+
+  it("reports network failures instead of throwing", async () => {
+    const fetchImpl = jest.fn(async () => {
+      throw new TypeError("fetch failed");
+    }) as typeof fetch;
+
+    await expect(checkForServerUpdate("4.0.2", false, fetchImpl)).resolves.toEqual({
+      available: false,
+      latestVersion: "4.0.2",
+      error: "GitHub API request failed: fetch failed",
+    });
+  });
+
+  it("reports no update when versions match", async () => {
+    const fetchImpl = jest.fn(async () => new Response(JSON.stringify({
+      tag_name: "v4.1.0",
+      assets: [],
+    }), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    })) as typeof fetch;
+
+    await expect(checkForServerUpdate("4.1.0", false, fetchImpl)).resolves.toEqual({
+      available: false,
+      latestVersion: "4.1.0",
+    });
+  });
+});
 
 describe("installer", () => {
   it("uses the test decx-server jar installed from the DECX dist output", () => {
