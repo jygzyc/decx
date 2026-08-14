@@ -15,7 +15,7 @@ kotlinScripting = "2.3.20"
 ktlint = "1.8.0"
 kotlinLogging = "7.0.13"
 assertj = "3.27.7"
-junit = "6.1.2"
+junit = "6.1.3"
 
 [plugins]
 kotlin-jvm = { id = "org.jetbrains.kotlin.jvm", version.ref = "kotlin" }
