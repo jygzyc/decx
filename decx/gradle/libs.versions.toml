@@ -13,7 +13,7 @@ logback = "1.6.1"
 jadxScriptKotlin = "1.1.2"
 kotlinScripting = "2.3.20"
 ktlint = "1.8.0"
-kotlinLogging = "7.0.13"
+kotlinLogging = "8.0.4"
 assertj = "3.27.7"
 junit = "6.1.2"
 
