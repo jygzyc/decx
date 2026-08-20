@@ -27,7 +27,7 @@ const RELEASES_ATOM_URL = `https://github.com/${GITHUB_REPO}/releases.atom`;
  * Compare two semver strings (e.g. "2.2.1" vs "2.3.0").
  * Returns >0 if a > b, <0 if a < b, 0 if equal.
  */
-function compareSemver(a: string, b: string): number {
+export function compareSemver(a: string, b: string): number {
   const pa = a.split("-")[0].split(".").map(Number);
   const pb = b.split("-")[0].split(".").map(Number);
   for (let i = 0; i < 3; i++) {
@@ -140,6 +140,18 @@ async function fetchReleaseSummary(
       message: `Failed to reach npm registry: ${err instanceof Error ? err.message : String(err)}`,
     };
   }
+}
+
+/**
+ * Latest stable version string from the npm registry, or null when the
+ * lookup fails (network error, non-OK response, malformed payload).
+ */
+export async function fetchLatestStableVersion(
+  fetchImpl: typeof fetch = DEFAULT_FETCH,
+  timeoutMs: number = 15_000,
+): Promise<string | null> {
+  const fetched = await fetchReleaseSummary(false, fetchImpl, timeoutMs);
+  return fetched.ok ? normalizeVersion(fetched.release.tag_name) : null;
 }
 
 /**
