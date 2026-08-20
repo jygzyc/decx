@@ -135,6 +135,8 @@ describe("normalizeJadxPassthroughArgs", () => {
       "--show-bad-code",
       "--no-imports",
       "-Pdex-input.verify-checksum=no",
+      "--rename-flags",
+      "case,valid",
     ]);
   });
 
@@ -156,6 +158,8 @@ describe("normalizeJadxPassthroughArgs", () => {
       "--show-bad-code",
       "--no-imports",
       "-Pdex-input.verify-checksum=no",
+      "--rename-flags",
+      "case,valid",
     ]);
   });
 
@@ -171,7 +175,65 @@ describe("normalizeJadxPassthroughArgs", () => {
       "--no-imports",
       "--show-bad-code",
       "-Pdex-input.verify-checksum=no",
+      "--rename-flags",
+      "case,valid",
     ]);
+  });
+
+  // -- rename flags: preserve obfuscated Unicode identifiers ----------------
+
+  const DEFAULTS = ["--show-bad-code", "--no-imports", "-Pdex-input.verify-checksum=no"];
+
+  it("defaults to --rename-flags case,valid so non-ASCII identifiers survive", () => {
+    const result = normalizeJadxPassthroughArgs([]);
+    const idx = result.indexOf("--rename-flags");
+    expect(idx).toBeGreaterThanOrEqual(0);
+    expect(result[idx + 1]).toBe("case,valid");
+  });
+
+  it("strips the printable token from an explicit --rename-flags value", () => {
+    expect(normalizeJadxPassthroughArgs(["--rename-flags", "case,valid,printable"])).toEqual([
+      "--rename-flags",
+      "case,valid",
+      ...DEFAULTS,
+    ]);
+    expect(normalizeJadxPassthroughArgs(["--rename-flags", "printable"])).toEqual([
+      "--rename-flags",
+      "NONE",
+      ...DEFAULTS,
+    ]);
+  });
+
+  it("rewrites --rename-flags all and = forms, including the -rf short option", () => {
+    expect(normalizeJadxPassthroughArgs(["--rename-flags", "all"])).toEqual([
+      "--rename-flags",
+      "CASE,VALID",
+      ...DEFAULTS,
+    ]);
+    expect(normalizeJadxPassthroughArgs(["--rename-flags=PRINTABLE"])).toEqual([
+      "--rename-flags=NONE",
+      ...DEFAULTS,
+    ]);
+    expect(normalizeJadxPassthroughArgs(["-rf", "case,printable"])).toEqual([
+      "-rf",
+      "case",
+      ...DEFAULTS,
+    ]);
+  });
+
+  it("keeps --rename-flags none and unknown values untouched without double-injecting", () => {
+    expect(normalizeJadxPassthroughArgs(["--rename-flags", "none"])).toEqual([
+      "--rename-flags",
+      "NONE",
+      ...DEFAULTS,
+    ]);
+    const unknown = normalizeJadxPassthroughArgs(["--rename-flags", "bogus"]);
+    expect(unknown).toEqual(["--rename-flags", "bogus", ...DEFAULTS]);
+    expect(unknown.filter((a) => a === "--rename-flags")).toHaveLength(1);
+  });
+
+  it("does not inject rename flags when user already supplied any form", () => {
+    expect(normalizeJadxPassthroughArgs(["-rf=case"]).includes("--rename-flags")).toBe(false);
   });
 });
 
