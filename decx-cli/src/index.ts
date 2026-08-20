@@ -11,6 +11,7 @@ import { makeProcessCommand } from "./commands/process.js";
 import { makeCodeCommand } from "./commands/code.js";
 import { makeAndroidCommand } from "./commands/android.js";
 import { makeSelfCommand } from "./commands/self.js";
+import { maybeNotifyUpdate, runUpdateCheck } from "./core/update-notifier.js";
 import { VERSION } from "./core/version.js";
 
 export const ROOT_DESCRIPTION =
@@ -28,6 +29,13 @@ export function createProgram(): Command {
 }
 
 export function main(argv: readonly string[] = process.argv): void {
+  // Internal entry point used by the background update-check child process;
+  // kept out of the commander tree so it never shows up in help output.
+  if (argv[2] === "__update-check") {
+    void runUpdateCheck();
+    return;
+  }
+  maybeNotifyUpdate();
   const program = createProgram();
   if (argv.length <= 2) {
     console.log(program.helpInformation());

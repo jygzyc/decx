@@ -13,3 +13,5 @@ process.env.USERPROFILE = DECX_TEST_HOME;
 process.env.DECX_HOME = DECX_TEST_DECX_HOME;
 process.env.DECX_SERVER_HOME = DECX_TEST_SERVER_HOME;
 process.env.DECX_TEST_ROOT = DECX_TEST_ROOT;
+// Keep tests hermetic: the startup update notifier must not spawn children.
+process.env.DECX_NO_UPDATE_CHECK = "1";

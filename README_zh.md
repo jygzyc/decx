@@ -36,6 +36,8 @@ decx self install
 decx self skills install --client opencode --client codex
 ```
 
+CLI 启动时会在后台检测新版本：结果缓存在 `DECX_HOME` 下，24 小时内不重复联网，且检测不会阻塞或影响当前命令。发现新版本时会在 stderr 打印一行提示，按提示运行 `decx self update` 即可升级。设置 `DECX_NO_UPDATE_CHECK=1` 可关闭该检测。
+
 #### Windows 上 `self update` 报 `spawnSync npm.cmd EINVAL`
 
 v4.0.1 之前的 CLI 在 Windows 上会直接启动 `npm.cmd`，部分 Node.js 版本会因此返回 `EINVAL`。旧版无法通过 `self update` 自行修复，需要先在 PowerShell 或 CMD 中手动更新一次：

@@ -36,6 +36,8 @@ decx self install
 decx self skills install --client opencode --client codex
 ```
 
+The CLI checks for updates in the background on startup: the result is cached under `DECX_HOME` for 24 hours and the check never blocks or breaks the command you ran. When a newer release exists, a one-line hint on stderr points you to `decx self update`. Set `DECX_NO_UPDATE_CHECK=1` to disable the check.
+
 #### Windows `spawnSync npm.cmd EINVAL` during `self update`
 
 CLI versions older than v4.0.1 started `npm.cmd` directly on Windows, which can return `EINVAL` with some Node.js versions. An affected CLI cannot bootstrap this fix through `self update`; update it once from PowerShell or CMD instead:
