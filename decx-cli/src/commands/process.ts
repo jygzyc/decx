@@ -80,9 +80,10 @@ export function makeProcessCommand(): Command {
     .description("Start decx-server.jar for a target file and record a reusable session. Unknown options after this command are forwarded to jadx-cli, including JADX `-P<key>=<value>` project properties. Use `--port` to set the server port.")
     .option("--port <port>", "DECX HTTP server port to bind")
     .option("--mcp", "Also start MCP Streamable HTTP server on port + 1")
-    .option("--force", "Start a new server even when a matching file/session already exists")
+    .option("--force", "Start a new server even when a matching file/session already exists; alive sessions for the same file or name are stopped first")
     .option("-n, --name <name>", "Session name used by -s/--session (default: input filename without extension)")
     .option("--script <file>", "Jadx Kotlin script (.jadx.kts) run during decompilation; may be repeated", collectOption, [])
+    .option("--timeout <seconds>", "Seconds to wait for the server to become healthy (default 300)", v => Math.max(1, Math.floor(Number(v))), undefined)
     .action(async (filePath: string, opts) => {
       const fmt = new Formatter();
       try {
@@ -93,6 +94,7 @@ export function makeProcessCommand(): Command {
         mcp: opts.mcp ?? false,
         scripts: opts.script ?? [],
         passthroughArgs: extractPassthroughArgs(),
+        timeout: opts.timeout,
       }));
       } catch (err) { handleCliError(err, fmt); }
     });
