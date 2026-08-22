@@ -6,6 +6,9 @@
  */
 
 import { Command } from "commander";
+import { mkdtempSync, rmSync, writeFileSync } from "fs";
+import { tmpdir } from "os";
+import { join } from "path";
 import { createServer, type Server } from "net";
 import { makeProcessCommand } from "../src/commands/process.js";
 import {
@@ -14,6 +17,8 @@ import {
   defaultJavaHeap,
   extractPassthroughArgs,
   normalizeJadxPassthroughArgs,
+  pickForceReplaceSessions,
+  waitForServer,
 } from "../src/core/launcher.js";
 import { parseServerPort, selectAvailableServerPort } from "../src/core/ports.js";
 import type { Session } from "../src/core/types.js";
@@ -249,6 +254,49 @@ function makeSession(over: Partial<Session> = {}): Session {
   } as Session;
 }
 
+describe("pickForceReplaceSessions (--force restart targets)", () => {
+  it("selects alive sessions with the same name or the same file hash", () => {
+    const byName = makeSession({ name: "scityh", hash: "h1", pid: 100 });
+    const byHash = makeSession({ name: "other-name", hash: "h2", pid: 200 });
+    const unrelated = makeSession({ name: "unrelated", hash: "h3", pid: 300 });
+    const picked = pickForceReplaceSessions([byName, byHash, unrelated], "scityh", "h2");
+    expect(picked).toEqual([byName, byHash]);
+  });
+
+  it("returns an empty list when nothing matches", () => {
+    const unrelated = makeSession({ name: "unrelated", hash: "h3", pid: 300 });
+    expect(pickForceReplaceSessions([unrelated], "scityh", "h2")).toEqual([]);
+  });
+
+  it("does not duplicate a session matching both name and hash", () => {
+    const both = makeSession({ name: "scityh", hash: "h1", pid: 100 });
+    expect(pickForceReplaceSessions([both], "scityh", "h1")).toEqual([both]);
+  });
+});
+
+describe("waitForServer heartbeat", () => {
+  it("emits heartbeats with elapsed seconds and the last non-empty log line while waiting", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "decx-heartbeat-"));
+    const logPath = join(dir, "server.log");
+    writeFileSync(logPath, "INFO  loading classes ...\nINFO  progress 42%\n\n");
+    const port = await selectAvailableServerPort(undefined);
+    const beats: Array<{ elapsedSec: number; lastLogLine?: string }> = [];
+    try {
+      const ok = await waitForServer(port, 3, logPath, undefined, {
+        heartbeat: (elapsedSec, lastLogLine) => beats.push({ elapsedSec, lastLogLine }),
+        heartbeatIntervalMs: 50,
+      });
+      expect(ok).toBe(false);
+      expect(beats.length).toBeGreaterThanOrEqual(1);
+      expect(typeof beats[0].elapsedSec).toBe("number");
+      // Trailing blank lines are skipped; the tail of the log is forwarded.
+      expect(beats[0].lastLogLine).toBe("INFO  progress 42%");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
 describe("process open session reuse by sha256", () => {
   it("reuses an alive session that already holds the same file hash", () => {
     const alive = makeSession({ name: "foo", hash: "abc", port: 3000 });
@@ -411,6 +459,21 @@ describe("extractPassthroughArgs", () => {
     ];
 
     expect(extractPassthroughArgs()).toEqual(["-Pdex-input.verify-checksum=no"]);
+  });
+
+  it("strips --timeout so it is not forwarded to jadx", () => {
+    process.argv = [
+      "node",
+      "decx",
+      "process",
+      "open",
+      "app.apk",
+      "--timeout",
+      "60",
+      "--deobf",
+    ];
+
+    expect(extractPassthroughArgs()).toEqual(["--deobf"]);
   });
 
   it("strips --mcp so it is not forwarded to jadx", () => {

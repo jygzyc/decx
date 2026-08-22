@@ -23,6 +23,8 @@ export interface OpenAnalysisTargetOptions {
   mcp?: boolean;
   scripts?: string[];
   passthroughArgs?: string[];
+  /** Seconds to wait for the server to become healthy (default 300). */
+  timeout?: number;
 }
 
 export function defaultJavaHeap(): string {
@@ -60,6 +62,20 @@ export interface OpenReuseInput {
   aliveSessions: Session[];
   existingByName: Session | null;
   scripts?: string[];
+}
+
+/**
+ * Alive sessions a `--force` spawn must replace: any session under the target
+ * name, plus any session holding the same file hash (same file = same server
+ * contract). Killing them prevents orphaned JVMs piling up when `--force` is
+ * used to restart a slow-decompiling target.
+ */
+export function pickForceReplaceSessions(
+  aliveSessions: Session[],
+  fileName: string,
+  fileHash: string,
+): Session[] {
+  return aliveSessions.filter(s => s.name === fileName || s.hash === fileHash);
 }
 
 export type OpenReuseDecision =
@@ -245,6 +261,14 @@ export async function openAnalysisTarget(
     mgr.removeSession(decision.removeStaleName);
   }
 
+  // `--force` means restart: kill alive servers this spawn replaces (same
+  // name or same file) so old JVMs cannot linger as memory-eating orphans.
+  for (const stale of pickForceReplaceSessions(mgr.listAliveSessions(), fileName, fileHash)) {
+    logCliEvent({ command: "process", action: "open", session: stale.name, replacedByForce: true, pid: stale.pid, port: stale.port });
+    await killProcessGroup(stale.pid);
+    mgr.removeSession(stale.name);
+  }
+
   const port = await selectAvailableServerPort(requestedPort, opts.mcp ?? false);
   const javaArgs = buildDecxServerJavaArgs(
     jarPath,
@@ -280,18 +304,33 @@ export async function openAnalysisTarget(
   });
 
   const session = mgr.createSession(fileName, fileHash, resolvedFile, proc.pid, port, scripts);
-  const timeout = 300; // seconds
-  const ready = await waitForServer(port, timeout, logPath, () => processExited);
+  const timeout = Math.max(1, Math.floor(opts.timeout ?? 300)); // seconds
+  // Heartbeat on stderr so interactive users and agents waiting on this
+  // command see liveness while a large APK decompiles (stdout stays JSON-only).
+  const heartbeat = (elapsedSec: number, lastLogLine?: string): void => {
+    const tail = lastLogLine ? ` | ${lastLogLine.slice(0, 120)}` : "";
+    process.stderr.write(`  Waiting for decx-server '${fileName}' (pid ${proc.pid})... ${elapsedSec}s elapsed${tail}\n`);
+  };
+  const ready = await waitForServer(port, timeout, logPath, () => processExited, { heartbeat });
   if (ready) {
     logCliEvent({ command: "process", action: "open", session: session.name, pid: proc.pid, port, file: resolvedFile, mcp: opts.mcp ?? false });
     return { name: session.name, hash: session.hash, pid: proc.pid, port, file: resolvedFile, log: logPath, mcp: opts.mcp ?? false, mcpPort: opts.mcp ? port + 1 : undefined, scripts, reused: false };
   }
 
-  mgr.removeSession(fileName);
   if (processExited) {
+    mgr.removeSession(fileName);
     throw new ServerError(`decx-server exited unexpectedly (code: ${processExitCode}). Check log: ${logPath}`, port);
   }
-  throw new ServerError(`Server did not start within ${timeout}s on port ${port}`, port);
+  // Timed out but the JVM is still decompiling: keep the session record so the
+  // server stays reachable (`decx process check --port ${port}`) instead of
+  // becoming an untracked orphan that a later `--force` would duplicate.
+  throw new ServerError(
+    `Server did not become healthy within ${timeout}s on port ${port}, but the process (pid ${proc.pid}) is ` +
+    `still running — it is likely still decompiling a large target. The session '${fileName}' was kept; ` +
+    `poll it with 'decx process check --port ${port}', or stop it with 'decx process close ${fileName}'. ` +
+    `Log: ${logPath}`,
+    port,
+  );
 }
 
 /**
@@ -310,11 +349,29 @@ export async function checkServer(port: number, retries: number = 3): Promise<[b
   return [false, `No server on port ${port}`];
 }
 
-async function waitForServer(port: number, timeout: number = 120, logPath?: string, shouldAbort?: () => boolean): Promise<boolean> {
+export interface WaitForServerOptions {
+  /** Called roughly every heartbeatIntervalMs while waiting. */
+  heartbeat?: (elapsedSec: number, lastLogLine?: string) => void;
+  /** Heartbeat cadence in ms (default 15000; tests use shorter values). */
+  heartbeatIntervalMs?: number;
+}
+
+const HEARTBEAT_INTERVAL_MS = 15_000;
+
+export async function waitForServer(
+  port: number,
+  timeout: number = 120,
+  logPath?: string,
+  shouldAbort?: () => boolean,
+  opts: WaitForServerOptions = {},
+): Promise<boolean> {
   const start = Date.now();
   const deadline = timeout * 1000;
   const interval = 1000;
   const readyMarker = "DECX Server running at";
+  const heartbeatIntervalMs = opts.heartbeatIntervalMs ?? HEARTBEAT_INTERVAL_MS;
+  let lastLogLine: string | undefined;
+  let lastHeartbeatAt = start;
 
   while (Date.now() - start < deadline) {
     if (shouldAbort?.()) return false;
@@ -323,6 +380,8 @@ async function waitForServer(port: number, timeout: number = 120, logPath?: stri
     if (logPath) {
       try {
         const content = readFileSync(logPath, "utf-8");
+        const lines = content.split("\n");
+        lastLogLine = [...lines].reverse().find(l => l.trim().length > 0) ?? lastLogLine;
         if (content.includes(readyMarker)) {
           // Confirm with health check
           try {
@@ -339,6 +398,11 @@ async function waitForServer(port: number, timeout: number = 120, logPath?: stri
         const response = await fetch(`http://127.0.0.1:${port}/health`);
         if (response.ok) return true;
       } catch { /* starting */ }
+    }
+
+    if (opts.heartbeat && Date.now() - lastHeartbeatAt >= heartbeatIntervalMs) {
+      lastHeartbeatAt = Date.now();
+      opts.heartbeat(Math.round((Date.now() - start) / 1000), lastLogLine);
     }
 
     await new Promise(r => setTimeout(r, interval));
@@ -422,7 +486,7 @@ export function extractPassthroughArgs(argv: readonly string[] = process.argv): 
   if (openIdx === -1) return [];
 
   const raw = cmdArgs.slice(openIdx + 1);
-  const decxFlagsWithValue = ["--port", "-n", "--name", "--script"];
+  const decxFlagsWithValue = ["--port", "-n", "--name", "--script", "--timeout"];
   const decxFlags = ["--force", "--mcp", "--no-mcp"];
 
   const result: string[] = [];
