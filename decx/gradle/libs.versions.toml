@@ -8,6 +8,7 @@ mcpKotlinSdk = "0.15.0"
 kotlinxCoroutines = "1.11.0"
 kotlinxSerialization = "1.11.0"
 jackson = "2.22.1"
+taie = "0.5.4"
 slf4j = "2.0.18"
 logback = "1.6.1"
 jadxScriptKotlin = "1.1.2"
@@ -47,8 +48,6 @@ javalin = { group = "io.javalin", name = "javalin", version.ref = "javalin" }
 ktor-server-cio = { group = "io.ktor", name = "ktor-server-cio", version.ref = "ktor" }
 mcp-kotlin-sdk-server = { group = "io.modelcontextprotocol", name = "kotlin-sdk-server", version.ref = "mcpKotlinSdk" }
 jackson-databind = { group = "com.fasterxml.jackson.core", name = "jackson-databind", version.ref = "jackson" }
-jackson-dataformat-yaml = { group = "com.fasterxml.jackson.dataformat", name = "jackson-dataformat-yaml", version.ref = "jackson" }
-jackson-module-kotlin = { group = "com.fasterxml.jackson.module", name = "jackson-module-kotlin", version.ref = "jackson" }
 slf4j-api = { group = "org.slf4j", name = "slf4j-api", version.ref = "slf4j" }
 logback-classic = { group = "ch.qos.logback", name = "logback-classic", version.ref = "logback" }
 assertj-core = { group = "org.assertj", name = "assertj-core", version.ref = "assertj" }

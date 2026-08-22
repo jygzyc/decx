@@ -5,24 +5,25 @@ import jadx.plugins.decx.api.DecxRoute
 import jadx.plugins.decx.api.DecxRouteGroup
 import jadx.plugins.decx.extension.DecxExtension
 import jadx.plugins.decx.server.McpTool
-import jadx.plugins.decx.taint.config.TaintConfigParser
 
 /**
- * DECX taint-analysis extension.
+ * DECX taint-analysis extension: three outward-facing interfaces over the
+ * Tai-e worker engine.
  *
- * Mounts an independent Tai-e-powered taint engine under the
- * /api/decx/taint path prefix without touching the core jadx-backed routes. The engine runs in a separate
- * worker process (see [TaintWorkerPool]); this class only owns route/MCP
- * registration and orchestrates through [TaintService].
+ *   /api/decx/taint/config    (taint_config)    — rules + capabilities + environment
+ *   /api/decx/taint/analyze   (taint_analyze)   — validate + enqueue async analysis
+ *   /api/decx/taint/progress  (taint_progress)  — job state/log/results (cancel via flag)
  *
- * Availability is driven by [TaintEnvironment]: when the worker jar, Tai-e
- * modified jars, or JREs are missing, [isAvailable] is false, the routes are
- * not registered, and the core service is completely unaffected.
+ * Availability is driven by [TaintEnvironment]: when the Tai-e jars, worker
+ * jar, or JREs are missing, [isAvailable] is false, the routes are not
+ * registered, and the core service is completely unaffected.
  */
 class TaintExtension(private val env: TaintEnvironment = TaintEnvironment()) : DecxExtension {
 
     private val pool by lazy { TaintWorkerPool(env) }
-    private val service by lazy { TaintService(env, pool) }
+    private val service by lazy {
+        TaintService(env, pool, TaintJobManager(pool))
+    }
 
     override val id: String = "taint"
 
@@ -31,52 +32,60 @@ class TaintExtension(private val env: TaintEnvironment = TaintEnvironment()) : D
     override fun routeGroups(): List<DecxRouteGroup> = listOf(
         DecxRouteGroup(
             name = "taint",
-            routes = listOf(statusRoute, analyzeRoute, capabilitiesRoute, templatesRoute)
+            routes = listOf(configRoute, analyzeRoute, progressRoute)
         )
     )
 
     override fun mcpTools(): List<McpTool> = listOf(
         McpTool(
-            name = "taint_status",
-            description = "Report taint engine readiness: worker jar, Tai-e modified jars, JREs, Android platforms.",
-            inputSchema = schema(),
-            routePath = TaintService.KIND_STATUS.let { "/api/decx/taint/status" },
-            toPayload = { emptyMap() }
+            name = "taint_config",
+            description = "Inspect taint analysis rules and engine state. With no input: built-in rules + engine " +
+                "capabilities + environment. With rules (inline JSON), rulePath (directory), or ruleNames: " +
+                "parse/validate and return per-rule summaries (severity, category, entry counts).",
+            inputSchema = schema(
+                properties = linkedMapOf(
+                    "rules" to stringProp("Inline rule document JSON: {\"ruleName\": {sources, sinks, transfers, sanitizers, ...}}"),
+                    "rulePath" to stringProp("Directory containing *.json rule files"),
+                    "ruleNames" to stringProp("Comma-separated rule names to select/filter")
+                )
+            ),
+            routePath = PATH_CONFIG,
+            toPayload = { it }
         ),
         McpTool(
             name = "taint_analyze",
-            description = "Run a taint analysis over an APK (or an open DECX session) using the Tai-e worker. " +
-                "Accepts a YAML config with preset inheritance, field-level overrides, and a raw escape hatch.",
+            description = "Start an async taint analysis over an APK (or an open DECX session) and return {jobId}. " +
+                "Poll taint_progress with the jobId for state, progress log, and attributed flows.",
             inputSchema = schema(
                 properties = linkedMapOf(
-                    "config" to linkedMapOf(
-                        "type" to "string",
-                        "description" to "YAML taint config. Example: preset: privacy-leak / target: { session: sieve } " +
-                            "/ analysis: { contextSensitivity: 2obj } / limits: { timeoutSec: 600 } / taint: { sources: [...], sinks: [...] } / raw: { pta: {...} }"
-                    )
+                    "target" to objectProp("Target: {session: name} or {apk: /path/app.apk} (+ optional platforms dir)"),
+                    "rules" to stringProp("Inline rule document JSON (same format as taint_config)"),
+                    "rulePath" to stringProp("Directory containing *.json rule files"),
+                    "ruleNames" to stringProp("Comma-separated rule names to run (defaults to all built-in rules)"),
+                    "analysis" to objectProp("Analysis tuning: {contextSensitivity: ci|1obj|2obj|2-type|2obj+H, scope: APP|REACHABLE, distinguishStrings: bool}"),
+                    "limits" to objectProp("Limits: {timeoutSec: int, maxPointerAnalyzeTimeSec: int}")
                 ),
-                required = listOf("config")
+                required = listOf("target")
             ),
-            routePath = "/api/decx/taint/analyze",
-            toPayload = { args ->
-                val config = args["config"]?.toString()?.trim()
-                    ?: throw IllegalArgumentException("Missing required parameter: config")
-                linkedMapOf("config" to config)
-            }
+            routePath = PATH_ANALYZE,
+            toPayload = { it }
         ),
         McpTool(
-            name = "taint_capabilities",
-            description = "List taint engine capabilities: supported algorithms, context sensitivities, scopes, and built-in presets.",
-            inputSchema = schema(),
-            routePath = "/api/decx/taint/capabilities",
-            toPayload = { emptyMap() }
-        ),
-        McpTool(
-            name = "taint_templates",
-            description = "List built-in taint preset templates (privacy-leak, quick-scan, ...).",
-            inputSchema = schema(),
-            routePath = "/api/decx/taint/templates",
-            toPayload = { emptyMap() }
+            name = "taint_progress",
+            description = "Get taint job progress/results. With jobId: state, stage, progressLog, and — when " +
+                "succeeded — attributed taint flows (rule names, severity, source/sink methods and lines). " +
+                "Without jobId: list recent jobs. Set cancel=true to cancel a queued/running job.",
+            inputSchema = schema(
+                properties = linkedMapOf(
+                    "jobId" to stringProp("Job id returned by taint_analyze"),
+                    "cancel" to linkedMapOf(
+                        "type" to "boolean",
+                        "description" to "When true, cancel the referenced queued/running job"
+                    )
+                )
+            ),
+            routePath = PATH_PROGRESS,
+            toPayload = { it }
         )
     )
 
@@ -84,34 +93,20 @@ class TaintExtension(private val env: TaintEnvironment = TaintEnvironment()) : D
     // Routes
     // ------------------------------------------------------------------
 
-    private val statusRoute = DecxRoute("/api/decx/taint/status", TaintService.KIND_STATUS) { _, _ ->
-        DecxApiResult.ok(service.status())
+    private val configRoute = DecxRoute(PATH_CONFIG, TaintService.KIND_CONFIG) { _, params ->
+        envelope(service.loadConfig(params.raw()))
     }
 
-    private val analyzeRoute = DecxRoute("/api/decx/taint/analyze", TaintService.KIND_ANALYZE) { _, params ->
-        val configYaml = params.string("config")
-        val config = try {
-            TaintConfigParser.resolve(configYaml)
-        } catch (e: IllegalArgumentException) {
-            return@DecxRoute DecxApiResult.error(
-                kind = TaintService.KIND_ANALYZE,
-                code = TaintService.CODE_INVALID_CONFIG,
-                message = e.message ?: "invalid taint config"
-            )
-        }
-        val result = service.analyze(config)
-        if (result["ok"] == true) DecxApiResult.ok(result) else DecxApiResult.fail(result)
+    private val analyzeRoute = DecxRoute(PATH_ANALYZE, TaintService.KIND_ANALYZE) { _, params ->
+        envelope(service.startAnalysis(params.raw()))
     }
 
-    private val capabilitiesRoute =
-        DecxRoute("/api/decx/taint/capabilities", TaintService.KIND_CAPABILITIES) { _, _ ->
-            DecxApiResult.ok(service.capabilities())
-        }
+    private val progressRoute = DecxRoute(PATH_PROGRESS, TaintService.KIND_PROGRESS) { _, params ->
+        envelope(service.getProgress(params.raw()))
+    }
 
-    private val templatesRoute =
-        DecxRoute("/api/decx/taint/templates", TaintService.KIND_TEMPLATES) { _, _ ->
-            DecxApiResult.ok(service.templates())
-        }
+    private fun envelope(body: Map<String, Any>): DecxApiResult =
+        if (body["ok"] == true) DecxApiResult.ok(body) else DecxApiResult.fail(body)
 
     // ------------------------------------------------------------------
     // MCP schema helpers
@@ -125,4 +120,20 @@ class TaintExtension(private val env: TaintEnvironment = TaintEnvironment()) : D
         "properties" to properties,
         "required" to required
     )
+
+    private fun stringProp(description: String): Map<String, Any> = linkedMapOf(
+        "type" to "string",
+        "description" to description
+    )
+
+    private fun objectProp(description: String): Map<String, Any> = linkedMapOf(
+        "type" to "object",
+        "description" to description
+    )
+
+    companion object {
+        const val PATH_CONFIG = "/api/decx/taint/config"
+        const val PATH_ANALYZE = "/api/decx/taint/analyze"
+        const val PATH_PROGRESS = "/api/decx/taint/progress"
+    }
 }

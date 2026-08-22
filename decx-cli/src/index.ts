@@ -11,6 +11,7 @@ import { makeProcessCommand } from "./commands/process.js";
 import { makeCodeCommand } from "./commands/code.js";
 import { makeAndroidCommand } from "./commands/android.js";
 import { makeSelfCommand } from "./commands/self.js";
+import { makeTaintCommand } from "./commands/taint.js";
 import { maybeNotifyUpdate, runUpdateCheck } from "./core/update-notifier.js";
 import { VERSION } from "./core/version.js";
 
@@ -25,7 +26,8 @@ export function createProgram(): Command {
     .addCommand(makeProcessCommand())
     .addCommand(makeCodeCommand())
     .addCommand(makeAndroidCommand())
-    .addCommand(makeSelfCommand());
+    .addCommand(makeSelfCommand())
+    .addCommand(makeTaintCommand());
 }
 
 export function main(argv: readonly string[] = process.argv): void {

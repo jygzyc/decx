@@ -25,7 +25,7 @@ class TaintExtensionDiscoveryTest {
         // Routes are gated by availability: without the Tai-e worker
         // environment the extension contributes no routes.
         val taintAvailable = DecxExtensions.all.first { it.id == "taint" }.isAvailable()
-        val route = DecxExtensions.routeOf("/api/decx/taint/status")
+        val route = DecxExtensions.routeOf("/api/decx/taint/config")
         assertThat(route != null).isEqualTo(taintAvailable)
     }
 }

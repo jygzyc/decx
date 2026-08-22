@@ -30,8 +30,7 @@ AI Assistant / CLI
 | `decx/decx-core/` | Kotlin, JVM 17 | Shared API, HTTP transport, services, models, utilities, DecxExtension SPI |
 | `decx/decx-plugin/` | Kotlin, Shadow JAR | JADX GUI plugin, lifecycle, UI, in-process MCP server management |
 | `decx/decx-server/` | Kotlin, Shadow JAR | Standalone headless server with `DecxServerApp` main class |
-| `decx/decx-taint-protocol/` | Kotlin | NDJSON wire protocol shared by taint orchestrator (decx-core) and worker |
-| `decx/decx-taint-worker/` | Kotlin, Shadow JAR | Standalone Tai-e worker JVM process (`TaintWorkerMain`) |
+| `decx/decx-taint/` | Kotlin | Taint extension (DecxExtension SPI impl): JSON rules, async job manager, Tai-e worker sources; also builds the standalone worker fat jar |
 | `decx-cli/` | TypeScript, Node.js 22.5+ | User CLI for session management and analysis commands |
 | `skills/decx-cli/` | Skill `decx-cli` | DECX CLI usage, general analysis, and workflow routing |
 | `skills/decx-vulnhunt/` | Skill `decx-vulnhunt` | Android vulnerability hunting workflow (App + Framework tracks) |
@@ -77,6 +76,7 @@ Current top-level commands are:
 - `decx code`
 - `decx android`
 - `decx self`
+- `decx taint`
 
 Notable details:
 
@@ -86,6 +86,9 @@ Notable details:
 - `decx process open <file> --script <s1.jadx.kts> [--script <s2.jadx.kts> ...]` runs Jadx Kotlin scripts during decompilation; scripts are passed to decx-server as positional input files after the main target
 - Scripts execute at decompile time (top-level code at load, `jadx.afterLoad { }` blocks after classes load); the server bundles the `jadx-script-kotlin` plugin
 - Session reuse is keyed on the target file **plus** the exact script set; opening the same file with a different script set errors until `--force`
+- `--force` replaces alive sessions matching the same name **or** the same file hash (kills their JVMs before spawning the new one) instead of leaking orphan processes
+- While waiting for the server to become healthy, `process open` prints a heartbeat to stderr roughly every 15s (elapsed time + last server log line); stdout stays JSON-only
+- `process open --timeout <seconds>` bounds the health wait (default 300s). On timeout with the JVM still alive, the session record is **kept** and the error suggests `decx process check --port <port>` / `decx process close`; the record is only removed when the JVM exited
 - Standard `jadx-cli` flags are passed through by `process open`
 - `process open` auto-injects `--show-bad-code`, `--no-imports`, and `-Pdex-input.verify-checksum=no` (each skipped if already present), and intentionally strips `--deobf` because DECX relies on original symbol names
 - `process open` also injects `--rename-flags case,valid` by default (skipped when the user passed `--rename-flags`/`-rf` in any form) and strips the `printable` token from user-supplied rename-flag values: jadx's default `printable` rename replaces non-ASCII obfuscated identifiers (e.g. `Ď锬볝觧`) with `m0`-style aliases in decompiled source, which breaks DECX's original-name contract (`all` is rewritten to `case,valid`; `none` and unparseable values pass through untouched)
@@ -95,7 +98,7 @@ Notable details:
 - `decx process close` can close by session name, by `--port <port>`, or all sessions with `--all`
 - CLI data defaults to `~/.decx`; set `DECX_HOME` to redirect config, sessions, logs, tmp files, output, and installed server JARs
 - CLI tests set `DECX_HOME` to `.decx_test/home/.decx` and keep test-only artifacts under `.decx_test/`
-- `decx self install` installs or updates `decx-server.jar`
+- `decx self install` installs or updates `decx-server.jar`; `decx self install tai-e` installs the Tai-e taint engine (dist jars + worker jar) into `DECX_HOME/tai-e`
 - `decx self skills install --client <client>` downloads DECX skills from GitHub into `DECX_HOME/skills`, then symlinks them into private directories for Codex, Claude Code, and Cursor or the shared `~/.agents/skills` directory for every other or omitted client
 - `decx self update` updates both the server JAR and the currently installed npm CLI package
 - On startup the CLI runs a non-blocking update check (`decx-cli/src/core/update-notifier.ts`): the latest version comes from the npm registry, results are cached in `DECX_HOME/update-check.json` for 24 hours, refreshes happen in a detached `__update-check` child process, and update hints go to stderr; disable with `DECX_NO_UPDATE_CHECK=1` (also skipped under `CI`)
@@ -120,16 +123,23 @@ Notable details:
 - Framework build metadata is stored per-output-directory under `.artifact.json`; legacy `.meta.json` is no longer used
 - `decx android framework open` / `run` ultimately create normal process sessions via `decx process open`; framework artifacts are not stored as a separate session kind
 
-### Taint analysis engine (Tai-e)
+### Taint analysis engine (Tai-e, single decx-taint module)
 
-- Taint analysis is mounted as a **`DecxExtension` SPI** (ServiceLoader): `extension/DecxExtension.kt` interface, `extension/DecxExtensions.kt` registry, `taint/TaintExtension.kt` implementation — all in `decx-core`
-- Routes are injected **dynamically**: when `TaintExtension.isAvailable()` is true, `/api/decx/taint/*` routes plus MCP tools are registered; otherwise the core jadx surface is completely unaffected (no collision, no degradation)
-- Endpoints (all POST): `status`, `analyze`, `capabilities`, `templates` under `/api/decx/taint/`
-- `analyze` accepts a **YAML config**: `preset` (built-in preset inheritance) + field-level overrides (`analysis` / `limits` / `taint`) + `raw` escape hatch (Tai-e `pta` options / extra CLI flags). Presets ship in `decx-core/src/main/resources/taint/templates/*.yml` (`privacy-leak`, `quick-scan`); parsing/merging lives in `taint/config/TaintConfigParser.kt`
-- The engine runs in a **separate worker JVM** (`decx-taint-worker`, fat jar with Tai-e 0.5.4 + modified Soot/FlowDroid patches), spawned by `taint/TaintWorkerPool.kt`; communication is NDJSON over stdin/stdout via `decx-taint-protocol` (`WorkerMessage` / `WorkerProtocol`)
-- Worker classpath isolation matters: the Tai-e **modified jars** (`lib/sootclasses-modified.jar` + `lib/flowdroidclasses-modified.jar`, fetched from the Tai-e repo) must precede the worker fat jar, or Android mode throws `NoSuchMethodError: LayoutFileParser.<init>(...)`
-- Runtime environment lives under **`DECX_HOME`** (`~/.decx` or `DECX_HOME` env var): `tai-e/lib/` (modified jars), `tai-e/worker/` (worker fat jar), `tai-e/java-benchmarks/JREs/` (downloaded on demand — **not** shipped in any jar), `platforms/` (Android platform jars, user-provided or installed); dev fallbacks probe sibling module build output (`decx-taint-poc`, `decx-taint-worker`)
+- Taint analysis lives entirely in **`decx/decx-taint/`** and is mounted as a **`DecxExtension` SPI** (ServiceLoader): `decx-core/extension/DecxExtension.kt` interface, `DecxExtensions.kt` registry, `taint/TaintExtension.kt` implementation. `decx-core` has no taint code; routes/MCP tools exist only when the module is on the classpath (bundled by decx-server / decx-plugin)
+- Routes are injected **dynamically**: when `TaintExtension.isAvailable()` is true the taint surface registers; otherwise the core jadx surface is completely unaffected
+- The outward surface is exactly **3 interfaces** (HTTP + MCP stay in lockstep): `config`, `analyze`, `progress` under `/api/decx/taint/` with MCP tools `taint_config` / `taint_analyze` / `taint_progress`
+- **Rules are appshark-style JSON documents** (one file = many named rules): each rule has `description` / `category` / `severity` and `sources` / `sinks` / `transfers` / `sanitizers` entries using Tai-e/Jimple signatures `<class: returnType name(paramTypes)>` and positions `result` / `base` / 0-based parameter index (wildcards unsupported in v1). Parsing/validation lives in `taint/rules/TaintRuleParser.kt`; rule sources in priority order: inline `rules` JSON > `rulePath` directory > built-in classpath `taint/rules/*.json` (`privacy-leak.json` defines `deviceIdLeak` / `locationLeak` / `userInputLeak`)
+- `TaintRuleCompiler` merges all selected rules into **one** Tai-e taint fragment (one analysis pass, one world build) and builds attribution tables; reported flows are attributed back to rule names/severities, and source-of-rule-A → sink-of-rule-B flows are flagged `cross_rule`
+- **`analyze` is async**: it validates synchronously (rules, target, engine readiness) and returns `{jobId, state: queued}`; execution is serialized on one daemon thread in `taint/TaintJobManager.kt` (states `queued → running → succeeded | failed | cancelled`, bounded queue of 8 waiting jobs → `TAINT_QUEUE_FULL`, finished jobs kept for the latest 32)
+- **`progress` returns state and results**: with `jobId` it returns state/stage/message/`progressLog` (latest 100 entries) and — when succeeded — the attributed flows as items plus `perRule` counts in the summary; without `jobId` it lists recent jobs; `cancel: true` cancels a queued/running job
+- Error codes: `INVALID_TAINT_CONFIG`, `TAINT_ANALYSIS_FAILED`, `TAINT_ENGINE_NOT_READY`, `TAINT_JOB_NOT_FOUND`, `TAINT_QUEUE_FULL`
+- The engine runs in a **separate worker JVM** spawned per analysis by `taint/TaintWorkerPool.kt` (Tai-e world is process-scoped); communication is NDJSON over stdin/stdout (`taint/protocol/WorkerMessage` / `WorkerProtocol`); the Tai-e entry point is `taint/worker/TaiEEngine.kt` (writes a temp Tai-e taint-config, runs pta, reads back `TaintFlow`s)
+- Worker classpath = `DECX_HOME/tai-e/lib/*.jar` (full Tai-e dist lib: tai-e + patched Soot/FlowDroid + runtime deps) + `DECX_HOME/tai-e/worker/decx-taint-worker.jar`; the worker fat jar contains only module classes + Gson + kotlin-stdlib + logback (stderr-only logging, stdout stays NDJSON)
+- **Tai-e never ships inside any DECX jar**: the Gradle `FetchTaiETask` in `decx-taint/build.gradle.kts` downloads the official `tai-e-<version>.zip` release once (Tai-e 0.5.4 is not on Maven Central; offline override `DECX_TAIE_ZIP=/path/to/zip`) and extracts it to `build/taie/lib` as a `compileOnly` dependency; `shadowJar` is configured as the worker binary (consumers get the plain jar via `shadowRuntimeElements.isCanBeConsumed = false`)
+- Compile-time note: the **full** Tai-e lib dir must be on the compile classpath — Tai-e's API signatures reference Soot/Jackson/ASM types and Kotlin eagerly resolves supertypes, so a lone tai-e jar fails with `Unresolved reference 'pascal'`
+- Runtime environment lives under **`DECX_HOME`** (`~/.decx` or `DECX_HOME` env var): `tai-e/lib/`, `tai-e/worker/`, `tai-e/java-benchmarks/JREs/` (not shipped in any jar), `platforms/`; dev fallbacks probe this module's `build/taie/lib` and `build/libs/decx-taint-worker.jar`; `DECX_TAINT_WORKER_JAR` overrides the worker jar location
 - Android analysis requires the APK's JRE version under `java-benchmarks/JREs/jre1.X/` (version inferred from targetSdk by Tai-e) and an Android SDK `platforms/` dir (`-ajs`)
+- CLI mirrors the 3 interfaces: `decx taint config [--rules <file|json>] [--rule-path <dir>] [--rule-names <a,b>]`, `decx taint analyze (--target-session <name> | --apk <path>) [--cs ...] [--timeout <sec>] ...`, `decx taint progress [<jobId>] [--watch] [--cancel]`; `decx self install tai-e` installs the Tai-e dist jars + worker jar into `DECX_HOME/tai-e` and reports the still-missing JREs/platforms
 ### Skill workflow details
 
 - Skill architecture and authoring rules are defined in `skills/AGENTS.md`.
@@ -151,7 +161,7 @@ cd decx
 ./gradlew dist
 ./gradlew :decx-plugin:shadowJar
 ./gradlew :decx-server:shadowJar
-./gradlew :decx-taint-worker:shadowJar
+./gradlew :decx-taint:shadowJar
 ./gradlew test
 ```
 
@@ -159,7 +169,9 @@ Artifacts copied by Gradle:
 
 - `decx/build/dist/jadx_decx_plugin-<version>.jar`
 - `decx/build/dist/decx-server-<version>.jar`
-- `decx/decx-taint-worker/build/libs/decx-taint-worker-all.jar` (taint worker fat jar)
+- `decx/build/dist/decx-taint-worker.jar` (taint worker fat jar; no Tai-e inside)
+
+Tai-e engine: `net.pascal-lab:tai-e` is not on Maven Central beyond 0.5.1 (the taint engine needs 0.5.4). `decx-taint`'s `fetchTaiE` task downloads the official GitHub release zip once and extracts its `lib/` into `build/taie/lib` as a `compileOnly` dependency — Tai-e never enters any shipped jar. Offline builds can set `DECX_TAIE_ZIP=/path/to/tai-e-<ver>.zip`.
 
 Jadx script plugin: `jadx-script-kotlin` is not on Maven Central. `decx-server`'s `fetchJadxScriptPlugin` task downloads its GitHub release zip once and extracts the plugin jar; the scripting runtime (Kotlin scripting, ktlint, kotlin-logging) comes from Maven Central. Offline builds can set `DECX_JADX_SCRIPT_ZIP=/path/to/jadx-script-kotlin-<ver>.zip`. The fat jar uses Zip64 (>65535 entries) and its `META-INF/services/jadx.api.plugins.JadxPlugin` merge is verified to contain both `DexInputPlugin` and `JadxScriptKotlinPlugin`.
 
@@ -335,11 +347,19 @@ Port coordination matters:
 | `decx/decx-plugin/src/main/kotlin/jadx/plugins/decx/lifecycle/PluginLifecycleManager.kt` | Startup sequencing |
 | `decx/decx-plugin/src/main/kotlin/jadx/plugins/decx/ui/DecxUIManager.kt` | Plugin UI and restart actions |
 | `decx/decx-server/src/main/kotlin/jadx/plugins/decx/server/DecxServerApp.kt` | Headless entry point |
+| `decx/decx-taint/src/main/kotlin/jadx/plugins/decx/taint/TaintExtension.kt` | Taint extension: 3 routes + 3 MCP tools (config / analyze / progress) |
+| `decx/decx-taint/src/main/kotlin/jadx/plugins/decx/taint/TaintService.kt` | Taint facade: loadConfig / startAnalysis / getProgress |
+| `decx/decx-taint/src/main/kotlin/jadx/plugins/decx/taint/TaintJobManager.kt` | Async job state machine, progress log, cancellation |
+| `decx/decx-taint/src/main/kotlin/jadx/plugins/decx/taint/rules/TaintRuleParser.kt` | Appshark-style JSON rule parsing + validation |
+| `decx/decx-taint/src/main/kotlin/jadx/plugins/decx/taint/rules/TaintRuleCompiler.kt` | Rule merge into one Tai-e fragment + flow attribution |
+| `decx/decx-taint/src/main/kotlin/jadx/plugins/decx/taint/TaintWorkerPool.kt` | Worker JVM spawn + NDJSON protocol driving |
+| `decx/decx-taint/src/main/kotlin/jadx/plugins/decx/taint/worker/TaiEEngine.kt` | Tai-e invocation inside the worker process |
 | `decx-cli/src/index.ts` | CLI command registration |
 | `decx-cli/src/commands/process.ts` | Session lifecycle and server spawning |
 | `decx-cli/src/commands/code.ts` | Common code-analysis commands |
 | `decx-cli/src/commands/android.ts` | Android-analysis commands |
-| `decx-cli/src/commands/self.ts` | CLI/server self-management |
+| `decx-cli/src/commands/self.ts` | CLI/server self-management (incl. `install tai-e`) |
+| `decx-cli/src/commands/taint.ts` | Taint CLI: config / analyze / progress commands |
 
 ## Agent Guidance For This Repo
 

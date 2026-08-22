@@ -13,14 +13,16 @@ data class AnalyzeRequest(
     val id: Long,
     val apk: String,
     val platforms: String?,
-    val config: TaintConfig
+    val config: TaintConfig,
+    /** Compiled rule set (Tai-e taint fragment) produced by TaintRuleCompiler. */
+    val taintFragment: Map<String, Any>
 ) {
     fun toWorkerMessage(): WorkerMessage = WorkerMessage.analyze(
         id = id,
         apk = apk,
         platforms = platforms,
         analysis = linkedMapOf(
-            "algorithm" to config.analysis.algorithm,
+            "algorithm" to "pta",
             "contextSensitivity" to config.analysis.contextSensitivity,
             "scope" to config.analysis.scope,
             "distinguishStrings" to config.analysis.distinguishStrings
@@ -29,26 +31,25 @@ data class AnalyzeRequest(
             "timeoutSec" to config.limits.timeoutSec,
             "maxPointerAnalyzeTimeSec" to config.limits.maxPointerAnalyzeTimeSec
         ),
-        taint = linkedMapOf(
-            "callSiteMode" to config.taint.callSiteMode,
-            "sources" to config.taint.sources,
-            "sinks" to config.taint.sinks,
-            "transfers" to config.taint.transfers,
-            "sanitizers" to config.taint.sanitizers
-        ),
-        raw = config.raw
+        taint = taintFragment,
+        raw = null
     )
 }
 
-class TaintException(message: String, cause: Throwable? = null) : RuntimeException(message, cause)
+class TaintException(message: String, cause: Throwable? = null) : RuntimeException(message, cause) {
+    companion object {
+        const val CODE_QUEUE_FULL = "TAINT_QUEUE_FULL"
+        const val CODE_CANCELLED = "TAINT_CANCELLED"
+    }
+}
 
 /**
  * Spawns and drives the taint worker JVM over NDJSON stdin/stdout.
  *
  * Each analyze spawns a fresh worker (the Tai-e world is process-scoped; a
  * worker cannot analyze twice without rebuilding). Worker classpath is
- * isolated: Tai-e modified jars first, then the worker fat jar — this is what
- * fixes the NoSuchMethodError seen in-process with the stock jars.
+ * isolated: the Tai-e dist jars from DECX_HOME/tai-e/lib, then the worker
+ * fat jar — Tai-e never rides inside any shipped DECX jar.
  */
 class TaintWorkerPool(
     private val env: TaintEnvironment,
@@ -58,6 +59,7 @@ class TaintWorkerPool(
     companion object {
         private const val WORKER_MAIN = "jadx.plugins.decx.taint.worker.TaintWorkerMainKt"
         private const val POLL_INTERVAL_MS = 100L
+        private const val READY_TIMEOUT_MS = 30_000L
         private const val SPARE_GRACE_MS = 10_000L
     }
 
@@ -65,6 +67,9 @@ class TaintWorkerPool(
 
     private val idGen = AtomicLong(0)
     @Volatile private var closed = false
+    @Volatile private var currentProcess: Process? = null
+
+    fun nextId(): Long = idGen.incrementAndGet()
 
     /**
      * Run one analysis to completion.
@@ -81,7 +86,7 @@ class TaintWorkerPool(
         }
 
         val process = spawn()
-        var destroyed = false
+        currentProcess = process
         try {
             val stdin = process.outputStream.bufferedWriter(Charsets.UTF_8)
             val stdout = process.inputStream.bufferedReader(Charsets.UTF_8)
@@ -94,7 +99,7 @@ class TaintWorkerPool(
             }.apply { isDaemon = true }.start()
 
             // wait for ready (bounded)
-            val readyDeadline = System.currentTimeMillis() + 30_000L
+            val readyDeadline = System.currentTimeMillis() + READY_TIMEOUT_MS
             var ready = false
             while (System.currentTimeMillis() < readyDeadline) {
                 if (stdout.ready()) {
@@ -146,12 +151,20 @@ class TaintWorkerPool(
             throw TaintException("Worker communication failed: ${e.message}", e)
         } finally {
             runCatching { process.destroy() }
-            destroyed = true
+            currentProcess = null
+        }
+    }
+
+    /** Destroy the in-flight worker JVM (used to cancel a running analysis). */
+    fun destroyCurrent() {
+        currentProcess?.let { process ->
+            runCatching { process.destroyForcibly() }
         }
     }
 
     override fun close() {
         closed = true
+        destroyCurrent()
     }
 
     // ------------------------------------------------------------------
@@ -160,7 +173,7 @@ class TaintWorkerPool(
 
     private fun spawn(): Process {
         val classpath = (
-            env.modifiedJars().map { it.absolutePath } + env.workerJar().absolutePath
+            env.taieLibJars().map { it.absolutePath } + env.workerJar().absolutePath
             ).joinToString(File.pathSeparator)
         val javaBin = File(System.getProperty("java.home"), "bin/java${if (isWindows()) ".exe" else ""}")
             .takeIf { it.isFile }?.absolutePath ?: "java"

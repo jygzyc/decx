@@ -56,6 +56,37 @@ export type ClassGrepOptions = {
     };
 };
 
+export type TaintConfigPayload = {
+    rules?: string;
+    rulePath?: string;
+    ruleNames?: string[];
+};
+
+export type TaintAnalyzePayload = {
+    target: {
+        session?: string;
+        apk?: string;
+        platforms?: string;
+    };
+    rules?: string;
+    rulePath?: string;
+    ruleNames?: string[];
+    analysis?: {
+        contextSensitivity?: string;
+        scope?: string;
+        distinguishStrings?: boolean;
+    };
+    limits?: {
+        timeoutSec?: number;
+        maxPointerAnalyzeTimeSec?: number;
+    };
+};
+
+export type TaintProgressPayload = {
+    jobId?: string;
+    cancel?: boolean;
+};
+
 export class DecxClient {
     private baseUrl: string;
     private timeout: number;
@@ -271,6 +302,18 @@ export class DecxClient {
 
     async getSystemServiceImpl(iface: string, page: number = 1): Promise<Record<string, unknown>> {
         return this.request("POST", "/api/decx/get_system_service_impl", { iface, page });
+    }
+
+    async taintConfig(options: TaintConfigPayload = {}, page: number = 1): Promise<Record<string, unknown>> {
+        return this.request("POST", "/api/decx/taint/config", { ...options, page });
+    }
+
+    async taintAnalyze(options: TaintAnalyzePayload, page: number = 1): Promise<Record<string, unknown>> {
+        return this.request("POST", "/api/decx/taint/analyze", { ...options, page });
+    }
+
+    async taintProgress(options: TaintProgressPayload = {}, page: number = 1): Promise<Record<string, unknown>> {
+        return this.request("POST", "/api/decx/taint/progress", { ...options, page });
     }
 
 }

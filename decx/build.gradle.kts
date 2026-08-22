@@ -53,8 +53,10 @@ tasks.register<Copy>("dist") {
     group = "build"
     dependsOn(":decx-plugin:dist")
     dependsOn(":decx-server:dist")
+    dependsOn(":decx-taint:dist")
 
     from("${project(":decx-plugin").projectDir}/build/dist")
     from("${project(":decx-server").projectDir}/build/dist")
+    from("${project(":decx-taint").projectDir}/build/dist")
     into(layout.buildDirectory.dir("dist"))
 }

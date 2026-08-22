@@ -13,6 +13,7 @@ import { checkForServerUpdate, installDecxServer, type InstallDecxServerResult }
 import { DecxError, ServerError, withErrorHandler } from "../utils/errors.js";
 import { VERSION } from "../core/version.js";
 import { installSkills, parseSkillClients } from "../core/skills-installer.js";
+import { installTaiE } from "../core/taie-installer.js";
 import { collectOption } from "./shared-options.js";
 
 interface CliPackageMetadata {
@@ -172,7 +173,7 @@ export function makeSelfCommand(): Command {
   const cmd = new Command("self");
   cmd.description("Install and update the bundled decx-server.jar and npm CLI package");
 
-  cmd
+  const installCmd = cmd
     .command("install")
     .summary("Download or replace the local decx-server.jar")
     .description("Install the decx-server.jar used by process open and framework open/run. The file is stored under DECX_HOME when set, otherwise ~/.decx.")
@@ -180,6 +181,19 @@ export function makeSelfCommand(): Command {
     .action(withErrorHandler(async (opts) => {
       const fmt = new Formatter();
       fmt.output(await executeSelfInstall(opts.prerelease));
+    }));
+
+  installCmd
+    .command("tai-e")
+    .summary("Install the Tai-e taint engine into DECX_HOME/tai-e")
+    .description(
+      "Download the official Tai-e release jars into DECX_HOME/tai-e/lib and the DECX taint worker jar into " +
+        "DECX_HOME/tai-e/worker. JRE libraries (java-benchmarks/JREs) and Android platforms are not bundled; " +
+        "the command reports how to provide them. Set DECX_TAIE_ZIP to install from a local Tai-e release zip."
+    )
+    .action(withErrorHandler(async () => {
+      const fmt = new Formatter();
+      fmt.output(await installTaiE());
     }));
 
   const skills = cmd

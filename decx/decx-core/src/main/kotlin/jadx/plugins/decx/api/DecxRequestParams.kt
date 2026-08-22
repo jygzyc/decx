@@ -32,9 +32,36 @@ class DecxRequestParams(private val payload: Map<String, Any>) {
         }
     }
 
+    /** Full payload view for surfaces with many optional/nested parameters. */
+    fun raw(): Map<String, Any> = payload
+
+    /** Optional string parameter: null when absent, blank rejected. */
+    fun optString(name: String): String? {
+        val value = payload[name] as? String ?: return null
+        if (value.isBlank()) throw IllegalArgumentException("Invalid parameter '$name': value cannot be blank")
+        return value
+    }
+
+    /** Optional object parameter (null when absent). */
+    fun obj(name: String): Map<String, Any>? {
+        @Suppress("UNCHECKED_CAST")
+        return payload.obj(name) as Map<String, Any>?
+    }
+
+    /** Optional list parameter (null when absent). */
+    fun list(name: String): List<Any>? {
+        @Suppress("UNCHECKED_CAST")
+        return payload.list(name) as List<Any>?
+    }
+
     private fun Map<*, *>.obj(name: String): Map<*, *>? {
         val raw = this[name] ?: return null
         return raw as? Map<*, *> ?: throw IllegalArgumentException("Invalid parameter '$name': expected object")
+    }
+
+    private fun Map<*, *>.list(name: String): List<*>? {
+        val raw = this[name] ?: return null
+        return raw as? List<*> ?: throw IllegalArgumentException("Invalid parameter '$name': expected array")
     }
 
     private fun Map<*, *>.boolean(name: String): Boolean? {

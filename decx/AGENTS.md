@@ -10,16 +10,14 @@ Broader repository context (CLI, skills, agent) is in the root `AGENTS.md`.
 decx-core (shared library, compile-only JADX dependency)
   → decx-plugin (JADX GUI plugin, Shadow JAR)
   → decx-server (standalone headless server, Shadow JAR with full JADX runtime)
-  → decx-taint (server-side taint extension, DecxExtension SPI impl)
-      → decx-taint-protocol (wire protocol shared with the Tai-e worker)
-      → decx-taint-worker (Tai-e worker fat jar, standalone process)
-decx-taint-poc (disposable Tai-e PoC, not shipped)
+decx-taint (self-contained taint module, DecxExtension SPI impl; also builds the
+            standalone Tai-e worker fat jar — bundled by decx-server/decx-plugin)
 ```
 
 - `decx-core/`: API contract (`api/`), HTTP & MCP server transport (`server/`), service layer (`service/`), utilities (`utils/`), public facade (`Decx.kt`), extension SPI (`extension/`)
 - `decx-plugin/`: Plugin lifecycle management, Swing UI, MCP controls
 - `decx-server/`: `DecxServerApp` main class, fat JAR bundling
-- `decx-taint/`: Taint extension implementation (`taint/` package moved out of decx-core); only on the classpath of decx-server / decx-plugin
+- `decx-taint/`: everything taint — JSON rules (`taint/rules/`), request config (`taint/config/`), async job manager, worker pool, NDJSON protocol (`taint/protocol/`), and the Tai-e worker entry points (`taint/worker/`); on the classpath of decx-server / decx-plugin only
 
 ## Extension SPI (taint is a plugin)
 
@@ -29,11 +27,33 @@ decx-taint-poc (disposable Tai-e PoC, not shipped)
 
 - `decx-taint` implements the SPI and ships the service registration file;
   `decx-server` and `decx-plugin` bundle it as a dependency, so taint routes
-  (`/api/decx/taint/*`) and MCP tools exist only when the module is loaded.
+  (`/api/decx/taint/config|analyze|progress`) and MCP tools
+  (`taint_config` / `taint_analyze` / `taint_progress`) exist only when the
+  module is loaded.
 - `DecxExtensions.isAvailable()` gates registration: without the Tai-e worker
   environment the extension is silent and contributes no routes/tools.
 - To add a new capability, create a module implementing `DecxExtension`;
   never add capability code back into `decx-core`.
+
+### decx-taint internals
+
+- **Rules**: appshark-style JSON documents (one file = many named rules;
+  built-ins under `src/main/resources/taint/rules/`). `TaintRuleParser`
+  validates signatures/positions; `TaintRuleCompiler` merges selected rules
+  into one Tai-e taint fragment and attributes reported flows back to rules.
+- **Async jobs**: `analyze` validates then returns `{jobId}`;
+  `TaintJobManager` serializes execution (`queued → running →
+  succeeded|failed|cancelled`, bounded queue, progress ring buffer);
+  `progress` returns state/log and, on success, attributed flows.
+- **Worker**: `TaintWorkerPool` spawns a fresh JVM per analysis (classpath =
+  Tai-e dist lib + worker fat jar, no Tai-e inside any shipped jar);
+  `worker/TaiEEngine.kt` drives `pascal.taie.Main` and reads back taint flows.
+- **Build**: `fetchTaiE` downloads the official Tai-e release zip once
+  (`DECX_TAIE_ZIP` overrides offline) into `build/taie/lib`, consumed as
+  `compileOnly` — the full lib dir is required at compile time because Tai-e's
+  API references Soot/Jackson/ASM types. `shadowJar` is repurposed as the
+  worker binary; consumers get the plain jar
+  (`shadowRuntimeElements.isCanBeConsumed = false`).
 
 ## Architecture Layers
 
@@ -122,13 +142,14 @@ High-memory decompiler operations must go through `DecompileGuard`.
 
 ```bash
 cd decx
-./gradlew dist              # Build all artifacts
+./gradlew dist              # Build all artifacts (plugin + server + taint worker)
 ./gradlew :decx-plugin:shadowJar   # Plugin fat JAR
 ./gradlew :decx-server:shadowJar   # Server fat JAR
+./gradlew :decx-taint:shadowJar    # Tai-e taint worker fat JAR
 ./gradlew test               # Run tests
 ```
 
-Artifacts: `decx/build/dist/jadx_decx_plugin-<version>.jar`, `decx/build/dist/decx-server-<version>.jar`
+Artifacts: `decx/build/dist/jadx_decx_plugin-<version>.jar`, `decx/build/dist/decx-server-<version>.jar`, `decx/build/dist/decx-taint-worker.jar`
 
 Version source: repository-root `version` file
 
