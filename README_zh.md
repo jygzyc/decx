@@ -36,6 +36,8 @@ decx self install
 decx self skills install --client opencode --client codex
 ```
 
+CLI 启动时会在后台检测新版本：结果缓存在 `DECX_HOME` 下，24 小时内不重复联网，且检测不会阻塞或影响当前命令。发现新版本时会在 stderr 打印一行提示，按提示运行 `decx self update` 即可升级。设置 `DECX_NO_UPDATE_CHECK=1` 可关闭该检测。
+
 #### Windows 上 `self update` 报 `spawnSync npm.cmd EINVAL`
 
 v4.0.1 之前的 CLI 在 Windows 上会直接启动 `npm.cmd`，部分 Node.js 版本会因此返回 `EINVAL`。旧版无法通过 `self update` 自行修复，需要先在 PowerShell 或 CMD 中手动更新一次：
@@ -116,7 +118,7 @@ decx process close --port 25419
 
 - 基于会话的 `code` 和 `android` 命令支持 `--page <n>`，也可用 `-s, --session <name>` 或 `--port <port>` 指向指定会话。
 - `decx code class-source` 支持用 `--limit <n>` 最多返回 N 行源码。
-- `decx process open <file>` 会透传标准 `jadx-cli` 参数，默认启用 `--show-bad-code` 和 `--no-imports`，并会移除 `--deobf`，因为 DECX 分析需要保留原始名称。
+- `decx process open <file>` 会透传标准 `jadx-cli` 参数，默认启用 `--show-bad-code` 和 `--no-imports`，并会移除 `--deobf`，因为 DECX 分析需要保留原始名称。同时默认注入 `--rename-flags case,valid`（剔除 `printable`），确保 `Ď锬볝觧` 这类重度混淆的 Unicode 标识符在反编译结果中原样保留，而不是被改名为 `m0` 之类的别名。
 - `decx process open <file> --script s1.jadx.kts --script s2.jadx.kts` 可在反编译时运行 [Jadx Kotlin 脚本](https://github.com/skylot/jadx/wiki/Jadx-scripts-guide)；服务端内置了 `jadx-script-kotlin` 插件，脚本顶层代码在加载时执行，`afterLoad` 块在类加载完成后执行。会话复用以目标文件 + 脚本集合为键。
 - `decx android resources` 支持用 `--include`、`--no-regex` 按文件名过滤。
 - `decx android device system-services` 和 `permission-info` 是 adb 命令，使用 `--serial` / `--adb-path`，不使用 `--port <port>`。

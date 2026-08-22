@@ -36,6 +36,8 @@ decx self install
 decx self skills install --client opencode --client codex
 ```
 
+The CLI checks for updates in the background on startup: the result is cached under `DECX_HOME` for 24 hours and the check never blocks or breaks the command you ran. When a newer release exists, a one-line hint on stderr points you to `decx self update`. Set `DECX_NO_UPDATE_CHECK=1` to disable the check.
+
 #### Windows `spawnSync npm.cmd EINVAL` during `self update`
 
 CLI versions older than v4.0.1 started `npm.cmd` directly on Windows, which can return `EINVAL` with some Node.js versions. An affected CLI cannot bootstrap this fix through `self update`; update it once from PowerShell or CMD instead:
@@ -116,7 +118,7 @@ Notes:
 
 - Session-backed `code` and `android` commands support `--page <n>` and can target a session with `-s, --session <name>` or a port with `--port <port>`.
 - `decx code class-source` supports `--limit <n>` to return at most N source lines.
-- `decx process open <file>` passes standard `jadx-cli` flags through, enables `--show-bad-code` and `--no-imports` by default, and strips `--deobf` because DECX analysis requires original names.
+- `decx process open <file>` passes standard `jadx-cli` flags through, enables `--show-bad-code` and `--no-imports` by default, and strips `--deobf` because DECX analysis requires original names. It also defaults `--rename-flags` to `case,valid` (dropping the `printable` token) so heavily obfuscated Unicode identifiers such as `Ď锬볝觧` survive decompilation instead of being aliased to `m0`.
 - `decx process open <file> --script s1.jadx.kts --script s2.jadx.kts` runs [Jadx Kotlin scripts](https://github.com/skylot/jadx/wiki/Jadx-scripts-guide) during decompilation; the server bundles the `jadx-script-kotlin` plugin, so top-level code runs at load and `afterLoad` blocks after classes load. Reuse is keyed on the target file plus the script set.
 - `decx android resources` supports file-name filtering with `--include` and `--no-regex`.
 - `decx android device system-services` and `permission-info` are adb-backed commands. They use `--serial` / `--adb-path`, not `--port <port>`.

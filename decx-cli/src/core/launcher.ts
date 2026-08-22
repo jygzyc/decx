@@ -119,8 +119,63 @@ export function decideOpenReuse(input: OpenReuseInput): OpenReuseDecision {
   return { action: "spawn" };
 }
 
+/**
+ * jadx rename flags DECX understands well enough to rewrite: `case` fixes class
+ * name casing, `valid` fixes identifiers that are not valid in Java, and
+ * `printable` replaces identifiers containing non-ASCII characters (common in
+ * obfuscated builds, e.g. `Ď锬볝觧`) with `m0`-style aliases. `all` = all three.
+ */
+const RENAME_FLAGS_ARGS = ["--rename-flags", "-rf"];
+const KNOWN_RENAME_FLAGS = new Set(["CASE", "VALID", "PRINTABLE", "ALL"]);
+
+/**
+ * Drop the `printable` token from a `--rename-flags` value so obfuscated
+ * Unicode identifiers survive decompilation. Returns null when the value
+ * cannot be parsed safely (unknown tokens, mixed `NONE`) — the caller then
+ * leaves the user's original spelling untouched.
+ */
+function sanitizeRenameFlagsValue(value: string): string | null {
+  const raw = value.trim();
+  if (raw.length === 0) return null;
+  const upper = raw.toUpperCase();
+  if (upper === "NONE") return "NONE";
+  if (upper === "ALL") return "CASE,VALID";
+  const tokens = raw.split(",").map((t) => t.trim()).filter((t) => t.length > 0);
+  if (tokens.length === 0 || !tokens.every((t) => KNOWN_RENAME_FLAGS.has(t.toUpperCase()))) return null;
+  const kept = tokens.filter((t) => t.toUpperCase() !== "PRINTABLE");
+  return kept.length > 0 ? kept.join(",") : "NONE";
+}
+
+function hasRenameFlagsArg(args: string[]): boolean {
+  return args.some((arg) =>
+    RENAME_FLAGS_ARGS.includes(arg) ||
+    RENAME_FLAGS_ARGS.some((name) => arg.startsWith(`${name}=`)));
+}
+
+/**
+ * Rewrite every `--rename-flags` / `-rf` occurrence (space and `=` forms),
+ * dropping the `printable` token. Unparseable values pass through unchanged.
+ */
+function stripPrintableRenameFlag(args: string[]): string[] {
+  const result: string[] = [];
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i];
+    const eqMatch = /^(--rename-flags|-rf)=(.*)$/.exec(arg);
+    if (RENAME_FLAGS_ARGS.includes(arg)) {
+      const value = args[i + 1] ?? "";
+      result.push(arg, sanitizeRenameFlagsValue(value) ?? value);
+      i++;
+    } else if (eqMatch) {
+      result.push(`${eqMatch[1]}=${sanitizeRenameFlagsValue(eqMatch[2]) ?? eqMatch[2]}`);
+    } else {
+      result.push(arg);
+    }
+  }
+  return result;
+}
+
 export function normalizeJadxPassthroughArgs(args: string[] = []): string[] {
-  const result = args.filter((arg) => arg !== "--deobf");
+  const result = stripPrintableRenameFlag(args.filter((arg) => arg !== "--deobf"));
   if (!result.includes("--show-bad-code")) {
     result.push("--show-bad-code");
   }
@@ -129,6 +184,12 @@ export function normalizeJadxPassthroughArgs(args: string[] = []): string[] {
   }
   if (!result.includes("-Pdex-input.verify-checksum=no")) {
     result.push("-Pdex-input.verify-checksum=no");
+  }
+  // jadx renames non-ASCII identifiers by default (`printable` flag), which
+  // hides heavily obfuscated Unicode names behind `m0`-style aliases in the
+  // decompiled source while DECX keeps querying by the original names.
+  if (!hasRenameFlagsArg(result)) {
+    result.push("--rename-flags", "case,valid");
   }
   return result;
 }
