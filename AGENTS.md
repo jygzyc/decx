@@ -84,6 +84,9 @@ Notable details:
 - `decx process open <file> --script <s1.jadx.kts> [--script <s2.jadx.kts> ...]` runs Jadx Kotlin scripts during decompilation; scripts are passed to decx-server as positional input files after the main target
 - Scripts execute at decompile time (top-level code at load, `jadx.afterLoad { }` blocks after classes load); the server bundles the `jadx-script-kotlin` plugin
 - Session reuse is keyed on the target file **plus** the exact script set; opening the same file with a different script set errors until `--force`
+- `--force` replaces alive sessions matching the same name **or** the same file hash (kills their JVMs before spawning the new one) instead of leaking orphan processes
+- While waiting for the server to become healthy, `process open` prints a heartbeat to stderr roughly every 15s (elapsed time + last server log line); stdout stays JSON-only
+- `process open --timeout <seconds>` bounds the health wait (default 300s). On timeout with the JVM still alive, the session record is **kept** and the error suggests `decx process check --port <port>` / `decx process close`; the record is only removed when the JVM exited
 - Standard `jadx-cli` flags are passed through by `process open`
 - `process open` auto-injects `--show-bad-code`, `--no-imports`, and `-Pdex-input.verify-checksum=no` (each skipped if already present), and intentionally strips `--deobf` because DECX relies on original symbol names
 - `process open` also injects `--rename-flags case,valid` by default (skipped when the user passed `--rename-flags`/`-rf` in any form) and strips the `printable` token from user-supplied rename-flag values: jadx's default `printable` rename replaces non-ASCII obfuscated identifiers (e.g. `Ď锬볝觧`) with `m0`-style aliases in decompiled source, which breaks DECX's original-name contract (`all` is rewritten to `case,valid`; `none` and unparseable values pass through untouched)
