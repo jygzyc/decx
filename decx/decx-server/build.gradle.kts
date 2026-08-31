@@ -75,7 +75,7 @@ abstract class FetchJadxScriptPluginTask : DefaultTask() {
 	}
 }
 
-val fetchJadxScriptPlugin by tasks.registering(FetchJadxScriptPluginTask::class) {
+val fetchJadxScriptPlugin = tasks.register<FetchJadxScriptPluginTask>("fetchJadxScriptPlugin") {
 	group = "jadx-script"
 	description = "Download jadx-script-kotlin plugin jar from the GitHub release"
 	jadxScriptVersion.set(libs.versions.jadxScriptKotlin)

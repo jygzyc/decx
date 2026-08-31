@@ -45,7 +45,7 @@ tasks.test {
     maxHeapSize = "4g"
 }
 
-val generateVersionProperties by tasks.registering {
+val generateVersionProperties = tasks.register("generateVersionProperties") {
     val outputFile = generatedVersionResourcesDir.map { it.file("version.properties") }
     val versionString = project.version.toString()
     inputs.property("version", versionString)
