@@ -25,12 +25,24 @@ dependencies {
     testImplementation(libs.junit.jupiter)
     testRuntimeOnly("org.junit.platform:junit-platform-launcher")
     testImplementation(libs.assertj.core)
+    // BoundedCodeCacheTest exercises jadx.api.ICodeInfo/SimpleCodeInfo;
+    // CodeUtilsHierarchyTest assembles smali -> dex to verify the metadata hierarchy checks.
+    testImplementation(libs.jadx.core) { isChanging = false }
+    testImplementation(libs.jadx.smali.input) { isChanging = false }
+    testImplementation(libs.jadx.dex.input) { isChanging = false }
 }
 
 sourceSets {
     main {
         resources.srcDir(generatedVersionResourcesDir)
     }
+}
+
+tasks.test {
+    // DecxFixtureIntegrationTest loads the real sieve.apk fixture; the Gradle
+    // default 512m heap would trip DecompileGuard's minFreeHeapBytes gate and
+    // silently deny all decompilation.
+    maxHeapSize = "4g"
 }
 
 val generateVersionProperties by tasks.registering {

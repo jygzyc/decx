@@ -263,9 +263,17 @@ export async function openAnalysisTarget(
 
   // `--force` means restart: kill alive servers this spawn replaces (same
   // name or same file) so old JVMs cannot linger as memory-eating orphans.
+  // A failed kill aborts the spawn: overwriting the session record while the
+  // old JVM lives would orphan it permanently (this was the pre-4.2 behavior).
   for (const stale of pickForceReplaceSessions(mgr.listAliveSessions(), fileName, fileHash)) {
-    logCliEvent({ command: "process", action: "open", session: stale.name, replacedByForce: true, pid: stale.pid, port: stale.port });
-    await killProcessGroup(stale.pid);
+    const killResult = await killProcessGroup(stale.pid);
+    logCliEvent({ command: "process", action: "open", session: stale.name, replacedByForce: true, pid: stale.pid, port: stale.port, killResult });
+    if (killResult === "failed") {
+      throw new ProcessError(
+        `--force could not stop previous session '${stale.name}' (pid ${stale.pid}, port ${stale.port}); ` +
+        `refusing to spawn a duplicate server. Kill pid ${stale.pid} manually, then retry.`,
+      );
+    }
     mgr.removeSession(stale.name);
   }
 
@@ -411,45 +419,48 @@ export async function waitForServer(
 }
 
 /**
+ * Outcome of [killProcessGroup]: the caller must only drop the session record
+ * for "killed"/"already-dead" — dropping it after "failed" orphans the JVM.
+ */
+export type KillResult = "killed" | "already-dead" | "failed";
+
+function isPidAlive(pid: number): boolean {
+  try { process.kill(pid, 0); return true; } catch { return false; }
+}
+
+async function waitForDeath(pid: number, timeoutMs: number): Promise<boolean> {
+  const start = Date.now();
+  while (Date.now() - start < timeoutMs) {
+    if (!isPidAlive(pid)) return true;
+    await new Promise(r => setTimeout(r, 50));
+  }
+  return !isPidAlive(pid);
+}
+
+/**
  * Kill an entire process group (handles detached processes with children).
  * On Unix, uses negative PID to signal the process group.
  * On Windows, uses taskkill /T to kill the process tree.
  */
-export async function killProcessGroup(pid: number): Promise<boolean> {
+export async function killProcessGroup(pid: number): Promise<KillResult> {
+  if (!isPidAlive(pid)) return "already-dead";
   if (process.platform === "win32") {
     return killProcessTreeWin(pid);
   }
 
-  const tryKill = (sig: string) => {
-    try {
-      // Negative PID = kill entire process group (for detached: true)
-      process.kill(-pid, sig as NodeJS.Signals);
-      return true;
-    }
-    catch { return false; }
-  };
+  // Negative PID = kill entire process group (for detached: true)
+  try { process.kill(-pid, "SIGTERM"); } catch { /* group signal best-effort */ }
+  if (await waitForDeath(pid, 2000)) return "killed";
 
-  if (!tryKill("SIGTERM")) return false;
+  try { process.kill(-pid, "SIGKILL"); } catch { /* fall back to direct kill */ }
+  if (await waitForDeath(pid, 2000)) return "killed";
 
-  const t1 = Date.now();
-  while (Date.now() - t1 < 500) {
-    try { process.kill(pid, 0); }
-    catch { return true; }
-    await new Promise(r => setTimeout(r, 50));
-  }
-
-  if (!tryKill("SIGKILL")) return false;
-
-  const t2 = Date.now();
-  while (Date.now() - t2 < 1000) {
-    try { process.kill(pid, 0); }
-    catch { return true; }
-    await new Promise(r => setTimeout(r, 50));
-  }
-  return false;
+  // Last resort: direct kill in case the process was not a group leader.
+  try { process.kill(pid, "SIGKILL"); } catch { /* already gone */ }
+  return (await waitForDeath(pid, 1000)) ? "killed" : "failed";
 }
 
-function killProcessTreeWin(pid: number): Promise<boolean> {
+async function killProcessTreeWin(pid: number): Promise<KillResult> {
   const tryTaskkill = (force: boolean): boolean => {
     try {
       execSync(`taskkill /T${force ? " /F" : ""} /PID ${pid}`, { stdio: "ignore" });
@@ -457,27 +468,13 @@ function killProcessTreeWin(pid: number): Promise<boolean> {
     } catch { return false; }
   };
 
-  // Try graceful kill first
+  // Graceful kill first (often a no-op for windowless JVMs, hence the verify
+  // loop), then a verified force kill. Only death counts — taskkill's exit
+  // code alone is not proof the process tree is gone.
   tryTaskkill(false);
-
-  return new Promise<boolean>(resolve => {
-    const check = (deadline: number) => {
-      try { process.kill(pid, 0); } catch { return resolve(true); }
-      if (Date.now() > deadline) {
-        // Force kill as last resort
-        if (tryTaskkill(true)) {
-          setTimeout(() => {
-            try { process.kill(pid, 0); resolve(false); } catch { resolve(true); }
-          }, 1000);
-        } else {
-          resolve(false);
-        }
-        return;
-      }
-      setTimeout(() => check(deadline), 50);
-    };
-    setTimeout(() => check(Date.now() + 2000), 500);
-  });
+  if (await waitForDeath(pid, 2000)) return "killed";
+  tryTaskkill(true);
+  return (await waitForDeath(pid, 2000)) ? "killed" : "failed";
 }
 
 export function extractPassthroughArgs(argv: readonly string[] = process.argv): string[] {

@@ -1,29 +1,55 @@
 package jadx.plugins.decx.utils
 
+import jadx.api.JadxArgs
+import jadx.api.JadxDecompiler
 import jadx.api.JavaClass
-import java.util.concurrent.ConcurrentHashMap
-import java.util.concurrent.atomic.AtomicLong
-import java.util.zip.Deflater
-import java.util.zip.Inflater
+import jadx.api.JavaMethod
+import java.util.concurrent.LinkedBlockingQueue
 
 /**
- * Single authority for decompilation: limit checking, triggering [decompile], and
- * caching the decompiled source (compressed) so repeated reads of the same class
- * source never re-decompile.
+ * Single authority for everything derived from the decompiler that must be
+ * guarded, bounded, or lazily indexed:
  *
- * Call [decompile] when you only need the class to be decompiled (xref, method body).
- * Call [source] when you need the whole-class source string ([JavaClass.getCode] /
- * [JavaClass.getSmali]); it goes through the compressed cache.
+ *  - **decompile guard**: per-class limits (method count / smali size) plus a
+ *    free-heap gate, so one pathological class cannot OOM the server;
+ *  - **bounded code cache** (headless server): a byte-capped LRU [ICodeCache]
+ *    replacing JADX's default unbounded in-memory cache;
+ *  - **cold-class unloading**: a bounded, backpressured daemon thread unloads
+ *    classes whose code text was evicted, releasing JADX's per-class IR
+ *    (method bodies / CFG / attributes / cached smali) that would otherwise
+ *    stay resident; the decompile path blocks when the unload queue is full,
+ *    so evicted-but-unloaded IR is hard-bounded;
+ *  - **symbol inventory**: lazily built class/method name lists for
+ *    `get_classes` / `search_method` (metadata only, no decompilation).
+ *
+ * This was previously spread across DecompileGuard / DecxCodeCacheManager /
+ * BoundedCodeCache / SymbolIndex with a redundant compressed source cache on
+ * top. The compressed cache is gone (JADX already caches `code` in its code
+ * cache and `smali` per class), the unload coordinator and symbol inventory
+ * are folded in here, and [BoundedCodeCache] remains as the single code-cache
+ * implementation.
+ *
+ * Lifecycle:
+ *  - headless server: [installBoundedCodeCache] on the `JadxArgs` before
+ *    constructing the decompiler, then [attach] after construction.
+ *  - JADX GUI plugin: no bounded cache needed (the GUI has its own disk-backed
+ *    code cache and cleaner); only [reset] is used on unload.
  */
 object DecompileGuard {
-    // Tunable with -D decx.decompile.* system properties for unusually large apps.
+    // Tunables: -Ddecx.decompile.* for unusually large targets.
     private const val DEFAULT_MAX_SMALI_CHARS = 5_000_000
     private const val DEFAULT_MAX_METHODS = 8_000
     private const val DEFAULT_MIN_FREE_HEAP_BYTES = 512L * 1024L * 1024L
+    private const val HARD_CAP_CODE_CACHE_MAX_BYTES = 4L * 1024L * 1024L * 1024L
+    private const val DEFAULT_MAX_PENDING_UNLOADS = 4096
 
     private val maxSmaliChars = intProperty("decx.decompile.maxSmaliChars", DEFAULT_MAX_SMALI_CHARS)
     private val maxMethods = intProperty("decx.decompile.maxMethods", DEFAULT_MAX_METHODS)
     private val minFreeHeapBytes = longProperty("decx.decompile.minFreeHeapBytes", DEFAULT_MIN_FREE_HEAP_BYTES)
+    // Explicit -D property wins; otherwise default to min(4G, heap/2) so small
+    // -Xmx machines don't get a cache cap they can never actually satisfy.
+    private val codeCacheMaxBytes = longProperty("decx.decompile.codeCacheMaxBytes", defaultCodeCacheMaxBytes())
+    private val maxPendingUnloads = intProperty("decx.decompile.maxPendingUnloads", DEFAULT_MAX_PENDING_UNLOADS)
 
     enum class Purpose {
         JAVA,
@@ -54,37 +80,147 @@ object DecompileGuard {
         )
     }
 
-    // ==================== source cache ====================
+    // ==================== bounded code cache + cold-class unloading ====================
 
-    private val sourceCache = ConcurrentHashMap<String, ByteArray>()
-    private val hits = AtomicLong(0)
-    private val misses = AtomicLong(0)
-    private val compressedBytes = AtomicLong(0)
-    private val originalBytes = AtomicLong(0)
+    @Volatile
+    private var codeCache: BoundedCodeCache? = null
 
-    private fun cacheKey(clazz: JavaClass, purpose: Purpose) = "${clazz.fullName}::${purpose}"
+    @Volatile
+    private var decompiler: JadxDecompiler? = null
+
+    @Volatile
+    private var unloadIndex: Map<String, JavaClass>? = null
+
+    private val pendingUnloads = LinkedBlockingQueue<String>(maxPendingUnloads)
+
+    @Volatile
+    private var unloadWorker: Thread? = null
 
     /**
-     * Return the whole-class source for [purpose], decompiling (and compressed-caching)
-     * on cache miss. Uses [decompile] for limit checking / triggering decompilation.
-     *
-     * Cache hits are lock-free; only the miss path reaches the synchronized [decompile].
+     * Install the bounded code cache onto [jadxArgs]. Call before constructing
+     * the `JadxDecompiler` (headless server only). The GUI plugin skips this:
+     * JADX GUI already manages a disk-backed code cache.
      */
-    fun source(clazz: JavaClass, purpose: Purpose = Purpose.JAVA): Decision {
-        val key = cacheKey(clazz, purpose)
-        sourceCache.get(key)?.let { compressed ->
-            hits.incrementAndGet()
-            val code = decompress(compressed)
-            return if (code != null) {
-                Decision(allowed = true, code = code)
-            } else {
-                // Corrupt entry — fall through to re-decompile.
-                sourceCache.remove(key)
-                source(clazz, purpose)
+    fun installBoundedCodeCache(jadxArgs: JadxArgs) {
+        val cache = codeCache ?: BoundedCodeCache(codeCacheMaxBytes) { name -> pendingUnloads.put(name) }.also {
+            codeCache = it
+            startUnloadWorker()
+        }
+        jadxArgs.codeCache = cache
+    }
+
+    /** Wire the decompiler used to resolve unload targets. Call after construction, before [JadxDecompiler.load]. */
+    fun attach(decompiler: JadxDecompiler) {
+        this.decompiler = decompiler
+        this.unloadIndex = null
+    }
+
+    private fun startUnloadWorker() {
+        if (unloadWorker != null) return
+        unloadWorker = Thread({
+            while (true) {
+                try {
+                    // Block until an evicted class needs unloading. If the
+                    // decompile thread fills the bounded queue, its put() blocks
+                    // here-until-drained, which is the backpressure that keeps
+                    // evicted-but-unloaded IR bounded.
+                    unloadIfCold(pendingUnloads.take())
+                } catch (_: InterruptedException) {
+                    return@Thread
+                } catch (e: Exception) {
+                    LogUtils.warn("Code cache unload failed: {}", e.message ?: "unknown")
+                }
+            }
+        }, "decx-code-cache-evictor").apply {
+            isDaemon = true
+            start()
+        }
+    }
+
+    private fun unloadIfCold(name: String) {
+        if (codeCache?.contains(name) == true) return // re-cached since eviction -> still hot
+        val clazz = resolveUnloadTarget(name) ?: return
+        try {
+            clazz.unload()
+        } catch (e: Exception) {
+            LogUtils.warn("Failed to unload class {}: {}", name, e.message ?: "unknown")
+        }
+    }
+
+    private fun resolveUnloadTarget(name: String): JavaClass? {
+        var index = unloadIndex
+        if (index == null) {
+            val d = decompiler ?: return null
+            // Top-level classes only: inner classes never enter the code cache.
+            index = d.classes.associateBy { it.rawName }
+            unloadIndex = index
+        }
+        return index[name]
+    }
+
+    // ==================== symbol inventory ====================
+
+    @Volatile
+    private var symbolClassNames: List<String>? = null
+
+    @Volatile
+    private var symbolMethods: List<JavaMethod>? = null
+
+    @Volatile
+    private var symbolBuiltFor: JadxDecompiler? = null
+
+    fun classNames(decompiler: JadxDecompiler): List<String> {
+        ensureSymbolsBuilt(decompiler)
+        return symbolClassNames!!
+    }
+
+    fun methods(decompiler: JadxDecompiler): List<JavaMethod> {
+        ensureSymbolsBuilt(decompiler)
+        return symbolMethods!!
+    }
+
+    private fun ensureSymbolsBuilt(decompiler: JadxDecompiler) {
+        if (symbolBuiltFor === decompiler && symbolClassNames != null) return
+        synchronized(this) {
+            if (symbolBuiltFor === decompiler && symbolClassNames != null) return
+            buildSymbols(decompiler)
+        }
+    }
+
+    private fun buildSymbols(decompiler: JadxDecompiler) {
+        val classes = try {
+            decompiler.classesWithInners
+        } catch (e: Exception) {
+            LogUtils.warn("Symbol index build failed to enumerate classes: {}", e.message ?: "unknown")
+            emptyList()
+        }
+        val names = ArrayList<String>(classes.size)
+        val mths = ArrayList<JavaMethod>()
+        for (clazz in classes) {
+            try {
+                names.add(clazz.fullName)
+            } catch (_: Exception) {
+            }
+            try {
+                for (m in clazz.methods) mths.add(m)
+            } catch (_: Exception) {
             }
         }
-        misses.incrementAndGet()
+        symbolClassNames = names
+        symbolMethods = mths
+        symbolBuiltFor = decompiler
+        LogUtils.info("Symbol index built: {} classes, {} methods", names.size, mths.size)
+    }
 
+    // ==================== source / decompile / check ====================
+
+    /**
+     * Return the whole-class source for [purpose]. Relies on JADX's own caches:
+     * `code` is served from the (bounded) code cache, `smali` from the per-class
+     * disassembly cache — so repeated reads do not re-decompile unless the class
+     * was unloaded for being cold.
+     */
+    fun source(clazz: JavaClass, purpose: Purpose = Purpose.JAVA): Decision {
         val decision = decompile(clazz, purpose)
         if (!decision.allowed) {
             return decision.copy(code = null)
@@ -93,51 +229,8 @@ object DecompileGuard {
             Purpose.SMALI -> safeRead { clazz.smali }
             else -> safeRead { clazz.code }
         } ?: return decision.copy(code = null, reason = "source unavailable: ${clazz.fullName}")
-
-        val srcBytes = src.toByteArray(Charsets.UTF_8)
-        val compressed = compress(srcBytes)
-        if (compressed != null) {
-            val previous = sourceCache.put(key, compressed)
-            if (previous == null) {
-                compressedBytes.addAndGet(compressed.size.toLong())
-                originalBytes.addAndGet(srcBytes.size.toLong())
-            } else {
-                compressedBytes.addAndGet((compressed.size - previous.size).toLong())
-            }
-        }
         return decision.copy(code = src)
     }
-
-    fun clearCache() {
-        val size = sourceCache.size
-        val compBytes = compressedBytes.get()
-        sourceCache.clear()
-        hits.set(0)
-        misses.set(0)
-        compressedBytes.set(0)
-        originalBytes.set(0)
-        LogUtils.info("Decompilation source cache cleared: {} entries ({} compressed bytes)", size, compBytes)
-    }
-
-    fun stats(): Map<String, Any> {
-        val h = hits.get()
-        val m = misses.get()
-        val total = h + m
-        val comp = compressedBytes.get()
-        val orig = originalBytes.get()
-        return linkedMapOf<String, Any>(
-            "kind" to "decompile_source",
-            "entries" to sourceCache.size,
-            "hits" to h,
-            "misses" to m,
-            "hit_rate" to (if (total > 0) "%.1f%%".format(h * 100.0 / total) else "N/A"),
-            "compressed_bytes" to comp,
-            "original_bytes" to orig,
-            "compression_ratio" to (if (comp > 0) "%.1fx".format(orig.toDouble() / comp) else "N/A")
-        )
-    }
-
-    // ==================== limit check + decompile ====================
 
     fun check(clazz: JavaClass, purpose: Purpose = Purpose.JAVA): Decision {
         val methodCount = try {
@@ -246,6 +339,35 @@ object DecompileGuard {
         return decision
     }
 
+    // ==================== maintenance / stats ====================
+
+    /** Clear the code cache and symbol inventory (keeps the bounded cache installed). */
+    fun reset() {
+        codeCache?.clear()
+        pendingUnloads.clear()
+        unloadIndex = null
+        synchronized(this) {
+            symbolClassNames = null
+            symbolMethods = null
+            symbolBuiltFor = null
+        }
+        LogUtils.info("DecompileGuard reset: code cache and symbol index cleared")
+    }
+
+    fun stats(): Map<String, Any> = linkedMapOf(
+        "kind" to "decompile",
+        "min_free_heap_bytes" to minFreeHeapBytes,
+        "max_methods" to maxMethods,
+        "max_smali_chars" to maxSmaliChars,
+        "code_cache" to (codeCache?.stats() ?: emptyMap<String, Any>()),
+        "symbols" to linkedMapOf(
+            "classes" to (symbolClassNames?.size ?: 0),
+            "methods" to (symbolMethods?.size ?: 0)
+        ),
+        "pending_unloads" to pendingUnloads.size,
+        "max_pending_unloads" to maxPendingUnloads
+    )
+
     // ==================== helpers ====================
 
     private fun availableHeapBytes(): Long {
@@ -268,43 +390,8 @@ object DecompileGuard {
         return System.getProperty(name)?.toLongOrNull()?.takeIf { it > 0 } ?: defaultValue
     }
 
-    internal fun compress(data: ByteArray): ByteArray? {
-        return try {
-            val deflater = Deflater(Deflater.BEST_SPEED)
-            deflater.setInput(data)
-            deflater.finish()
-            val buffer = ByteArray(data.size + 64)
-            val compressedSize = deflater.deflate(buffer)
-            deflater.end()
-            val result = ByteArray(compressedSize)
-            System.arraycopy(buffer, 0, result, 0, compressedSize)
-            result
-        } catch (e: Exception) {
-            LogUtils.warn("Failed to compress source: {}", e.message ?: "unknown")
-            null
-        }
-    }
-
-    internal fun decompress(compressed: ByteArray): String? {
-        return try {
-            val inflater = Inflater()
-            inflater.setInput(compressed)
-            var buffer = ByteArray((compressed.size.coerceAtLeast(1)) * 20)
-            var offset = 0
-            while (!inflater.finished()) {
-                val count = inflater.inflate(buffer, offset, buffer.size - offset)
-                if (count == 0 && !inflater.finished()) {
-                    val grown = ByteArray(buffer.size * 2)
-                    System.arraycopy(buffer, 0, grown, 0, offset)
-                    buffer = grown
-                }
-                offset += count
-            }
-            inflater.end()
-            String(buffer, 0, offset, Charsets.UTF_8)
-        } catch (e: Exception) {
-            LogUtils.warn("Failed to decompress source: {}", e.message ?: "unknown")
-            null
-        }
+    private fun defaultCodeCacheMaxBytes(): Long {
+        val halfHeap = Runtime.getRuntime().maxMemory() / 2
+        return minOf(HARD_CAP_CODE_CACHE_MAX_BYTES, halfHeap)
     }
 }

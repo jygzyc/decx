@@ -12,9 +12,8 @@ import jadx.plugins.decx.utils.AnalysisResultUtils
  * Default implementation of [DecxApi].
  *
  * Delegates to individual service classes. There is no generic response cache here:
- * decompilation acceleration is owned by [jadx.plugins.decx.utils.DecompileGuard]
- * (compressed source cache) and metadata scans by SymbolIndex. See
- * docs/decx-search-cache-upgrade-plan.md.
+ * decompilation guarding/caching and metadata indexing are owned by
+ * [jadx.plugins.decx.utils.DecompileGuard].
  */
 class DecxApiImpl(
     decompiler: JadxDecompiler,

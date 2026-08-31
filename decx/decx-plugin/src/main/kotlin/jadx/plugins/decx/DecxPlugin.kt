@@ -10,7 +10,6 @@ import jadx.plugins.decx.api.DecxError
 import jadx.plugins.decx.ui.DecxUIManager
 import jadx.plugins.decx.server.DecxMcpServer
 import jadx.plugins.decx.utils.DecompileGuard
-import jadx.plugins.decx.utils.SymbolIndex
 import jadx.plugins.decx.utils.LogUtils
 import jadx.plugins.decx.utils.PreferencesManager
 
@@ -66,8 +65,7 @@ class DecxPlugin : JadxPlugin {
     override fun unload() {
         try {
             LogUtils.info("Cleaning up Decx plugin resources...")
-            DecompileGuard.clearCache()
-            SymbolIndex.clear()
+            DecompileGuard.reset()
             server?.stop()
             PreferencesManager.clearCache()
         } catch (e: Exception) {

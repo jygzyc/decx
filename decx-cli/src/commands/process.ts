@@ -119,14 +119,19 @@ export function makeProcessCommand(): Command {
           throw new ProcessError("Cannot combine --all with session name or --port");
         }
         const sessions = mgr.listAliveSessions();
-        const killed: string[] = [], dead: string[] = [];
+        const killed: string[] = [], dead: string[] = [], failed: string[] = [];
         for (const s of sessions) {
-          const alive = await killProcessGroup(s.pid);
+          const result = await killProcessGroup(s.pid);
+          if (result === "failed") {
+            // Keep the session record so the JVM stays tracked and killable.
+            failed.push(s.name);
+            continue;
+          }
           mgr.removeSession(s.name);
-          (alive ? killed : dead).push(s.name);
+          (result === "killed" ? killed : dead).push(s.name);
         }
-        logCliEvent({ command: "process", action: "close", mode: "all", killed, dead });
-        fmt.output({ cleaned, killed, dead });
+        logCliEvent({ command: "process", action: "close", mode: "all", killed, dead, failed });
+        fmt.output({ cleaned, killed, dead, failed });
         return;
       }
 
@@ -161,10 +166,17 @@ export function makeProcessCommand(): Command {
         throw new ProcessError(`Session not found: ${name}`);
       }
 
-      const alive = await killProcessGroup(session.pid);
+      const result = await killProcessGroup(session.pid);
+      if (result === "failed") {
+        // Keep the record: removing it would orphan the still-running JVM.
+        throw new ProcessError(
+          `Failed to stop session '${name}' (pid ${session.pid}); the process is still running. ` +
+          `Kill pid ${session.pid} manually, then retry 'decx process close ${name}'.`
+        );
+      }
       mgr.removeSession(name);
-      logCliEvent({ command: "process", action: "close", session: name, alive });
-      fmt.output({ cleaned, killed: alive ? [name] : [], dead: alive ? [] : [name] });
+      logCliEvent({ command: "process", action: "close", session: name, killResult: result });
+      fmt.output({ cleaned, killed: result === "killed" ? [name] : [], dead: result === "already-dead" ? [name] : [] });
       } catch (err) { handleCliError(err, fmt); }
     });
 

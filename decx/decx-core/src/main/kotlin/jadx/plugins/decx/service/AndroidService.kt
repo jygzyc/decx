@@ -364,7 +364,6 @@ class AndroidService(override val decompiler: JadxDecompiler) : DecompilerBacked
                 .filter { jcls -> compiled.matches(jcls.fullName) }
                 .let { filtered -> filter.limit(filtered) }
             classes.forEach { jcls ->
-                if ("registerReceiver" !in jcls.smali) return@forEach
                 for (jmth in jcls.methods) {
                     val mthCode = jmth.codeStr
                     if ("registerReceiver" !in mthCode) continue
@@ -475,11 +474,11 @@ class AndroidService(override val decompiler: JadxDecompiler) : DecompilerBacked
                 if (!compiled.matches(interfaceName)) {
                     return@mapNotNull null
                 }
-                val stubSmaliName = stub.fullName.replace(".Stub", "\$Stub").replace('.', '/')
+                val stubSmaliName = stub.rawName
                 val implClasses = decompiler.classesWithInners.filter { clazz ->
                     clazz.fullName != stub.fullName &&
                     !clazz.fullName.endsWith(".Proxy") &&
-                    clazz.smali.contains(".super L$stubSmaliName")
+                    CodeUtils.extendsClass(clazz, stubSmaliName)
                 }
                 mapOf(
                     "interface" to interfaceName,
@@ -558,7 +557,7 @@ class AndroidService(override val decompiler: JadxDecompiler) : DecompilerBacked
             val interfaceClazz = decompiler.searchJavaClassOrItsParentByOrigFullName(iface)
                 ?: return DecxApiResult.fail( AnalysisResultUtils.error(DecxKind.SYSTEM_SERVICE_IMPL, query, DecxError.INTERFACE_NOT_FOUND, iface))
             val serviceClazz = decompiler.classes.firstOrNull {
-                it.smali.contains(".super L${interfaceClazz.fullName.replace('.', '/')}\$Stub;")
+                CodeUtils.extendsClass(it, interfaceClazz.rawName + "\$Stub")
             } ?: return DecxApiResult.fail( AnalysisResultUtils.error(DecxKind.SYSTEM_SERVICE_IMPL, query, DecxError.SERVICE_IMPL_NOT_FOUND, iface))
 
             val methodItems = serviceClazz.methods.map { method ->

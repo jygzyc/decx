@@ -5,6 +5,7 @@ import jadx.cli.JadxCLIArgs
 import jadx.cli.LogHelper
 import jadx.plugins.decx.Decx
 import jadx.plugins.decx.DecxConstants
+import jadx.plugins.decx.utils.DecompileGuard
 import jadx.plugins.decx.utils.PluginUtils
 
 /**
@@ -91,9 +92,14 @@ object DecxServerApp {
 		println()
 
 		println("[*] Initializing decompiler...")
+		// Bound JADX's decompiled-code cache and unload cold classes: the
+		// headless server otherwise uses JADX's default unbounded in-memory
+		// code cache, which is the dominant heap consumer on large apps.
+		DecompileGuard.installBoundedCodeCache(jadxArgs)
 		val decompiler: JadxDecompiler
 		try {
 			decompiler = JadxDecompiler(jadxArgs)
+			DecompileGuard.attach(decompiler)
 			decompiler.load()
 		} catch (e: Exception) {
 			System.err.println("Error: Failed to initialize decompiler: ${e.message}")

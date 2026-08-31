@@ -371,7 +371,7 @@ class ContextService(override val decompiler: JadxDecompiler) : DecompilerBacked
             val interfaceClazz = decompiler.searchJavaClassOrItsParentByOrigFullName(iface)
                 ?: return DecxApiResult.fail(AnalysisResultUtils.error(DecxKind.IMPLEMENTATIONS, query, DecxError.INTERFACE_NOT_FOUND, iface))
             val implementingClasses = decompiler.classesWithInners.filter {
-                it.smali.contains(".implement L${interfaceClazz.fullName.replace('.', '/')};")
+                CodeUtils.implementsInterface(it, interfaceClazz.rawName)
             }
             val items = implementingClasses.map { clazz ->
                 AnalysisResultUtils.item(
@@ -395,7 +395,7 @@ class ContextService(override val decompiler: JadxDecompiler) : DecompilerBacked
             val clazz = decompiler.searchJavaClassOrItsParentByOrigFullName(cls)
                 ?: return DecxApiResult.fail(AnalysisResultUtils.error(DecxKind.SUBCLASSES, query, DecxError.CLASS_NOT_FOUND, cls))
             val subClasses = decompiler.classesWithInners.filter {
-                it.smali.contains(".super L${clazz.fullName.replace(".", "/")};")
+                CodeUtils.extendsClass(it, clazz.rawName)
             }
             val items = subClasses.map { sub ->
                 AnalysisResultUtils.item(

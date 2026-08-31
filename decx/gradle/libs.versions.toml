@@ -28,6 +28,7 @@ jadx-core = { group = "io.github.skylot", name = "jadx-core", version.ref = "jad
 jadx-gui = { group = "io.github.skylot", name = "jadx-gui", version.ref = "jadx" }
 jadx-cli = { group = "io.github.skylot", name = "jadx-cli", version.ref = "jadx" }
 jadx-smali-input = { group = "io.github.skylot", name = "jadx-smali-input", version.ref = "jadx" }
+jadx-dex-input = { group = "io.github.skylot", name = "jadx-dex-input", version.ref = "jadx" }
 kotlin-reflect = { group = "org.jetbrains.kotlin", name = "kotlin-reflect", version.ref = "kotlin" }
 kotlin-scripting-jvm-host = { group = "org.jetbrains.kotlin", name = "kotlin-scripting-jvm-host", version.ref = "kotlinScripting" }
 kotlin-scripting-ide-services = { group = "org.jetbrains.kotlin", name = "kotlin-scripting-ide-services", version.ref = "kotlinScripting" }

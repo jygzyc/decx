@@ -7,6 +7,7 @@ import jadx.api.JavaMethod
 import jadx.api.JavaNode
 import jadx.core.dex.info.MethodInfo
 import jadx.core.dex.instructions.args.ArgType
+import jadx.core.dex.nodes.ClassNode
 import jadx.core.dex.visitors.prepare.CollectConstValues
 import java.util.ArrayList
 import java.util.HashMap
@@ -32,6 +33,46 @@ object CodeUtils {
             }
         }
         return null
+    }
+
+    /**
+     * Metadata-only hierarchy checks (no smali rendering / decompilation), used
+     * by the scan endpoints in place of `clazz.smali.contains(".super …")` /
+     * `".implements …"` scans, which cached full disassembly text for every
+     * scanned class with no way to release it.
+     *
+     * Semantics: a class matches if it — **or any of its nested classes (inner
+     * or inlined, recursively)** — directly declares the relation. Nested
+     * declarations belong to the outer class's smali text anyway, so this
+     * mirrors the old scan's effective behavior: asking "which class implements
+     * View.OnClickListener" still surfaces `SomeActivity` even when the actual
+     * implementor is a compiler-generated `SomeActivity$$ExternalSyntheticLambda`
+     * inlined into it (while the synthetic class also remains individually
+     * searchable in `classesWithInners`).
+     *
+     * Names are compared in raw (`$`-separated inner classes) form, which also
+     * fixes the previous smali matching for inner classes (fullName uses `.`).
+     */
+    fun extendsClass(clazz: JavaClass, parentRawName: String): Boolean =
+        hierarchyNodes(clazz.classNode).any { it.superClass?.getObject() == parentRawName }
+
+    fun implementsInterface(clazz: JavaClass, ifaceRawName: String): Boolean =
+        hierarchyNodes(clazz.classNode).any { node ->
+            node.interfaces.any { it.getObject() == ifaceRawName }
+        }
+
+    /** The class itself plus its inner and inlined classes, recursively. */
+    private fun hierarchyNodes(root: ClassNode): Sequence<ClassNode> = sequence {
+        val visited = HashSet<ClassNode>()
+        val queue = ArrayDeque<ClassNode>()
+        visited.add(root)
+        queue.add(root)
+        while (queue.isNotEmpty()) {
+            val current = queue.removeFirst()
+            yield(current)
+            for (inner in current.innerClasses) if (visited.add(inner)) queue.add(inner)
+            for (inlined in current.inlinedClasses) if (visited.add(inlined)) queue.add(inlined)
+        }
     }
 
     fun methodSignature(mth: JavaMethod): String {

@@ -8,7 +8,6 @@ import jadx.plugins.decx.api.DecxApiResult
 import jadx.plugins.decx.utils.AnalysisResultUtils
 import jadx.plugins.decx.utils.CodeUtils
 import jadx.plugins.decx.utils.DecompileGuard
-import jadx.plugins.decx.utils.SymbolIndex
 import jadx.plugins.decx.utils.RouteTelemetry
 import jadx.plugins.decx.utils.ItemKind
 import java.util.regex.PatternSyntaxException
@@ -21,7 +20,7 @@ class CommonService(override val decompiler: JadxDecompiler) : DecompilerBackedS
         return try {
             val compiled = filter.compile()
                 ?: return DecxApiResult.fail(AnalysisResultUtils.error(DecxKind.CLASSES, query, DecxError.INVALID_PARAMETER, "invalid filter regex"))
-            val classes = SymbolIndex.classNames(decompiler)
+            val classes = DecompileGuard.classNames(decompiler)
                 .filter { className -> compiled.matches(className) }
                 .let { classNames -> filter.limit(classNames) }
             val items = classes.map { cls ->
@@ -180,7 +179,7 @@ class CommonService(override val decompiler: JadxDecompiler) : DecompilerBackedS
                 return DecxApiResult.fail( AnalysisResultUtils.error(DecxKind.SEARCH_METHOD, query, DecxError.EMPTY_SEARCH_KEY))
             }
             val lowerMethodName = mth.lowercase()
-            val mths = SymbolIndex.methods(decompiler)
+            val mths = DecompileGuard.methods(decompiler)
                 .parallelStream()
                 .filter { method -> method.fullName.lowercase().contains(lowerMethodName) }
                 .collect(java.util.stream.Collectors.toList())

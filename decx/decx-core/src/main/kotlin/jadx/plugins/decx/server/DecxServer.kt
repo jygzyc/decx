@@ -9,7 +9,6 @@ import jadx.plugins.decx.api.DecxApi
 import jadx.plugins.decx.api.DecxRoutes
 import jadx.plugins.decx.api.DecxApiImpl
 import jadx.plugins.decx.utils.DecompileGuard
-import jadx.plugins.decx.utils.SymbolIndex
 import jadx.plugins.decx.utils.RouteTelemetry
 import jadx.plugins.decx.utils.LogUtils
 import jadx.plugins.decx.utils.PluginUtils
@@ -119,8 +118,7 @@ class DecxServer(
 
         Thread({
             try {
-                DecompileGuard.clearCache()
-                SymbolIndex.clear()
+                DecompileGuard.reset()
                 RouteTelemetry.reset()
                 LogUtils.info("Restarting server...")
                 stop()
