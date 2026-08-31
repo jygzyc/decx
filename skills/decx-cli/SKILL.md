@@ -72,6 +72,7 @@ Keep notes and outputs for work that may continue later in the working directory
 |---|---|
 | command missing, rejected, or uncertain | run nearest `--help` before retrying |
 | target/name conflict on `process open` | use a new `--name` or `--force` |
+| `--force` / `process close` errors with "could not stop session (pid …)" | the old JVM survived the kill; kill that pid manually, then retry the same command — the session record is kept on purpose |
 | unsupported framework OEM | supported values are `vivo`, `oppo`, `xiaomi`, `honor`, `google`, `samsung` |
 | `decx android framework` on Windows fails with "Windows requires WSL" | run inside WSL (install WSL and `debugfs`, e.g. `sudo apt install e2fsprogs`), or run on Linux/macOS |
 | need exact command syntax | read `references/command-reference.md` |
@@ -84,6 +85,8 @@ Concrete failure modes from real sessions. These are not generic CLI tips; they 
 - **`decx code search-global` without `--limit`**: without `--limit` the server returns all matches, potentially hundreds, which burns context and frequently hides the actual hit. Always set `--limit` to a small working set (start at 20-50) and refine.
 - **`process open` reuse is file-first**: when an alive session has the same file hash, DECX must reuse it even if a different `--name` was requested. A name collision matters only when no alive session matches the file; then use a fresh `--name`, pass `--force`, or close the conflicting session.
 - **`process open --script` is part of the reuse key**: scripts run at decompile time, so the same file with a different `--script` set than the alive session errors until `--force`. Reopening with the same scripts reuses the session.
+- **`process open` heartbeat on stderr is normal**: while waiting for server health, progress lines (elapsed + last log line) appear on stderr roughly every 15s; stdout stays JSON-only. `--timeout <seconds>` (default 300) bounds the wait; on timeout with the JVM alive the session is kept — follow up with `process status` / `process close`.
+- **hierarchy results may include two spellings of one hit**: `implementations` / `subclasses` attribute nested (inner / inlined lambda `$$ExternalSyntheticLambda*`) declarations to the outer class, and the synthetic class also appears as its own entry. Treat both as hits; do not deduplicate into a false negative.
 - **`decx android deep-links` / `dynamic-receivers` on a non-app target**: `decx android deep-links` returns a MANIFEST_NOT_FOUND error on targets without a manifest; `dynamic-receivers` is a code search and may return plausible-looking matches with no app semantics on a framework jar. For framework targets, use `decx android aidl-interfaces` and `decx android framework-service-implementation`.
 
 ## References

@@ -64,7 +64,7 @@ The JADX plugin does more than just expose the server:
 - Starts the embedded DECX HTTP server
 - Starts and stops the in-process Kotlin MCP HTTP server on `serverPort + 1`
 - Provides UI and restart hooks through `DecxUIManager`
-- Caches decompiled source on demand via `DecompileGuard` (compressed) for fast repeat queries; no background warmup
+- Bounds decompiler memory on headless servers: a byte-capped LRU code cache (`decx.decompile.cacheMaxBytes` → default `min(4G, -Xmx/2)`) plus a backpressured daemon that unloads evicted classes; see `DecompileGuard`
 
 ### CLI responsibilities
 
@@ -84,7 +84,7 @@ Notable details:
 - `decx process open <file> --script <s1.jadx.kts> [--script <s2.jadx.kts> ...]` runs Jadx Kotlin scripts during decompilation; scripts are passed to decx-server as positional input files after the main target
 - Scripts execute at decompile time (top-level code at load, `jadx.afterLoad { }` blocks after classes load); the server bundles the `jadx-script-kotlin` plugin
 - Session reuse is keyed on the target file **plus** the exact script set; opening the same file with a different script set errors until `--force`
-- `--force` replaces alive sessions matching the same name **or** the same file hash (kills their JVMs before spawning the new one) instead of leaking orphan processes
+- `--force` replaces alive sessions matching the same name **or** the same file hash: their JVMs are killed with verified death before the new server starts. A failed kill aborts the spawn (session record kept, pid reported) instead of leaking orphan processes; `process close` keeps the record on failed kills too
 - While waiting for the server to become healthy, `process open` prints a heartbeat to stderr roughly every 15s (elapsed time + last server log line); stdout stays JSON-only
 - `process open --timeout <seconds>` bounds the health wait (default 300s). On timeout with the JVM still alive, the session record is **kept** and the error suggests `decx process check --port <port>` / `decx process close`; the record is only removed when the JVM exited
 - Standard `jadx-cli` flags are passed through by `process open`
@@ -309,8 +309,8 @@ Port coordination matters:
 | `decx/decx-core/src/main/kotlin/jadx/plugins/decx/server/DecxMcpServer.kt` | In-process Kotlin MCP server lifecycle |
 | `decx/decx-core/src/main/kotlin/jadx/plugins/decx/server/McpHttpServer.kt` | Ktor CIO Streamable HTTP transport for MCP |
 | `decx/decx-core/src/main/kotlin/jadx/plugins/decx/server/McpToolRegistry.kt` | MCP tool surface, backed by DecxRoutes |
-| `decx/decx-core/src/main/kotlin/jadx/plugins/decx/utils/DecompileGuard.kt` | Guarded decompilation, high-memory skip, and compressed source cache |
-| `decx/decx-core/src/main/kotlin/jadx/plugins/decx/utils/SymbolIndex.kt` | Lazy class/method name inventory for `get_classes`/`search_method` |
+| `decx/decx-core/src/main/kotlin/jadx/plugins/decx/utils/DecompileGuard.kt` | Single authority for decompiler-derived state: decompile guards, bounded code cache + cold-class unloading, class/method symbol index |
+| `decx/decx-core/src/main/kotlin/jadx/plugins/decx/utils/BoundedCodeCache.kt` | Byte-bounded LRU `ICodeCache` installed by the headless server (JADX default is unbounded) |
 | `decx/decx-core/src/main/kotlin/jadx/plugins/decx/utils/RouteTelemetry.kt` | In-flight + per-endpoint latency telemetry via `/health` and logs |
 | `decx/decx-plugin/src/main/kotlin/jadx/plugins/decx/DecxPlugin.kt` | JADX plugin entry point |
 | `decx/decx-plugin/src/main/kotlin/jadx/plugins/decx/lifecycle/PluginLifecycleManager.kt` | Startup sequencing |

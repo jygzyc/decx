@@ -20,7 +20,7 @@
 - `-s, --session <name>` selects a session by name as an alternative to `--port <port>`.
 - All session-backed commands also accept `--page <n>` for pagination.
 - `process list` does not take `--port <port>`.
-- `process close` can close by name, by `--port <port>`, or all sessions with `--all`.
+- `process close` can close by name, by `--port <port>`, or all sessions with `--all`; a failed kill keeps the session record and errors with the pid — the still-running JVM stays tracked, never orphaned.
 - `process status` checks a named session or a specific `--port`; with neither, it auto-selects the only alive session and otherwise checks the configured default port. Do not pass both a name and `--port`.
 - `android framework collect/process/run/open` expose common framework options. For `open`, adb options are only used when resolving the generated jar path without an explicit `[jar]`.
 - Supported framework OEM values are `vivo`, `oppo`, `xiaomi`, `honor`, `google`, and `samsung`.
@@ -47,7 +47,8 @@ Open options:
 --port <port>     preferred server port; if unavailable, DECX chooses a random available port
 -n, --name <name>     explicit session name
 --mcp                 also start MCP Streamable HTTP server on port + 1
---force               reopen despite a conflicting session
+--force               replace conflicting sessions (same name or same file hash): their JVMs are killed and death-verified before the new server starts
+--timeout <seconds>   seconds to wait for server health (default 300)
 --script <file>       Jadx Kotlin script (.jadx.kts) run during decompilation; repeatable
 ```
 
@@ -56,13 +57,19 @@ It accepts local paths and `http(s)://` URLs. URLs are downloaded into DECX tmp 
 Standard JADX args after `process open` are forwarded with DECX defaults: `--deobf` is removed, and `--show-bad-code`, `--no-imports`, and `-Pdex-input.verify-checksum=no` are added when absent.
 `--script` files are positional inputs to `decx-server` and are evaluated by the bundled `jadx-script-kotlin` plugin during decompilation (top-level code at load, `jadx.afterLoad { }` blocks after classes load).
 
+Startup behavior:
+
+- while waiting for server health, `process open` prints a heartbeat to stderr roughly every 15s (elapsed time + last server log line); stdout stays JSON-only — heartbeat lines are progress, not errors
+- `--force` kills the JVMs of the alive sessions it replaces and verifies death; if a kill fails, DECX aborts the spawn, keeps the old session record, and names the pid to kill manually — retry the same command after killing it
+- on `--timeout` with the JVM still alive, the session record is kept (follow up with `process status` / `process close`); the record is removed only when the JVM exited
+
 Reuse and conflict behavior:
 
 - any alive session with the same file hash and the same script set: DECX must reuse that session, regardless of the requested name
 - same file hash but a different script set: DECX errors unless `--force` is used (scripts run at decompile time, so the script set is part of the session identity)
 - no matching alive file + requested name belongs to a different file: DECX errors unless `--force` or a new `--name` is used
 - stale same-name record for the same file: DECX removes the stale record and starts a new session
-- `--force`: DECX skips hash reuse and starts a new session
+- `--force`: DECX kills the alive sessions matching the same name or the same file hash (verified kill), then starts a new session; a failed kill aborts the spawn and leaves the old session intact
 
 ## Code Commands
 
@@ -84,6 +91,8 @@ All `code` commands support `-s, --session <name>` as an alternative to `--port 
 | `decx code search-global "<keyword>" --port <port>` | Search class names and decompiled class bodies (`--limit`, `--include-package`, `--exclude-package`, `--case-sensitive`, `--no-regex`) |
 | `decx code search-class "<class>" "<keyword>" --port <port>` | Grep one class (`--limit` required, `--case-sensitive`, `--no-regex`) |
 | `decx code search-method "<name>" --port <port>` | Search method names |
+
+Hierarchy semantics (`implementations`, `subclasses`, `aidl-interfaces`, `framework-service-implementation`): results match direct dex declarations, and declarations made by nested classes (inner, anonymous, or inlined `$$ExternalSyntheticLambda*`) are attributed to the outer class as well. Both spellings are real hits: an outer class listed because an inlined lambda implements the interface, plus the synthetic class as its own entry.
 
 ## Android Commands
 
