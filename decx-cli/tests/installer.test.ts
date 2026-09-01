@@ -1,14 +1,66 @@
 import { jest } from "@jest/globals";
 import { existsSync, readFileSync, rmSync, writeFileSync } from "fs";
 import * as path from "path";
+import { deflateRawSync } from "node:zlib";
 import {
   checkForServerUpdate,
   findDecxServerJar,
   installDecxServer,
+  readJarVersionProperty,
   selectDecxServerAsset,
   type ReleaseAsset,
 } from "../src/core/installer.js";
 import { DECX_TEST_SERVER_JAR, resetTestDir } from "./test-paths.js";
+
+/**
+ * Minimal stored/deflated zip writer so jar-version tests need no zip
+ * dependency: local header + central directory + EOCD.
+ */
+function buildTestZip(entries: Record<string, string>, deflate = false): Buffer {
+  const locals: Buffer[] = [];
+  const centrals: Buffer[] = [];
+  let offset = 0;
+  for (const [name, content] of Object.entries(entries)) {
+    const nameBuf = Buffer.from(name, "utf8");
+    const raw = Buffer.from(content, "utf8");
+    const data = deflate ? deflateRawSync(raw) : raw;
+    const method = deflate ? 8 : 0;
+    const crc = 0; // unused by the reader
+
+    const local = Buffer.alloc(30);
+    local.writeUInt32LE(0x04034b50, 0);
+    local.writeUInt16LE(0, 4); // flags
+    local.writeUInt16LE(method, 6);
+    local.writeUInt16LE(0, 8); // time
+    local.writeUInt16LE(0, 10); // date
+    local.writeUInt32LE(crc, 14);
+    local.writeUInt32LE(data.length, 18);
+    local.writeUInt32LE(raw.length, 22);
+    local.writeUInt16LE(nameBuf.length, 26);
+    local.writeUInt16LE(0, 28); // extra len
+    locals.push(local, nameBuf, data);
+
+    const central = Buffer.alloc(46);
+    central.writeUInt32LE(0x02014b50, 0);
+    central.writeUInt16LE(method, 10);
+    central.writeUInt32LE(crc, 16);
+    central.writeUInt32LE(data.length, 20);
+    central.writeUInt32LE(raw.length, 24);
+    central.writeUInt16LE(nameBuf.length, 28);
+    central.writeUInt16LE(0, 30); // extra
+    central.writeUInt16LE(0, 32); // comment
+    central.writeUInt32LE(offset, 42);
+    centrals.push(central, nameBuf);
+
+    offset += 30 + nameBuf.length + data.length;
+  }
+  const cd = Buffer.concat(centrals);
+  const eocd = Buffer.alloc(22);
+  eocd.writeUInt32LE(0x06054b50, 0);
+  eocd.writeUInt16LE(Object.keys(entries).length, 10);
+  eocd.writeUInt32LE(offset, 16);
+  return Buffer.concat([...locals, cd, eocd]);
+}
 
 function jsonResponse(body: unknown, status: number = 200): Response {
   return new Response(typeof body === "string" ? body : JSON.stringify(body), {
@@ -143,6 +195,115 @@ describe("installer", () => {
       });
       expect(readFileSync(installPath, "utf-8")).toBe("existing-jar");
       expect(fetchImpl).toHaveBeenCalledTimes(1);
+    } finally {
+      rmSync(installDir, { recursive: true, force: true });
+    }
+  });
+
+  it("reads the version baked into a jar's version.properties (stored and deflated)", () => {
+    const dir = resetTestDir("install", "jar-version");
+    try {
+      const stored = path.join(dir, "stored.jar");
+      writeFileSync(stored, buildTestZip({ "version.properties": "version=4.2.0\n" }));
+      expect(readJarVersionProperty(stored)).toBe("4.2.0");
+
+      const deflated = path.join(dir, "deflated.jar");
+      writeFileSync(
+        deflated,
+        buildTestZip(
+          {
+            "META-INF/MANIFEST.MF": "Manifest-Version: 1.0\n",
+            "version.properties": "version=4.2.0-rc.1\n",
+          },
+          true,
+        ),
+      );
+      expect(readJarVersionProperty(deflated)).toBe("4.2.0-rc.1");
+
+      expect(readJarVersionProperty(path.join(dir, "missing.jar"))).toBeNull();
+
+      const garbage = path.join(dir, "garbage.jar");
+      writeFileSync(garbage, "not a zip", "utf-8");
+      expect(readJarVersionProperty(garbage)).toBeNull();
+
+      const noVersion = path.join(dir, "noversion.jar");
+      writeFileSync(noVersion, buildTestZip({ "other.txt": "hi" }));
+      expect(readJarVersionProperty(noVersion)).toBeNull();
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("skips the download when the jar's own version matches, even without a config record", async () => {
+    const installDir = resetTestDir("install", "installer-jar-skip");
+    const installPath = path.join(installDir, "decx-server.jar");
+    const logger = { error: jest.fn() };
+
+    // No currentVersion: the decision must come from the jar itself.
+    writeFileSync(installPath, buildTestZip({ "version.properties": "version=2.6.0\n" }));
+
+    const fetchImpl = jest.fn(async (url: string | URL | Request) => {
+      const href = typeof url === "string" ? url : url instanceof URL ? url.href : url.url;
+      if (href.includes("registry.npmjs.org")) {
+        return jsonResponse({ version: "2.6.0" });
+      }
+      throw new Error("download should not be attempted");
+    }) as typeof fetch;
+
+    try {
+      const result = await installDecxServer(false, { installDir, installPath, fetchImpl, logger });
+
+      expect(result).toEqual({
+        ok: true,
+        version: "2.6.0",
+        path: installPath,
+        message: "decx-server is already up to date (v2.6.0)",
+      });
+      expect(readJarVersionProperty(installPath)).toBe("2.6.0");
+      expect(fetchImpl).toHaveBeenCalledTimes(1);
+    } finally {
+      rmSync(installDir, { recursive: true, force: true });
+    }
+  });
+
+  it("re-downloads when the jar is older than a stale config record claims", async () => {
+    const installDir = resetTestDir("install", "installer-jar-stale");
+    const installPath = path.join(installDir, "decx-server.jar");
+    const logger = { error: jest.fn() };
+
+    // Config record claims 2.6.0, but the jar on disk is actually 2.5.0 —
+    // the jar is ground truth and must be replaced.
+    writeFileSync(installPath, buildTestZip({ "version.properties": "version=2.5.0\n" }));
+
+    const fetchImpl = jest.fn(async (url: string | URL | Request) => {
+      const href = typeof url === "string" ? url : url instanceof URL ? url.href : url.url;
+      if (href.includes("registry.npmjs.org")) {
+        return jsonResponse({ version: "2.6.0" });
+      }
+      return new Response("jar-bytes", {
+        status: 200,
+        headers: { "content-length": "9" },
+      });
+    }) as typeof fetch;
+
+    const downloadWithProgressImpl = jest.fn(async (_body, filePath: string) => {
+      writeFileSync(filePath, "new-jar", "utf-8");
+      return 7;
+    });
+
+    try {
+      const result = await installDecxServer(false, {
+        installDir,
+        installPath,
+        fetchImpl,
+        downloadWithProgressImpl,
+        logger,
+        currentVersion: "2.6.0",
+      });
+
+      expect(result).toMatchObject({ ok: true, version: "2.6.0" });
+      expect(readFileSync(installPath, "utf-8")).toBe("new-jar");
+      expect(fetchImpl).toHaveBeenCalledTimes(2);
     } finally {
       rmSync(installDir, { recursive: true, force: true });
     }

@@ -11,7 +11,8 @@
  */
 
 import * as path from "path";
-import { existsSync, mkdirSync, renameSync, unlinkSync } from "fs";
+import { existsSync, mkdirSync, readFileSync, renameSync, unlinkSync } from "fs";
+import { inflateRawSync } from "node:zlib";
 import { downloadWithProgress } from "../utils/progress.js";
 import { decxPath } from "./paths.js";
 
@@ -227,6 +228,58 @@ export async function checkForServerUpdate(
 }
 
 /**
+ * Read `version=<x.y.z>` from the `version.properties` entry inside a jar
+ * (the same resource `DecxConstants` reads at server startup).
+ *
+ * Parses the zip central directory directly — no external zip dependency —
+ * and supports both stored and deflated entries. Returns null when the file
+ * is missing, malformed, or has no readable version.
+ */
+export function readJarVersionProperty(jarPath: string): string | null {
+  let buf: Buffer;
+  try {
+    buf = readFileSync(jarPath);
+  } catch {
+    return null;
+  }
+  try {
+    const eocd = buf.lastIndexOf(Buffer.from([0x50, 0x4b, 0x05, 0x06])); // "PK\x05\x06"
+    if (eocd < 0) return null;
+    const entryCount = buf.readUInt16LE(eocd + 10);
+    let p = buf.readUInt32LE(eocd + 16); // central directory offset
+    for (let i = 0; i < entryCount; i++) {
+      if (buf.readUInt32LE(p) !== 0x02014b50) return null; // "PK\x01\x02"
+      const method = buf.readUInt16LE(p + 10);
+      const compressedSize = buf.readUInt32LE(p + 20);
+      const nameLen = buf.readUInt16LE(p + 28);
+      const extraLen = buf.readUInt16LE(p + 30);
+      const commentLen = buf.readUInt16LE(p + 32);
+      const localHeaderOffset = buf.readUInt32LE(p + 42);
+      const name = buf.toString("utf8", p + 46, p + 46 + nameLen);
+      if (name === "version.properties") {
+        // Local header repeats name/extra lengths; data follows them.
+        const lNameLen = buf.readUInt16LE(localHeaderOffset + 26);
+        const lExtraLen = buf.readUInt16LE(localHeaderOffset + 28);
+        const dataStart = localHeaderOffset + 30 + lNameLen + lExtraLen;
+        const data = buf.subarray(dataStart, dataStart + compressedSize);
+        const content = method === 8 ? inflateRawSync(data).toString("utf8") : data.toString("utf8");
+        const match = content.match(/^version=([\w.-]+)\s*$/m);
+        return match ? match[1] : null;
+      }
+      p += 46 + nameLen + extraLen + commentLen;
+    }
+  } catch {
+    return null;
+  }
+  return null;
+}
+
+/** Version recorded inside the installed decx-server.jar, or null when absent/unreadable. */
+export function installedServerVersion(installPath: string = INSTALL_PATH): string | null {
+  return existsSync(installPath) ? readJarVersionProperty(installPath) : null;
+}
+
+/**
  * Download and install the latest decx-server.jar from GitHub releases.
  */
 export async function installDecxServer(
@@ -253,12 +306,13 @@ export async function installDecxServer(
 
     const version = normalizeVersion(release.tag_name);
 
-    // Local and remote versions match: nothing to download.
-    if (
-      currentVersion !== undefined &&
-      currentVersion === version &&
-      existsSync(installPath)
-    ) {
+    // Prefer the version recorded inside the installed jar itself (ground
+    // truth) over the config record, which may be missing or stale after a
+    // manual jar replacement. Local and remote versions match: nothing to
+    // download.
+    const jarVersion = existsSync(installPath) ? readJarVersionProperty(installPath) : null;
+    const effectiveVersion = jarVersion ?? currentVersion;
+    if (effectiveVersion !== undefined && effectiveVersion === version && existsSync(installPath)) {
       return {
         ok: true,
         message: `decx-server is already up to date (v${version})`,

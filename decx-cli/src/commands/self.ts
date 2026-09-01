@@ -9,7 +9,7 @@ import * as path from "path";
 import { fileURLToPath } from "url";
 import { Formatter } from "../utils/formatter.js";
 import { Manager } from "../core/config.js";
-import { checkForServerUpdate, installDecxServer, type InstallDecxServerResult } from "../core/installer.js";
+import { checkForServerUpdate, installDecxServer, installedServerVersion, type InstallDecxServerResult } from "../core/installer.js";
 import { DecxError, ServerError, withErrorHandler } from "../utils/errors.js";
 import { VERSION } from "../core/version.js";
 import { installSkills, parseSkillClients } from "../core/skills-installer.js";
@@ -205,7 +205,9 @@ export function makeSelfCommand(): Command {
     .action(withErrorHandler(async (opts) => {
       const fmt = new Formatter();
       const mgr = Manager.get();
-      const currentVersion = mgr.serverJar.version;
+      // Ground truth first: the version baked into the installed jar (the
+      // config record may be missing or stale after a manual replacement).
+      const currentVersion = installedServerVersion() ?? mgr.serverJar.version;
       const cliPackage = getCliPackageMetadata();
 
       // Update server
