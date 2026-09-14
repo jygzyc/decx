@@ -87,14 +87,14 @@ func (c *Config) applyKnown() {
 			// CLI ships with (the default marker, a description and the release it
 			// can be refreshed from) still applies to it.
 			index := -1
-			for j := range c.Engines {
-				if c.Engines[j].ID == known.ID {
+			for j := range c.Modules {
+				if c.Modules[j].ID == known.ID {
 					index = j
 					break
 				}
 			}
 			if index < 0 {
-				c.Engines = append(c.Engines, Engine{
+				c.Modules = append(c.Modules, Module{
 					ID:          known.ID,
 					Description: known.Description,
 					Release:     &release,
@@ -102,14 +102,14 @@ func (c *Config) applyKnown() {
 				})
 				continue
 			}
-			engine := &c.Engines[index]
-			if engine.Description == "" {
-				engine.Description = known.Description
+			module := &c.Modules[index]
+			if module.Description == "" {
+				module.Description = known.Description
 			}
-			if engine.Release == nil {
-				engine.Release = &release
+			if module.Release == nil {
+				module.Release = &release
 			}
-			engine.Default = known.Default
+			module.Default = known.Default
 		case KindPlugin:
 			index := -1
 			for j := range c.Plugins {
@@ -137,6 +137,6 @@ func (c *Config) applyKnown() {
 			plugin.Default = known.Default
 		}
 	}
-	slices.SortFunc(c.Engines, func(a, b Engine) int { return strings.Compare(a.ID, b.ID) })
+	slices.SortFunc(c.Modules, func(a, b Module) int { return strings.Compare(a.ID, b.ID) })
 	slices.SortFunc(c.Plugins, func(a, b Plugin) int { return strings.Compare(a.ID, b.ID) })
 }

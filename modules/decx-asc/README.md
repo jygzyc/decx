@@ -4,16 +4,16 @@ Stdlib-only HTTP adapter that exposes [ASC](https://github.com/MG1937/ASC) as a
 DECX server module. ASC is a pure-Python, on-demand APK analyzer (R8-aware findrefs and
 class decompilation, no JVM); upstream ships a CLI/GUI only, so `asc_server.py`
 is new DECX code that drives ASC's Python API in-process and speaks the DECX
-engine protocol:
+module protocol:
 
 ```
-decx session open app.apk --engine asc     # or DECX_ASC_SERVER=... 
+decx session open app.apk --module asc     # or DECX_ASC_SERVER=... 
   -> asc-server app.apk --port <n>
   -> GET /health  must return {"status":"running"}
   -> POST /api/decx/<route>
 ```
 
-Engine launch contract (DECX Go client): `<binary> <target-file> --port <port>`,
+Launch contract (DECX Go client): `<binary> <target-file> --port <port>`,
 `GET /health` polled until ready, JSON POSTs under `/api/decx/`.
 
 ## Layout
@@ -84,7 +84,7 @@ git add modules/decx-asc/asc   # commit the new gitlink
 
 ```sh
 decx install --module asc        # downloads asc-server-<version>.zip into module storage
-decx session open app.apk --engine asc
+decx session open app.apk --module asc
 ```
 
 The archive is extracted under `$DECX_HOME/modules/asc` (`bin/asc-server` is the
@@ -250,5 +250,5 @@ kill %1
 - **Archive install path unverified end to end.** `decx install --module asc`
   is wired in the registry (`asc-server-{version}.zip` release asset, `format:
   zip`, `binary: bin/asc-server`, installed under `$DECX_HOME/modules/asc`) and
-  the archive is built and run manually, but install → `decx session open --engine asc` has not
+  the archive is built and run manually, but install → `decx session open --module asc` has not
   been exercised in one run (it needs a published asset).

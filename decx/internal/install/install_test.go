@@ -17,8 +17,8 @@ import (
 	"github.com/jygzyc/decx/decx/internal/registry"
 )
 
-func testEngine() registry.Engine {
-	return registry.Engine{
+func testModule() registry.Module {
+	return registry.Module{
 		ID:     "jadx",
 		Binary: registry.Binary{Kind: "java-jar", Path: "jadx-server.jar", Env: "TEST_JADX_SERVER"},
 		Release: &registry.Install{
@@ -33,40 +33,40 @@ func testEngine() registry.Engine {
 
 // serverManifest is the decx.json a server archive carries. It has to describe
 // the same server the catalog expects, or adopt refuses the archive.
-func serverManifest(engine registry.Engine) string {
+func serverManifest(module registry.Module) string {
 	return fmt.Sprintf(`{"manifest":1,"kind":"server","id":%q,"binary":{"kind":%q,"path":%q},"launch":{"command":["{binary}"]},"commands":[{"name":"classes","endpoint":"/classes"}]}`,
-		engine.ID, engine.Binary.Kind, filepath.ToSlash(engine.Binary.Path))
+		module.ID, module.Binary.Kind, filepath.ToSlash(module.Binary.Path))
 }
 
 // serverFiles is the file layout a server release archive carries: the
 // decx.json manifest, the VERSION file and the launcher the installer probes.
-func serverFiles(engine registry.Engine, version, payload string) map[string]string {
+func serverFiles(module registry.Module, version, payload string) map[string]string {
 	return map[string]string{
-		registry.ManifestName:                serverManifest(engine),
+		registry.ManifestName:                serverManifest(module),
 		registry.VersionName:                 version + "\n",
-		filepath.ToSlash(engine.Binary.Path): payload,
+		filepath.ToSlash(module.Binary.Path): payload,
 	}
 }
 
 // serverArchive builds a tar.gz release archive, the format the test catalog's
 // asset names imply.
-func serverArchive(t *testing.T, engine registry.Engine, version, payload string) []byte {
+func serverArchive(t *testing.T, module registry.Module, version, payload string) []byte {
 	t.Helper()
-	return tarGzBytes(t, serverFiles(engine, version, payload), nil)
+	return tarGzBytes(t, serverFiles(module, version, payload), nil)
 }
 
 // writeServerTree writes an installed component (a local directory artifact)
 // with the same files a release archive carries.
-func writeServerTree(t *testing.T, root string, engine registry.Engine, version, payload string) {
+func writeServerTree(t *testing.T, root string, module registry.Module, version, payload string) {
 	t.Helper()
-	entry := filepath.Join(root, filepath.FromSlash(engine.Binary.Path))
+	entry := filepath.Join(root, filepath.FromSlash(module.Binary.Path))
 	if err := os.MkdirAll(filepath.Dir(entry), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(entry, []byte(payload), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(root, registry.ManifestName), []byte(serverManifest(engine)), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(root, registry.ManifestName), []byte(serverManifest(module)), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(root, registry.VersionName), []byte(version+"\n"), 0o644); err != nil {
@@ -143,7 +143,7 @@ func TestResolvePrefersNewestStableReleaseWithAsset(t *testing.T) {
 	}))
 	defer server.Close()
 	downloader := Downloader{Client: server.Client(), GitHub: server.URL, GitHubAPI: server.URL}
-	spec := EngineSpec(t.TempDir(), testEngine())
+	spec := ModuleSpec(t.TempDir(), testModule())
 	artifact, err := downloader.Resolve(context.Background(), spec, "", false)
 	if err != nil {
 		t.Fatal(err)
@@ -171,12 +171,12 @@ func TestResolveWithoutMatchOrSource(t *testing.T) {
 	}))
 	defer server.Close()
 	downloader := Downloader{Client: server.Client(), GitHubAPI: server.URL}
-	if _, err := downloader.Resolve(context.Background(), EngineSpec(t.TempDir(), testEngine()), "", false); err == nil || !strings.Contains(err.Error(), "is not available") {
+	if _, err := downloader.Resolve(context.Background(), ModuleSpec(t.TempDir(), testModule()), "", false); err == nil || !strings.Contains(err.Error(), "is not available") {
 		t.Fatalf("err = %v", err)
 	}
-	engine := testEngine()
-	engine.Release = nil
-	if _, err := downloader.Resolve(context.Background(), EngineSpec(t.TempDir(), engine), "", false); err == nil || !strings.Contains(err.Error(), "install source") {
+	module := testModule()
+	module.Release = nil
+	if _, err := downloader.Resolve(context.Background(), ModuleSpec(t.TempDir(), module), "", false); err == nil || !strings.Contains(err.Error(), "install source") {
 		t.Fatalf("err = %v", err)
 	}
 }
@@ -184,22 +184,22 @@ func TestResolveWithoutMatchOrSource(t *testing.T) {
 // TestResolveRequiresChecksumsAsset checks that a repository release without a
 // checksums asset is rejected instead of installed unverified.
 func TestResolveRequiresChecksumsAsset(t *testing.T) {
-	engine := testEngine()
-	engine.Release.Checksums = ""
+	module := testModule()
+	module.Release.Checksums = ""
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte(releasesJSON(releaseJSON("https://example.com", "v4.3.1", false, "jadx-server-4.3.1.tar.gz"))))
 	}))
 	defer server.Close()
 	downloader := Downloader{Client: server.Client(), GitHubAPI: server.URL}
-	if _, err := downloader.Resolve(context.Background(), EngineSpec(t.TempDir(), engine), "", false); err == nil || !strings.Contains(err.Error(), "checksums asset") {
+	if _, err := downloader.Resolve(context.Background(), ModuleSpec(t.TempDir(), module), "", false); err == nil || !strings.Contains(err.Error(), "checksums asset") {
 		t.Fatalf("err = %v", err)
 	}
 }
 
 func TestInstallDownloadsAndSkipsCurrentVersion(t *testing.T) {
 	var downloads int32
-	engine := testEngine()
-	archive := serverArchive(t, engine, "4.3.1", "jadx 4.3.1\n")
+	module := testModule()
+	archive := serverArchive(t, module, "4.3.1", "jadx 4.3.1\n")
 	name := "jadx-server-4.3.1.tar.gz"
 	var base string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -219,7 +219,7 @@ func TestInstallDownloadsAndSkipsCurrentVersion(t *testing.T) {
 	base = server.URL
 	downloader := Downloader{Client: server.Client(), GitHub: server.URL, GitHubAPI: server.URL}
 	home := t.TempDir()
-	spec := EngineSpec(home, engine)
+	spec := ModuleSpec(home, module)
 	artifact, err := downloader.Resolve(context.Background(), spec, "", false)
 	if err != nil {
 		t.Fatal(err)
@@ -243,7 +243,7 @@ func TestInstallDownloadsAndSkipsCurrentVersion(t *testing.T) {
 		t.Fatalf("downloads = %d", got)
 	}
 	// An update to a new version replaces the artifact.
-	next := serverArchive(t, engine, "4.4.0", "jadx 4.4.0\n")
+	next := serverArchive(t, module, "4.4.0", "jadx 4.4.0\n")
 	nextName := "jadx-server-4.4.0.tar.gz"
 	server.Config.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
@@ -283,7 +283,7 @@ func TestInstallRejectsBrokenArtifacts(t *testing.T) {
 	}))
 	defer server.Close()
 	downloader := Downloader{Client: server.Client()}
-	spec := EngineSpec(t.TempDir(), testEngine())
+	spec := ModuleSpec(t.TempDir(), testModule())
 	artifact := Artifact{Version: "4.3.1", Name: "jadx-server-4.3.1.tar.gz", URL: server.URL + "/broken.tar.gz"}
 	if _, err := downloader.InstallSpec(context.Background(), spec, artifact, false, nil); err == nil {
 		t.Fatal("accepted a broken artifact")
@@ -303,7 +303,7 @@ func TestFetchRejectsUnchecksummedArtifact(t *testing.T) {
 	defer server.Close()
 	downloader := Downloader{Client: server.Client()}
 	artifact := Artifact{Version: "1.0.0", Name: "sample.zip", URL: server.URL + "/sample.zip"}
-	if _, err := downloader.fetch(context.Background(), EngineSpec(t.TempDir(), testEngine()), artifact, nil); err == nil || !strings.Contains(err.Error(), "no SHA-256 checksum") {
+	if _, err := downloader.fetch(context.Background(), ModuleSpec(t.TempDir(), testModule()), artifact, nil); err == nil || !strings.Contains(err.Error(), "no SHA-256 checksum") {
 		t.Fatalf("err = %v", err)
 	}
 }
@@ -324,8 +324,8 @@ func TestInTempDirIgnoresSiblingPaths(t *testing.T) {
 }
 
 func TestInstallRejectsChecksumMismatch(t *testing.T) {
-	engine := testEngine()
-	archive := serverArchive(t, engine, "4.3.1", "payload\n")
+	module := testModule()
+	archive := serverArchive(t, module, "4.3.1", "payload\n")
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write(archive)
 	}))
@@ -338,7 +338,7 @@ func TestInstallRejectsChecksumMismatch(t *testing.T) {
 		URL:     server.URL + "/jadx.tar.gz",
 		SHA256:  strings.Repeat("0", 64),
 	}
-	if _, err := downloader.InstallSpec(context.Background(), EngineSpec(home, engine), artifact, false, nil); err == nil || !strings.Contains(err.Error(), "checksum mismatch") {
+	if _, err := downloader.InstallSpec(context.Background(), ModuleSpec(home, module), artifact, false, nil); err == nil || !strings.Contains(err.Error(), "checksum mismatch") {
 		t.Fatalf("err = %v", err)
 	}
 	if _, err := os.Stat(filepath.Join(home, "modules", "jadx", "jadx-server.jar")); !os.IsNotExist(err) {
@@ -348,28 +348,28 @@ func TestInstallRejectsChecksumMismatch(t *testing.T) {
 
 func TestInspectAndVersionFile(t *testing.T) {
 	home := t.TempDir()
-	engine := testEngine()
-	status := Inspect(home, engine)
+	module := testModule()
+	status := Inspect(home, module)
 	if status.Installed || status.Version != "" {
 		t.Fatalf("status = %+v", status)
 	}
 	root := filepath.Join(home, "modules", "jadx")
-	writeServerTree(t, root, engine, "9.9.9", "managed\n")
-	status = Inspect(home, engine)
+	writeServerTree(t, root, module, "9.9.9", "managed\n")
+	status = Inspect(home, module)
 	if !status.Installed || status.Version != "9.9.9" || status.Path != filepath.Join(root, "jadx-server.jar") {
 		t.Fatalf("status = %+v", status)
 	}
-	path, version, ok := EngineSpec(home, engine).Probe()
+	path, version, ok := ModuleSpec(home, module).Probe()
 	if !ok || version != "9.9.9" || path != filepath.Join(root, "jadx-server.jar") {
 		t.Fatalf("probe = %q %q %t", path, version, ok)
 	}
 	// A component discovered in a source checkout reports the version from its
 	// own VERSION file, not just that it is installed.
 	checkout := t.TempDir()
-	checkoutEngine := engine
-	checkoutEngine.Root = checkout
-	writeServerTree(t, checkout, checkoutEngine, "1.2.3", "checkout\n")
-	status = Inspect(t.TempDir(), checkoutEngine)
+	checkoutModule := module
+	checkoutModule.Root = checkout
+	writeServerTree(t, checkout, checkoutModule, "1.2.3", "checkout\n")
+	status = Inspect(t.TempDir(), checkoutModule)
 	if !status.Installed || status.Version != "1.2.3" || status.Path != filepath.Join(checkout, "jadx-server.jar") {
 		t.Fatalf("checkout status = %+v", status)
 	}
@@ -380,12 +380,12 @@ func TestInspectAndVersionFile(t *testing.T) {
 	if err := os.WriteFile(override, []byte("env\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv(engine.Binary.Env, override)
-	status = Inspect(home, engine)
+	t.Setenv(module.Binary.Env, override)
+	status = Inspect(home, module)
 	if !status.Installed || status.Path != override || status.Version != "" {
 		t.Fatalf("env status = %+v", status)
 	}
-	if path, version, ok := Probe(home, engine); !ok || path != override || version != "" {
+	if path, version, ok := Probe(home, module); !ok || path != override || version != "" {
 		t.Fatalf("env probe = %q %q %t", path, version, ok)
 	}
 }
@@ -414,10 +414,10 @@ func TestAssetCandidatesSubstitutePlatform(t *testing.T) {
 func TestLocalInstallCopiesAndPicksUpReplacements(t *testing.T) {
 	home := t.TempDir()
 	source := t.TempDir()
-	engine := testEngine()
-	writeServerTree(t, source, engine, "9.9.9", "local 9.9.9\n")
-	engine.Release = &registry.Install{Source: "local", Path: source}
-	spec := EngineSpec(home, engine)
+	module := testModule()
+	writeServerTree(t, source, module, "9.9.9", "local 9.9.9\n")
+	module.Release = &registry.Install{Source: "local", Path: source}
+	spec := ModuleSpec(home, module)
 	downloader := Downloader{}
 	artifact, err := downloader.Resolve(context.Background(), spec, "", false)
 	if err != nil {
@@ -439,7 +439,7 @@ func TestLocalInstallCopiesAndPicksUpReplacements(t *testing.T) {
 	}
 	// Replacing the files behind the same path changes the recorded version,
 	// so an unforced install picks the new build up.
-	writeServerTree(t, source, engine, "9.9.10", "local 9.9.10\n")
+	writeServerTree(t, source, module, "9.9.10", "local 9.9.10\n")
 	artifact, err = downloader.Resolve(context.Background(), spec, "", false)
 	if err != nil {
 		t.Fatal(err)
@@ -458,17 +458,17 @@ func TestLocalInstallCopiesAndPicksUpReplacements(t *testing.T) {
 
 func TestLocalArchiveInstallExtractsEntry(t *testing.T) {
 	home := t.TempDir()
-	engine := registry.Engine{
+	module := registry.Module{
 		ID:      "kuna",
 		Binary:  registry.Binary{Kind: "program", Path: "bin/kuna-server"},
 		Release: &registry.Install{Source: "local", Format: "zip"},
 	}
 	source := filepath.Join(t.TempDir(), "kuna-server.zip")
-	if err := os.WriteFile(source, zipBytes(t, serverFiles(engine, "4.4.0", "#!/bin/sh\n")), 0o644); err != nil {
+	if err := os.WriteFile(source, zipBytes(t, serverFiles(module, "4.4.0", "#!/bin/sh\n")), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	engine.Release.Path = source
-	spec := EngineSpec(home, engine)
+	module.Release.Path = source
+	spec := ModuleSpec(home, module)
 	downloader := Downloader{}
 	artifact, err := downloader.Resolve(context.Background(), spec, "", false)
 	if err != nil {
@@ -494,18 +494,18 @@ func TestLocalArchiveInstallExtractsEntry(t *testing.T) {
 
 func TestLocalArtifactMustExist(t *testing.T) {
 	home := t.TempDir()
-	engine := testEngine()
+	module := testModule()
 	for _, path := range []string{"missing/jadx-server.jar", "../escape.jar"} {
-		engine.Release = &registry.Install{Source: "local", Path: path}
-		spec := EngineSpec(home, engine)
+		module.Release = &registry.Install{Source: "local", Path: path}
+		spec := ModuleSpec(home, module)
 		if _, err := (Downloader{}).Resolve(context.Background(), spec, "", false); err == nil {
 			t.Fatalf("accepted local path %q", path)
 		}
 	}
 	// A directory is a valid local artifact; the decx.json inside it decides
 	// whether the install succeeds.
-	engine.Release = &registry.Install{Source: "local", Path: t.TempDir()}
-	artifact, err := (Downloader{}).Resolve(context.Background(), EngineSpec(home, engine), "", false)
+	module.Release = &registry.Install{Source: "local", Path: t.TempDir()}
+	artifact, err := (Downloader{}).Resolve(context.Background(), ModuleSpec(home, module), "", false)
 	if err != nil || !artifact.Dir {
 		t.Fatalf("artifact = %+v err = %v", artifact, err)
 	}

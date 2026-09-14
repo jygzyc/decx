@@ -20,10 +20,10 @@ func first(args map[string][]string, id string) string {
 
 func (a *App) runSession(ctx context.Context, config *registry.Config, input []string) error {
 	if len(input) == 0 || input[0] == "--help" || (len(input) == 2 && input[1] == "--help") {
-		fmt.Fprintln(a.Out, "Usage:\n  decx session open <target> --engine <id> [--name <name>] [--port <port>] [--timeout <seconds>] [--script <path>] [--force] [-- <server arguments>]\n  decx session list\n  decx session check [<name>]\n  decx session close [<name> | --port <port> | --all]\n\nOpen defaults to the engine marked as default; use --engine to select another.\nOpen waits up to 300 seconds. Timeout preserves the session for check/close.")
+		fmt.Fprintln(a.Out, "Usage:\n  decx session open <target> --module <id> [--name <name>] [--port <port>] [--timeout <seconds>] [--script <path>] [--force] [-- <server arguments>]\n  decx session list\n  decx session check [<name>]\n  decx session close [<name> | --port <port> | --all]\n\nOpen defaults to the module marked as default; use --module to select another.\nOpen waits up to 300 seconds. Timeout preserves the session for check/close.")
 		return nil
 	}
-	manager := session.Manager{Home: a.Home, Engines: config.Engines, Progress: a.Err}
+	manager := session.Manager{Home: a.Home, Modules: config.Modules, Progress: a.Err}
 	switch input[0] {
 	case "list", "check":
 		max := 1
@@ -81,7 +81,7 @@ func (a *App) runSession(ctx context.Context, config *registry.Config, input []s
 	case "open":
 		specs := []registry.Arg{
 			{ID: "target", Kind: "positional", Required: true},
-			{ID: "engine", Long: "engine", Kind: "value"},
+			{ID: "module", Long: "module", Kind: "value"},
 			{ID: "name", Long: "name", Kind: "value"},
 			{ID: "port", Long: "port", Kind: "value", Type: "u64"},
 			{ID: "timeout", Long: "timeout", Kind: "value", Type: "u64"},
@@ -116,7 +116,7 @@ func (a *App) runSession(ctx context.Context, config *registry.Config, input []s
 			}
 			options.Timeout = time.Duration(seconds) * time.Second
 		}
-		result, err := a.openTarget(ctx, config, first(args, "engine"), options)
+		result, err := a.openTarget(ctx, config, first(args, "module"), options)
 		if err != nil {
 			return err
 		}
@@ -126,30 +126,30 @@ func (a *App) runSession(ctx context.Context, config *registry.Config, input []s
 	}
 }
 
-// openTarget selects the requested engine and opens an analysis session.
-func (a *App) openTarget(ctx context.Context, config *registry.Config, engineID string, options session.OpenOptions) (session.Record, error) {
-	// Without an explicit flag the engine marked as default is selected, so a
+// openTarget selects the requested module and opens an analysis session.
+func (a *App) openTarget(ctx context.Context, config *registry.Config, moduleID string, options session.OpenOptions) (session.Record, error) {
+	// Without an explicit flag the module marked as default is selected, so a
 	// bare `session open` works even though the known table always registers
-	// several engines.
-	if engineID == "" {
-		for i := range config.Engines {
-			if config.Engines[i].Default {
-				engineID = config.Engines[i].ID
+	// several modules.
+	if moduleID == "" {
+		for i := range config.Modules {
+			if config.Modules[i].Default {
+				moduleID = config.Modules[i].ID
 				break
 			}
 		}
 	}
-	var engine *registry.Engine
-	for i := range config.Engines {
-		if config.Engines[i].ID == engineID {
-			engine = &config.Engines[i]
+	var module *registry.Module
+	for i := range config.Modules {
+		if config.Modules[i].ID == moduleID {
+			module = &config.Modules[i]
 			break
 		}
 	}
-	if engine == nil {
-		return session.Record{}, errors.New("select a registered engine with --engine; see module list")
+	if module == nil {
+		return session.Record{}, errors.New("select a registered module with --module; see module list")
 	}
-	options.Engine = *engine
-	manager := session.Manager{Home: a.Home, Engines: config.Engines, Progress: a.Err}
+	options.Module = *module
+	manager := session.Manager{Home: a.Home, Modules: config.Modules, Progress: a.Err}
 	return manager.Open(ctx, options)
 }

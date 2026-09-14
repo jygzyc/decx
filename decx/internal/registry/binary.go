@@ -8,13 +8,13 @@ import (
 	"runtime"
 )
 
-// ResolveBinary finds the server executable for an engine. The environment
+// ResolveBinary finds the server executable for a module. The environment
 // override wins over every local copy, matching install.Probe, so `module
 // list`, `session check` and the session launcher always name the same binary;
 // then come the installed module directory (DECX_HOME/modules/<id>), an
 // absolute path, the directory next to the running CLI, and finally PATH for
-// program engines.
-func ResolveBinary(home string, e Engine) (string, error) {
+// program modules.
+func ResolveBinary(home string, e Module) (string, error) {
 	b := e.Binary
 	path := b.Path
 	if override := os.Getenv(b.Env); b.Env != "" && override != "" {
@@ -67,5 +67,5 @@ func ResolveBinary(home string, e Engine) (string, error) {
 	if e.Release == nil {
 		hint = fmt.Sprintf("configure %s or install it in %s", b.Env, ModuleRoot(home, e.ID))
 	}
-	return "", fmt.Errorf("server binary %s of engine %s is not installed; %s", b.Path, e.ID, hint)
+	return "", fmt.Errorf("server binary %s of module %s is not installed; %s", b.Path, e.ID, hint)
 }

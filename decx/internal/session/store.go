@@ -15,7 +15,7 @@ import (
 
 type Record struct {
 	Name           string    `json:"name"`
-	Engine         string    `json:"engine"`
+	Module         string    `json:"module"`
 	Target         string    `json:"target"`
 	Hash           string    `json:"hash"`
 	Identity       string    `json:"identity"`
@@ -36,7 +36,7 @@ func (m *Manager) locked(ctx context.Context, action func(*database) error) erro
 	if err := os.MkdirAll(m.Home, 0700); err != nil {
 		return err
 	}
-	lock := flock.New(filepath.Join(m.Home, "sessions-v1.lock"))
+	lock := flock.New(filepath.Join(m.Home, "sessions-v2.lock"))
 	lockCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 	ok, err := lock.TryLockContext(lockCtx, 50*time.Millisecond)
@@ -47,8 +47,8 @@ func (m *Manager) locked(ctx context.Context, action func(*database) error) erro
 		return fmt.Errorf("session store is busy: %w", lockCtx.Err())
 	}
 	defer lock.Close()
-	db := database{Version: 1, Sessions: []Record{}}
-	data, err := os.ReadFile(filepath.Join(m.Home, "sessions-v1.json"))
+	db := database{Version: 2, Sessions: []Record{}}
+	data, err := os.ReadFile(filepath.Join(m.Home, "sessions-v2.json"))
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return err
 	}
@@ -56,7 +56,7 @@ func (m *Manager) locked(ctx context.Context, action func(*database) error) erro
 		if err := json.Unmarshal(data, &db); err != nil {
 			return fmt.Errorf("invalid session store: %w", err)
 		}
-		if db.Version != 1 {
+		if db.Version != 2 {
 			return fmt.Errorf("unsupported session store version %d", db.Version)
 		}
 		seen := map[string]bool{}
@@ -85,7 +85,7 @@ func (m *Manager) save(db *database) error {
 	if err := errors.Join(writeErr, syncErr, f.Close()); err != nil {
 		return err
 	}
-	return replaceStore(os.Rename, f.Name(), filepath.Join(m.Home, "sessions-v1.json"))
+	return replaceStore(os.Rename, f.Name(), filepath.Join(m.Home, "sessions-v2.json"))
 }
 
 // storeRenameAttempts/storeRenameBackoff bound the replace retry window at a

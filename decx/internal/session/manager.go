@@ -26,13 +26,13 @@ import (
 
 type Manager struct {
 	Home    string
-	Engines []registry.Engine
+	Modules []registry.Module
 
 	Progress io.Writer
 }
 
 type OpenOptions struct {
-	Engine  registry.Engine
+	Module  registry.Module
 	Target  string
 	Name    string
 	Port    int
@@ -62,7 +62,7 @@ func fileHash(path string) (string, error) {
 	return hex.EncodeToString(h.Sum(nil)), nil
 }
 
-func resolveBinary(home string, e registry.Engine) (string, error) {
+func resolveBinary(home string, e registry.Module) (string, error) {
 	return registry.ResolveBinary(home, e)
 }
 func freePort(requested int) (int, error) {
@@ -101,11 +101,11 @@ func (m *Manager) Open(ctx context.Context, o OpenOptions) (Record, error) {
 	if o.Timeout <= 0 {
 		o.Timeout = 300 * time.Second
 	}
-	if len(o.Args) > 0 && !o.Engine.Launch.TrailingArgs {
-		return result, fmt.Errorf("engine %s does not accept trailing arguments", o.Engine.ID)
+	if len(o.Args) > 0 && !o.Module.Launch.TrailingArgs {
+		return result, fmt.Errorf("module %s does not accept trailing arguments", o.Module.ID)
 	}
-	if len(o.Scripts) > 0 && o.Engine.Launch.Scripts != "positional" {
-		return result, fmt.Errorf("engine %s does not accept scripts", o.Engine.ID)
+	if len(o.Scripts) > 0 && o.Module.Launch.Scripts != "positional" {
+		return result, fmt.Errorf("module %s does not accept scripts", o.Module.ID)
 	}
 	for _, arg := range o.Args {
 		if arg == "--port" || arg == "-p" || strings.HasPrefix(arg, "--port=") || strings.HasPrefix(arg, "-p=") {
@@ -120,7 +120,7 @@ func (m *Manager) Open(ctx context.Context, o OpenOptions) (Record, error) {
 	if err != nil {
 		return result, err
 	}
-	executable, err := resolveBinary(m.Home, o.Engine)
+	executable, err := resolveBinary(m.Home, o.Module)
 	if err != nil {
 		return result, err
 	}
@@ -141,10 +141,10 @@ func (m *Manager) Open(ctx context.Context, o OpenOptions) (Record, error) {
 	// must not invalidate the reuse lookup for an otherwise matching session.
 	identityBytes, err := json.Marshal(struct {
 		Hash                  string
-		EngineID              string
+		ModuleID              string
 		Binary                string
 		Scripts, Hashes, Args []string
-	}{hash, o.Engine.ID, executable, scripts, scriptHashes, o.Args})
+	}{hash, o.Module.ID, executable, scripts, scriptHashes, o.Args})
 	if err != nil {
 		return result, err
 	}
@@ -160,7 +160,7 @@ func (m *Manager) Open(ctx context.Context, o OpenOptions) (Record, error) {
 		if len(stem) > 50 {
 			stem = stem[:50]
 		}
-		name = stem + "-" + o.Engine.ID
+		name = stem + "-" + o.Module.ID
 	}
 	if !validName.MatchString(name) {
 		return result, errors.New("session name must be 1-100 letters, digits, dots, underscores or hyphens, starting with a letter or digit")
@@ -173,7 +173,7 @@ func (m *Manager) Open(ctx context.Context, o OpenOptions) (Record, error) {
 		// cannot partially replace a collection of sessions.
 		conflicts := map[string]bool{}
 		for _, s := range db.Sessions {
-			if s.Name != name && !(s.Hash == hash && s.Engine == o.Engine.ID) {
+			if s.Name != name && !(s.Hash == hash && s.Module == o.Module.ID) {
 				continue
 			}
 			alive, err := owned(s)
@@ -211,12 +211,12 @@ func (m *Manager) Open(ctx context.Context, o OpenOptions) (Record, error) {
 			return err
 		}
 		replacer := strings.NewReplacer("{binary}", executable, "{target}", target, "{port}", strconv.Itoa(port), "{home}", m.Home)
-		argv := make([]string, len(o.Engine.Launch.Command))
-		for i, part := range o.Engine.Launch.Command {
+		argv := make([]string, len(o.Module.Launch.Command))
+		for i, part := range o.Module.Launch.Command {
 			argv[i] = replacer.Replace(part)
 		}
 		if len(argv) == 0 {
-			return errors.New("engine has no launch command")
+			return errors.New("module has no launch command")
 		}
 		argv = append(argv, scripts...)
 		argv = append(argv, o.Args...)
@@ -247,7 +247,7 @@ func (m *Manager) Open(ctx context.Context, o OpenOptions) (Record, error) {
 			_ = cmd.Process.Kill()
 			return err
 		}
-		result = Record{Name: name, Engine: o.Engine.ID, Target: target, Hash: hash, Identity: identity, PID: int32(cmd.Process.Pid), ProcessCreated: created, Port: port, Log: log.Name(), Created: time.Now().UTC(), State: "starting"}
+		result = Record{Name: name, Module: o.Module.ID, Target: target, Hash: hash, Identity: identity, PID: int32(cmd.Process.Pid), ProcessCreated: created, Port: port, Log: log.Name(), Created: time.Now().UTC(), State: "starting"}
 		db.Sessions = append(db.Sessions, result)
 		if err := m.save(db); err != nil {
 			cleanupCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -342,7 +342,7 @@ func (m *Manager) List(ctx context.Context) ([]Record, error) {
 	return sessions, nil
 }
 
-func (m *Manager) Select(ctx context.Context, name string, engines []string) (Record, error) {
+func (m *Manager) Select(ctx context.Context, name string, modules []string) (Record, error) {
 	sessions, err := m.List(ctx)
 	if err != nil {
 		return Record{}, err
@@ -353,8 +353,8 @@ func (m *Manager) Select(ctx context.Context, name string, engines []string) (Re
 			continue
 		}
 		compatible := false
-		for _, engine := range engines {
-			if s.Engine == engine {
+		for _, module := range modules {
+			if s.Module == module {
 				compatible = true
 			}
 		}
@@ -371,16 +371,16 @@ func (m *Manager) Select(ctx context.Context, name string, engines []string) (Re
 	return matches[0], nil
 }
 
-// engine returns the launch and stop declarations of a registered engine.
-// Sessions opened by a different registry may name an engine that is gone, so
+// module returns the launch and stop declarations of a registered module.
+// Sessions opened by a different registry may name a module that is gone, so
 // callers must tolerate a miss and fall back to plain termination.
-func (m *Manager) engine(id string) (registry.Engine, bool) {
-	for _, e := range m.Engines {
+func (m *Manager) module(id string) (registry.Module, bool) {
+	for _, e := range m.Modules {
 		if e.ID == id {
 			return e, true
 		}
 	}
-	return registry.Engine{}, false
+	return registry.Module{}, false
 }
 
 func (m *Manager) Close(ctx context.Context, name string, port int, all bool) error {

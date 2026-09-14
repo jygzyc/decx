@@ -31,7 +31,7 @@
 
 | Command | Purpose |
 |--------|---------|
-| `decx session open "<target>" [--engine <id>] [--name <name>] [--port <port>] [--timeout <seconds>] [--script <file>] [--force]` | Open a target for analysis |
+| `decx session open "<target>" [--module <id>] [--name <name>] [--port <port>] [--timeout <seconds>] [--script <file>] [--force]` | Open a target for analysis |
 | `decx session list` | List recorded sessions with their state |
 | `decx session check` | List sessions with their health state |
 | `decx session check "<name>"` | Show one named session |
@@ -42,7 +42,7 @@
 Open options:
 
 ```text
---engine <id>         server module to launch; defaults to the module marked as default (`decx module list` shows the ids)
+--module <id>         server module to launch; defaults to the module marked as default (`decx module list` shows the ids)
 --port <port>         explicit server port; the open fails when it is unavailable (without --port, DECX picks a free port in 30000-40000)
 --name <name>         explicit session name
 --force               replace conflicting sessions (same name or same file hash): their JVMs are killed and death-verified before the new server starts
@@ -142,7 +142,7 @@ Platform note: the plugin parses ext4 and EROFS payload images natively in JavaS
 
 | Command | Purpose |
 |--------|---------|
-| `decx install [--module <id\|repo\|path>]... [--all] [--force] [--prerelease]` | Install modules: default modules when nothing is given (`jadx`, `ard-framework`), every module with a release source with `--all` |
+| `decx install [--module <id\|repo\|path>]... [--all] [--force] [--prerelease]` | Install modules: every module that declares a release source when nothing is given (the shipped modules all do; `--all` is the explicit form), or the named modules |
 | `decx install --module <id\|repo\|path>` | Install one module: a known id refreshed from its release, or a directory/`.zip`/`.tar.gz` or repository (`owner/repo[@ref]`, `github.com/owner/repo`, `https://host/owner/repo`) imported into `$DECX_HOME/modules/<id>` |
 | `decx install --prerelease` | Install prerelease artifacts |
 | `decx install --cli` | Also replace the `decx` executable with the newest release |

@@ -1,0 +1,164 @@
+name: Test
+
+# Cross-platform verification without publishing anything: every supported
+# platform compiles, tests and packs the CLI on a native runner, the plugin
+# bundle is built and exercised everywhere, and the module builds are checked on
+# the platforms their release workflows target. Releases stay in the
+# release-*.yml workflows, which only run for their own tags.
+on:
+  push:
+    branches: ['**']
+    paths: ['decx/**', 'modules/**', 'plugins/**', '.github/workflows/**']
+  pull_request:
+    paths: ['decx/**', 'modules/**', 'plugins/**', '.github/workflows/**']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  cli:
+    name: CLI (${{ matrix.target }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # The plugin engine (quickjs-go) needs cgo, so every supported target
+          # is tested and built on a native runner instead of being
+          # cross-compiled. The race flag marks where Go's race detector exists:
+          # it has no windows/arm64 runtime.
+          - os: ubuntu-latest
+            target: linux/amd64
+            race: true
+          - os: ubuntu-24.04-arm
+            target: linux/arm64
+            race: true
+          - os: macos-15-intel
+            target: darwin/amd64
+            race: true
+          - os: macos-14
+            target: darwin/arm64
+            race: true
+          - os: windows-latest
+            target: windows/amd64
+            race: true
+          - os: windows-11-arm
+            target: windows/arm64
+            race: false
+    runs-on: ${{ matrix.os }}
+    env:
+      # The Windows arm64 leg builds under msys2 CLANGARM64, whose compiler is
+      # not named gcc; the other legs use the platform default CC.
+      CC: "${{ matrix.target == 'windows/arm64' && 'aarch64-w64-mingw32-gcc' || '' }}"
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: decx/go.mod
+          cache-dependency-path: decx/go.sum
+      - name: Install C toolchain (Windows amd64)
+        if: runner.os == 'Windows' && matrix.target == 'windows/amd64'
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          install: mingw-w64-x86_64-gcc
+      - name: Install C toolchain (Windows arm64)
+        if: runner.os == 'Windows' && matrix.target == 'windows/arm64'
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: CLANGARM64
+          install: mingw-w64-clang-aarch64-gcc
+      # The platform-independent ard-framework bundle the CLI evaluates
+      # in-process is built and exercised on every OS, so a platform-specific
+      # bundle failure cannot hide until release. The go test run below also
+      # executes compiled plugin code through the embedded engine
+      # (internal/plugin's EROFS fixture test) once the bundle exists.
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: plugins/ard-framework/package-lock.json
+      - run: npm ci --no-audit --no-fund
+        working-directory: plugins/ard-framework
+      - run: npm run build
+        working-directory: plugins/ard-framework
+      - run: node --test "dist/tests/*.test.js"
+        working-directory: plugins/ard-framework
+      - name: Build CLI
+        run: go build ./cmd/decx
+        working-directory: decx
+      - name: Run tests (race)
+        if: ${{ matrix.race }}
+        run: go test -race ./...
+        working-directory: decx
+      - name: Run tests
+        if: ${{ !matrix.race }}
+        run: go test ./...
+        working-directory: decx
+      - run: go vet ./...
+        working-directory: decx
+      # The release archives are packed here as well, so the packaging path is
+      # verified on every platform before a tag is pushed. Nothing is uploaded.
+      - name: Pack the release archive
+        run: go run ./cmd/pack
+        working-directory: decx
+
+  jadx-server:
+    name: jadx-server
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Build the server and plugin jars
+        run: ./gradlew :server:shadowJar :plugin:shadowJar
+        working-directory: modules/decx-jadx
+
+  asc-server:
+    name: asc-server
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          submodules: recursive
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Run the adapter tests
+        run: python3 -m unittest discover -s tests -v
+        working-directory: modules/decx-asc
+      - name: Pack the release archive
+        run: ./build.sh
+        working-directory: modules/decx-asc
+
+  kuna-server:
+    name: kuna-server (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # The release workflow targets linux/darwin on amd64/arm64; the
+          # sources are compiled (and on Linux tested) here before a tag exists.
+          - os: ubuntu-latest
+            runner_target: linux/amd64
+            test: true
+          - os: macos-14
+            runner_target: darwin/arm64
+            test: false
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          submodules: recursive
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Run the server tests
+        if: ${{ matrix.test }}
+        run: cargo test --manifest-path server/Cargo.toml
+        working-directory: modules/decx-kuna
+      - name: Build the server
+        if: ${{ !matrix.test }}
+        run: cargo build --manifest-path server/Cargo.toml
+        working-directory: modules/decx-kuna

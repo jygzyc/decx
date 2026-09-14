@@ -13,7 +13,7 @@ import (
 	"strings"
 )
 
-// CoreArgs are the flags the CLI itself owns, accepted by every engine command;
+// CoreArgs are the flags the CLI itself owns, accepted by every module command;
 // a command tree may map them.
 var CoreArgs = []Arg{
 	{ID: "session", Kind: "value", Long: "session", Help: "Select a named session; required when multiple are running"},
@@ -27,7 +27,7 @@ var CoreArgs = []Arg{
 // management words (session, self, install, module) and `decx -m <id>` for a
 // module's command tree.
 type Config struct {
-	Engines []Engine
+	Modules []Module
 	Plugins []Plugin
 
 	// Warnings collects components that were found but skipped (a manifest that
@@ -66,9 +66,9 @@ type Mapping struct {
 	Invert  bool            `json:"invert,omitempty"`
 }
 
-// Engine is one server: its decx.json manifest declares how it runs and where
+// Module is one server: its decx.json manifest declares how it runs and where
 // its releases come from.
-type Engine struct {
+type Module struct {
 	ID          string
 	Description string
 	Binary      Binary
@@ -170,20 +170,20 @@ type Install struct {
 // root directories scanned the same way (an explicit --config path), so a
 // checkout can be used without installing anything.
 func Load(home string, extraDirs ...string) (*Config, error) {
-	c := &Config{Engines: []Engine{}, Plugins: []Plugin{}}
+	c := &Config{Modules: []Module{}, Plugins: []Plugin{}}
 	c.attach(home, extraDirs)
 	c.applyKnown()
 	return c, nil
 }
 
-// Engine returns the engine with this id.
-func (c *Config) Engine(id string) (Engine, bool) {
-	for _, e := range c.Engines {
+// Module returns the module with this id.
+func (c *Config) Module(id string) (Module, bool) {
+	for _, e := range c.Modules {
 		if e.ID == id {
 			return e, true
 		}
 	}
-	return Engine{}, false
+	return Module{}, false
 }
 
 // Plugin returns the plugin with this id.
@@ -203,9 +203,9 @@ func (c *Config) attach(home string, extraDirs []string) {
 	servers, warnings := ScanManifests(home, KindServer, extraDirs)
 	c.Warnings = append(c.Warnings, warnings...)
 	for _, id := range sortedKeys(servers) {
-		engine := Engine{ID: id}
-		engine.apply(servers[id])
-		c.Engines = append(c.Engines, engine)
+		module := Module{ID: id}
+		module.apply(servers[id])
+		c.Modules = append(c.Modules, module)
 	}
 	plugins, warnings := ScanManifests(home, KindPlugin, extraDirs)
 	c.Warnings = append(c.Warnings, warnings...)
@@ -216,7 +216,7 @@ func (c *Config) attach(home string, extraDirs []string) {
 	}
 }
 
-func (e *Engine) apply(found Found) {
+func (e *Module) apply(found Found) {
 	manifest := found.Manifest
 	e.Description = manifest.Description
 	e.Binary = *manifest.Binary
@@ -240,8 +240,8 @@ func (p *Plugin) apply(found Found) {
 }
 
 // reserved names are the CLI's own top-level words: they own their namespace
-// and never resolve to an engine, and an engine may not be named after them.
-var reserved = map[string]bool{"session": true, "engine": true, "plugin": true, "module": true, "self": true, "install": true, "settings": true, "help": true}
+// and never resolve to a module, and a module may not be named after them.
+var reserved = map[string]bool{"session": true, "module": true, "plugin": true, "self": true, "install": true, "settings": true, "help": true}
 
 var namePattern = regexp.MustCompile(`^[a-z][a-z0-9-]*$`)
 var endpointPattern = regexp.MustCompile(`^[a-zA-Z0-9_/-]+$`)
@@ -261,7 +261,7 @@ var startPlaceholders = []string{"{binary}", "{target}", "{port}", "{home}"}
 // stopPlaceholders are the tokens a stop command may use.
 var stopPlaceholders = []string{"{pid}", "{port}", "{binary}", "{home}", "{target}"}
 
-// validateLaunch checks the command templates of one engine.
+// validateLaunch checks the command templates of one module.
 func validateLaunch(id string, launch Launch) error {
 	if err := validateTemplate(id, "launch", launch.Command, startPlaceholders); err != nil {
 		return err
@@ -273,11 +273,11 @@ func validateTemplate(id, field string, command, allowed []string) error {
 	for _, part := range command {
 		for _, placeholder := range placeholderPattern.FindAllString(part, -1) {
 			if !slices.Contains(allowed, placeholder) {
-				return fmt.Errorf("engine %s: unknown %s placeholder %s", id, field, placeholder)
+				return fmt.Errorf("module %s: unknown %s placeholder %s", id, field, placeholder)
 			}
 		}
 		if strings.ContainsAny(placeholderPattern.ReplaceAllString(part, ""), "{}") {
-			return fmt.Errorf("engine %s: malformed %s placeholder", id, field)
+			return fmt.Errorf("module %s: malformed %s placeholder", id, field)
 		}
 	}
 	return nil

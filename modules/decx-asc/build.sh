@@ -23,7 +23,7 @@ set -eu
 
 HERE=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 # VERSION is the adapter's own version (reported by /health) and the source of
-# truth for the archive name: `decx self install --engine asc` resolves the
+# truth for the archive name: `decx self install --module asc` resolves the
 # `asc-server-{version}.zip` asset published by release-asc-server.yml.
 VERSION=$(cat "$HERE/VERSION")
 ASC_DIR=${ASC_ROOT:-$HERE/asc}

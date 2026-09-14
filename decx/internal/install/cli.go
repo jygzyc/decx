@@ -14,7 +14,7 @@ import (
 )
 
 // DefaultRepository publishes the DECX release assets: the CLI archives, the
-// engine servers and the optional plugins.
+// server modules and the optional plugins.
 const DefaultRepository = "jygzyc/decx"
 
 // CLIStatus reports the outcome of replacing the decx executable.

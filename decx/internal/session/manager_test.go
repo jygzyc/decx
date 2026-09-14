@@ -62,14 +62,14 @@ func setupManager(t *testing.T, mode string) (*Manager, OpenOptions) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	e := registry.Engine{ID: "test", Binary: registry.Binary{Kind: "program", Path: exe}, Launch: registry.Launch{Command: []string{"{binary}", "-test.run=^TestServerProcess$", "--", "--session-test-server", "{port}", mode}, Scripts: "positional", TrailingArgs: true}}
+	e := registry.Module{ID: "test", Binary: registry.Binary{Kind: "program", Path: exe}, Launch: registry.Launch{Command: []string{"{binary}", "-test.run=^TestServerProcess$", "--", "--session-test-server", "{port}", mode}, Scripts: "positional", TrailingArgs: true}}
 	m := &Manager{Home: home}
 	t.Cleanup(func() {
 		if err := m.Close(context.Background(), "", 0, true); err != nil {
 			t.Error(err)
 		}
 	})
-	return m, OpenOptions{Engine: e, Target: target, Timeout: 5 * time.Second}
+	return m, OpenOptions{Module: e, Target: target, Timeout: 5 * time.Second}
 }
 
 func TestLifecycleReuseSelectionAndForce(t *testing.T) {
@@ -93,7 +93,7 @@ func TestLifecycleReuseSelectionAndForce(t *testing.T) {
 		t.Fatalf("selection %v %v", selected, err)
 	}
 	if _, err := other.Select(ctx, "", []string{"wrong"}); err == nil {
-		t.Fatal("selected incompatible engine")
+		t.Fatal("selected incompatible module")
 	}
 	o.Args = []string{"changed"}
 	if _, err := m.Open(ctx, o); err == nil {
@@ -189,7 +189,7 @@ func TestProcessIdentityProtectsRecycledPID(t *testing.T) {
 
 func TestMalformedStoreFailsClosed(t *testing.T) {
 	m, _ := setupManager(t, "healthy")
-	path := filepath.Join(m.Home, "sessions-v1.json")
+	path := filepath.Join(m.Home, "sessions-v2.json")
 	if err := os.WriteFile(path, []byte(`{"version":1,"sessions":[{"name":"invalid","pid":1}]}`), 0600); err != nil {
 		t.Fatal(err)
 	}
@@ -228,10 +228,10 @@ func TestManifestMetadataDoesNotChangeIdentity(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	o.Engine.Description = "rewritten description"
-	o.Engine.Version = "9.9.9"
-	o.Engine.Commands = nil
-	o.Engine.Release = &registry.Install{Source: "repo", Repository: "owner/other", Asset: "test-{version}.zip", Checksums: "SHA256SUMS"}
+	o.Module.Description = "rewritten description"
+	o.Module.Version = "9.9.9"
+	o.Module.Commands = nil
+	o.Module.Release = &registry.Install{Source: "repo", Repository: "owner/other", Asset: "test-{version}.zip", Checksums: "SHA256SUMS"}
 	reused, err := m.Open(context.Background(), o)
 	if err != nil || reused.PID != s.PID {
 		t.Fatalf("metadata rewrite forced replacement: %+v %v", reused, err)
@@ -244,7 +244,7 @@ func TestStoreContainsProcessIdentity(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	data, err := os.ReadFile(filepath.Join(m.Home, "sessions-v1.json"))
+	data, err := os.ReadFile(filepath.Join(m.Home, "sessions-v2.json"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -262,8 +262,8 @@ func TestStopCommandRunsBeforeTermination(t *testing.T) {
 		t.Skip("the stop fixture uses /bin/sh")
 	}
 	m, o := setupManager(t, "healthy")
-	o.Engine.Launch.Stop = registry.Stop{Command: []string{"/bin/sh", "-c", "kill {pid}"}}
-	m.Engines = []registry.Engine{o.Engine}
+	o.Module.Launch.Stop = registry.Stop{Command: []string{"/bin/sh", "-c", "kill {pid}"}}
+	m.Modules = []registry.Module{o.Module}
 	s, err := m.Open(context.Background(), o)
 	if err != nil {
 		t.Fatal(err)
@@ -285,8 +285,8 @@ func TestFailedStopCommandStillTerminates(t *testing.T) {
 		t.Skip("the stop fixture uses /bin/sh")
 	}
 	m, o := setupManager(t, "healthy")
-	o.Engine.Launch.Stop = registry.Stop{Command: []string{"/bin/sh", "-c", "exit 7"}}
-	m.Engines = []registry.Engine{o.Engine}
+	o.Module.Launch.Stop = registry.Stop{Command: []string{"/bin/sh", "-c", "exit 7"}}
+	m.Modules = []registry.Module{o.Module}
 	s, err := m.Open(context.Background(), o)
 	if err != nil {
 		t.Fatal(err)

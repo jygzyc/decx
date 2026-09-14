@@ -3,9 +3,11 @@ name: Release Go CLI
 on:
   push:
     tags: ['v*']
-  pull_request:
-    paths: ['decx/**', 'plugins/**', '.github/workflows/release-cli.yml']
   workflow_dispatch:
+
+# Pre-tag, cross-platform verification lives in test.yml; this workflow only
+# runs for its own tags (or a manual dispatch, where the release jobs below
+# refuse to publish because the ref is not a tag).
 
 permissions:
   contents: read

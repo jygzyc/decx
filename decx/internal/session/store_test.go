@@ -22,7 +22,7 @@ func TestReplaceStoreRetriesTransientFailure(t *testing.T) {
 	fastRetries(t)
 	dir := t.TempDir()
 	source := filepath.Join(dir, "new")
-	target := filepath.Join(dir, "sessions-v1.json")
+	target := filepath.Join(dir, "sessions-v2.json")
 	if err := os.WriteFile(source, []byte("new"), 0o600); err != nil {
 		t.Fatal(err)
 	}

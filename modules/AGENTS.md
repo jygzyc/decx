@@ -1,6 +1,6 @@
 # AGENTS.md
 
-Coding agent instructions for the DECX engine implementations (`modules/`).
+Coding agent instructions for the DECX module implementations (`modules/`).
 
 Repository-wide context (the `decx` CLI, skills, agents, release layout) lives in
 the root `AGENTS.md`; this file only covers the three server modules.

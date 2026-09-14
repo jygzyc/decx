@@ -81,7 +81,7 @@ decx session open "$DECX_HOME/output/framework/acme/framework_acme_pixel.jar"
 
 `data.pack.jarPath` (and `data.artifact.jarPath`) carry the packed jar path;
 `--name` on `decx session open` overrides the derived
-`framework_<oem>_<vendor>` session name. The plugin exposes no `--engine`,
+`framework_<oem>_<vendor>` session name. The plugin exposes no `--module`,
 `--port` or `--name` argument.
 
 ## External tools
@@ -131,7 +131,7 @@ deletes `source/` after `process`; `collect` never cleans.
 - The ext4 reader follows symlinks that point at regular files (APEX payloads
   link jars/dex into place) and skips `lost+found`, dangling links and
   non-regular inodes.
-- There is no `--engine`, `--port` or `--name` argument: the plugin only
+- There is no `--module`, `--port` or `--name` argument: the plugin only
   produces a jar, and `decx session open` owns the session.
 
 ## Development

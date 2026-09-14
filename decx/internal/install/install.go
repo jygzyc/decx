@@ -1,4 +1,4 @@
-// Package install fetches optional components (engine servers and plugins) and
+// Package install fetches optional components (server modules and plugins) and
 // reports their versions. A component is never unpacked blindly: its archive
 // has to carry a decx.json manifest, the manifest is validated before it
 // replaces an installed component, and every release asset is verified against
@@ -60,7 +60,7 @@ type Status struct {
 
 // Spec describes one installable component: the directory it owns under
 // DECX_HOME, the entry file inside it, and where the artifact comes from. Build
-// it with EngineSpec or PluginSpec so installation, inspection and the session
+// it with ModuleSpec or PluginSpec so installation, inspection and the session
 // manager agree on the target.
 type Spec struct {
 	ID      string
@@ -72,8 +72,8 @@ type Spec struct {
 	home string
 }
 
-// EngineSpec describes a server module.
-func EngineSpec(home string, e registry.Engine) Spec {
+// ModuleSpec describes a server module.
+func ModuleSpec(home string, e registry.Module) Spec {
 	return Spec{
 		ID:      e.ID,
 		Kind:    registry.KindServer,
@@ -150,13 +150,13 @@ func (s Spec) Installed() bool {
 	return ok
 }
 
-// Probe reports whether an engine server can be resolved locally, where it is
+// Probe reports whether a server module can be resolved locally, where it is
 // and which version is installed. The environment override wins over every
 // local copy, mirroring registry.ResolveBinary, so inspection and the launcher
 // agree on which binary a session would run; such a server has no managed
 // version of its own. Otherwise the installed component is probed, then a
 // source checkout, which keeps its binary relative to its own root.
-func Probe(home string, e registry.Engine) (string, string, bool) {
+func Probe(home string, e registry.Module) (string, string, bool) {
 	if e.Binary.Env != "" && os.Getenv(e.Binary.Env) != "" {
 		path, err := registry.ResolveBinary(home, e)
 		if err != nil {
@@ -164,7 +164,7 @@ func Probe(home string, e registry.Engine) (string, string, bool) {
 		}
 		return path, "", true
 	}
-	managed := EngineSpec(home, e)
+	managed := ModuleSpec(home, e)
 	if path, version, ok := managed.Probe(); ok {
 		return path, version, true
 	}
@@ -178,15 +178,15 @@ func Probe(home string, e registry.Engine) (string, string, bool) {
 	return "", "", false
 }
 
-// Installed reports whether an engine server can be resolved locally.
-func Installed(home string, e registry.Engine) bool {
+// Installed reports whether a server module can be resolved locally.
+func Installed(home string, e registry.Module) bool {
 	_, _, ok := Probe(home, e)
 	return ok
 }
 
-// Inspect reports the local state of an engine server, resolving it exactly
+// Inspect reports the local state of a server module, resolving it exactly
 // like Probe so the reported path is the one a session would launch.
-func Inspect(home string, e registry.Engine) Status {
+func Inspect(home string, e registry.Module) Status {
 	path, version, ok := Probe(home, e)
 	if !ok {
 		return Status{ID: e.ID}
@@ -407,8 +407,8 @@ func (d Downloader) releaseAsset(source *registry.Install, tag, name string) (st
 // Install resolves and installs one component, returning the resulting status.
 // It is a no-op when the installed version already matches, unless force is
 // set. Progress lines, if any, go to progress.
-func (d Downloader) Install(ctx context.Context, home string, e registry.Engine, artifact Artifact, force bool, progress io.Writer) (Status, error) {
-	return d.InstallSpec(ctx, EngineSpec(home, e), artifact, force, progress)
+func (d Downloader) Install(ctx context.Context, home string, e registry.Module, artifact Artifact, force bool, progress io.Writer) (Status, error) {
+	return d.InstallSpec(ctx, ModuleSpec(home, e), artifact, force, progress)
 }
 
 // InstallSpec installs one component into the directory its spec describes. The

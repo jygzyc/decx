@@ -76,8 +76,8 @@ func (m *Manager) stopProcess(ctx context.Context, s Record) error {
 	if err != nil || !alive {
 		return err
 	}
-	if engine, ok := m.engine(s.Engine); ok && len(engine.Launch.Stop.Command) > 0 {
-		if err := m.runStopCommand(ctx, s, engine); err != nil {
+	if module, ok := m.module(s.Module); ok && len(module.Launch.Stop.Command) > 0 {
+		if err := m.runStopCommand(ctx, s, module); err != nil {
 			fmt.Fprintf(m.progress(), "stop command failed: %v; terminating PID %d\n", err, s.PID)
 		}
 		if err := waitForExit(ctx, s, stopGrace); err == nil {
@@ -119,9 +119,9 @@ func waitForExit(ctx context.Context, s Record, timeout time.Duration) error {
 }
 
 // runStopCommand expands the registry's stop command for one session and runs it.
-func (m *Manager) runStopCommand(ctx context.Context, s Record, engine registry.Engine) error {
-	executable := engine.Binary.Path
-	if resolved, err := resolveBinary(m.Home, engine); err == nil {
+func (m *Manager) runStopCommand(ctx context.Context, s Record, module registry.Module) error {
+	executable := module.Binary.Path
+	if resolved, err := resolveBinary(m.Home, module); err == nil {
 		executable = resolved
 	}
 	replacer := strings.NewReplacer(
@@ -131,8 +131,8 @@ func (m *Manager) runStopCommand(ctx context.Context, s Record, engine registry.
 		"{home}", m.Home,
 		"{target}", s.Target,
 	)
-	argv := make([]string, len(engine.Launch.Stop.Command))
-	for i, part := range engine.Launch.Stop.Command {
+	argv := make([]string, len(module.Launch.Stop.Command))
+	for i, part := range module.Launch.Stop.Command {
 		argv[i] = replacer.Replace(part)
 	}
 	if argv[0] == "" {

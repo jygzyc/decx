@@ -15,26 +15,26 @@ import (
 func TestKnownComponents(t *testing.T) {
 	c := &Config{}
 	c.applyKnown()
-	if ids := engineIDs(c.Engines); !slices.Equal(ids, []string{"asc", "jadx", "kuna"}) {
-		t.Fatalf("known engines = %v", ids)
+	if ids := moduleIDs(c.Modules); !slices.Equal(ids, []string{"asc", "jadx", "kuna"}) {
+		t.Fatalf("known modules = %v", ids)
 	}
 	if ids := pluginIDs(c.Plugins); !slices.Equal(ids, []string{"ard-framework"}) {
 		t.Fatalf("known plugins = %v", ids)
 	}
-	jadx, ok := c.Engine("jadx")
+	jadx, ok := c.Module("jadx")
 	if !ok {
-		t.Fatal("shipped defaults do not register the jadx engine")
+		t.Fatal("shipped defaults do not register the jadx module")
 	}
 	if !jadx.Default || jadx.Installed || jadx.Binary.Path != "" || jadx.Launch.Command != nil || len(jadx.Commands) != 0 {
-		t.Fatalf("known engine carries runtime state: %+v", jadx)
+		t.Fatalf("known module carries runtime state: %+v", jadx)
 	}
 	if jadx.Release == nil || jadx.Release.Source != "repo" || jadx.Release.Tag != "jadx-server-v{version}" ||
 		jadx.Release.Asset != "jadx-server-{version}.zip" || jadx.Release.Format != "zip" || jadx.Release.Checksums != "SHA256SUMS" {
 		t.Fatalf("jadx install block: %+v", jadx.Release)
 	}
-	kuna, ok := c.Engine("kuna")
+	kuna, ok := c.Module("kuna")
 	if !ok {
-		t.Fatal("shipped defaults do not register the kuna engine")
+		t.Fatal("shipped defaults do not register the kuna module")
 	}
 	if kuna.Release == nil || kuna.Release.Tag != "kuna-server-v{version}" ||
 		kuna.Release.Asset != "kuna-server-{version}-{os}-{arch}.zip" {
@@ -60,28 +60,28 @@ func TestKnownComponents(t *testing.T) {
 	// pointers it takes into them (the reallocation is a production bug tracked
 	// separately); this keeps the intended merge semantics under test.
 	discovered := &Config{
-		Engines: make([]Engine, 0, 8),
+		Modules: make([]Module, 0, 8),
 		Plugins: make([]Plugin, 0, 8),
 	}
-	discovered.Engines = append(discovered.Engines,
-		Engine{ID: "jadx", Description: "checkout jadx", Release: own, Installed: true, Root: "/checkout/jadx"},
-		Engine{ID: "custom"},
-		Engine{ID: "kuna", Installed: true},
+	discovered.Modules = append(discovered.Modules,
+		Module{ID: "jadx", Description: "checkout jadx", Release: own, Installed: true, Root: "/checkout/jadx"},
+		Module{ID: "custom"},
+		Module{ID: "kuna", Installed: true},
 	)
 	discovered.Plugins = append(discovered.Plugins, Plugin{ID: "ard-framework", Entry: "dist/ard-framework.js", Installed: true})
 	discovered.applyKnown()
-	if ids := engineIDs(discovered.Engines); !slices.Equal(ids, []string{"asc", "custom", "jadx", "kuna"}) {
-		t.Fatalf("engines after discovery = %v", ids)
+	if ids := moduleIDs(discovered.Modules); !slices.Equal(ids, []string{"asc", "custom", "jadx", "kuna"}) {
+		t.Fatalf("modules after discovery = %v", ids)
 	}
-	checkoutJadx, _ := discovered.Engine("jadx")
+	checkoutJadx, _ := discovered.Module("jadx")
 	if checkoutJadx.Description != "checkout jadx" || checkoutJadx.Release != own || !checkoutJadx.Default || !checkoutJadx.Installed || checkoutJadx.Root != "/checkout/jadx" {
 		t.Fatalf("discovered jadx was overwritten: %+v", checkoutJadx)
 	}
-	discoveredKuna, _ := discovered.Engine("kuna")
+	discoveredKuna, _ := discovered.Module("kuna")
 	if discoveredKuna.Default || !discoveredKuna.Installed || discoveredKuna.Release == nil {
 		t.Fatalf("discovered kuna = %+v", discoveredKuna)
 	}
-	asc, _ := discovered.Engine("asc")
+	asc, _ := discovered.Module("asc")
 	if asc.Installed || asc.Release == nil || asc.Default {
 		t.Fatalf("asc placeholder = %+v", asc)
 	}
@@ -91,10 +91,10 @@ func TestKnownComponents(t *testing.T) {
 	}
 }
 
-func engineIDs(engines []Engine) []string {
-	ids := make([]string, 0, len(engines))
-	for _, engine := range engines {
-		ids = append(ids, engine.ID)
+func moduleIDs(modules []Module) []string {
+	ids := make([]string, 0, len(modules))
+	for _, module := range modules {
+		ids = append(ids, module.ID)
 	}
 	return ids
 }
@@ -119,9 +119,9 @@ func commandFor(t *testing.T, commands []Command, name string) Command {
 	return Command{}
 }
 
-// TestConfigDirEngineRequestMapping builds a server manifest in an explicit
+// TestConfigDirModuleRequestMapping builds a server manifest in an explicit
 // --config root and checks that its command tree maps argv to the HTTP body.
-func TestConfigDirEngineRequestMapping(t *testing.T) {
+func TestConfigDirModuleRequestMapping(t *testing.T) {
 	checkout := t.TempDir()
 	dir := filepath.Join(checkout, "bin", "jadx")
 	if err := os.MkdirAll(dir, 0700); err != nil {
@@ -172,18 +172,18 @@ func TestConfigDirEngineRequestMapping(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	engine, ok := loaded.Engine("jadx")
-	if !ok || !engine.Installed || engine.Root != dir {
-		t.Fatalf("config dir engine not loaded: %+v", engine)
+	module, ok := loaded.Module("jadx")
+	if !ok || !module.Installed || module.Root != dir {
+		t.Fatalf("config dir module not loaded: %+v", module)
 	}
-	if engine.Binary.Env != "DECX_JADX_SERVER" {
-		t.Fatalf("unexpected binary block: %+v", engine.Binary)
+	if module.Binary.Env != "DECX_JADX_SERVER" {
+		t.Fatalf("unexpected binary block: %+v", module.Binary)
 	}
-	if engine.Release == nil || engine.Release.Repository != DefaultRepository {
-		t.Fatalf("release did not inherit the default repository: %+v", engine.Release)
+	if module.Release == nil || module.Release.Repository != DefaultRepository {
+		t.Fatalf("release did not inherit the default repository: %+v", module.Release)
 	}
 
-	cmd := commandFor(t, engine.Commands, "classes")
+	cmd := commandFor(t, module.Commands, "classes")
 	args, err := ParseArgs(append(append([]Arg{}, CoreArgs...), cmd.Args...), []string{"--include-package", "com.example", "--include-package=org.example", "--limit", "18446744073709551615", "--no-regex"})
 	if err != nil {
 		t.Fatal(err)
@@ -199,9 +199,9 @@ func TestConfigDirEngineRequestMapping(t *testing.T) {
 	}
 }
 
-// TestKunaEngineRequestMapping reads the shipped kuna manifest and checks that
+// TestKunaModuleRequestMapping reads the shipped kuna manifest and checks that
 // its command tree maps argv to the requests the kuna server expects.
-func TestKunaEngineRequestMapping(t *testing.T) {
+func TestKunaModuleRequestMapping(t *testing.T) {
 	raw, err := os.ReadFile(filepath.Join("..", "..", "..", "modules", "decx-kuna", "decx.json"))
 	if err != nil {
 		t.Fatalf("read shipped kuna manifest: %v", err)
@@ -222,9 +222,9 @@ func TestKunaEngineRequestMapping(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	kuna, ok := cfg.Engine("kuna")
+	kuna, ok := cfg.Module("kuna")
 	if !ok || !kuna.Installed || kuna.Root != dir {
-		t.Fatalf("installed kuna engine not loaded: %+v", kuna)
+		t.Fatalf("installed kuna module not loaded: %+v", kuna)
 	}
 	if kuna.Binary.Path != "bin/kuna-server" || kuna.Binary.Env != "DECX_KUNA_SERVER" {
 		t.Fatalf("unexpected kuna binary block: %+v", kuna.Binary)
@@ -303,14 +303,14 @@ func TestLoadDiscoversManifests(t *testing.T) {
 		return dir
 	}
 
-	// An installed server manifest becomes a runnable engine carrying its
+	// An installed server manifest becomes a runnable module carrying its
 	// recorded version.
 	dir := writeServer("custom", "1.4.2", nil)
 	c, err := Load(home)
 	if err != nil {
 		t.Fatal(err)
 	}
-	custom, ok := c.Engine("custom")
+	custom, ok := c.Module("custom")
 	if !ok || !custom.Installed || custom.Version != "1.4.2" || custom.Root != dir || len(custom.Commands) == 0 {
 		t.Fatalf("installed manifest not loaded: %+v", custom)
 	}
@@ -318,7 +318,7 @@ func TestLoadDiscoversManifests(t *testing.T) {
 		t.Fatalf("manifest without a release block is installable: %+v", custom.Release)
 	}
 	if custom.Binary.Path == "" || custom.Launch.Command == nil {
-		t.Fatalf("installed engine has no runtime state: %+v", custom)
+		t.Fatalf("installed module has no runtime state: %+v", custom)
 	}
 
 	// A manifest that declares no release is still discovered.
@@ -327,8 +327,8 @@ func TestLoadDiscoversManifests(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if e, ok := c.Engine("extra"); !ok || !e.Installed || e.Root != extra {
-		t.Fatalf("manifest-only engine missing: %+v", e)
+	if e, ok := c.Module("extra"); !ok || !e.Installed || e.Root != extra {
+		t.Fatalf("manifest-only module missing: %+v", e)
 	}
 
 	// A broken manifest becomes a warning and never an error.
@@ -343,8 +343,8 @@ func TestLoadDiscoversManifests(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, ok := c.Engine("broken"); ok {
-		t.Fatal("broken manifest became an engine")
+	if _, ok := c.Module("broken"); ok {
+		t.Fatal("broken manifest became a module")
 	}
 	warned := false
 	for _, warning := range c.Warnings {

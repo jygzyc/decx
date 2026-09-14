@@ -12,12 +12,12 @@ import (
 )
 
 // moduleArgs are the shared flags of `decx install` and `decx self update`:
-// modules are optional, so nothing is downloaded unless the user names one,
-// passes --all, or asks for the defaults. --cli replaces the running decx
-// executable in both commands.
+// without --module a plain install takes every module that declares a release
+// source, while a plain update refreshes every installed module that can be
+// refreshed. --cli replaces the running decx executable in both commands.
 var moduleArgs = []registry.Arg{
 	{ID: "module", Kind: "multi", Long: "module", Type: "string", Help: "Module to install (repeatable): a module id, owner/repo[@ref] or a local path"},
-	{ID: "all", Kind: "flag", Long: "all", Type: "bool", Help: "Install every module that declares a release source"},
+	{ID: "all", Kind: "flag", Long: "all", Type: "bool", Help: "Install every module that declares a release source (the default without --module)"},
 	{ID: "prerelease", Kind: "flag", Long: "prerelease", Type: "bool", Help: "Use the newest prerelease instead of the latest stable release"},
 	{ID: "force", Kind: "flag", Long: "force", Type: "bool", Help: "Download again even when the installed version already matches"},
 	{ID: "cli", Kind: "flag", Long: "cli", Type: "bool", Help: "Also replace the decx executable with the newest release"},
@@ -42,7 +42,7 @@ func (a *App) runSelf(ctx context.Context, config *registry.Config, input []stri
 			"bundled configuration file to initialise.\n\n"+
 			"Common arguments:\n"+
 			"  --module <id>   Module to update (repeatable)\n"+
-			"  --all           Every installed module\n"+
+			"  --all           Every installed module (the default without --module)\n"+
 			"  --prerelease    Newest prerelease instead of the latest stable release\n"+
 			"  --force         Download again even when the version already matches\n"+
 			"  --cli           Replace the decx executable as well\n")
@@ -74,7 +74,7 @@ func installUsage(update bool) string {
 			"executable is replaced as well. Modules whose version already matches are\n" +
 			"left alone unless --force is given.\n\n" +
 			"  --module <id|repo|path>  Module to update (repeatable)\n" +
-			"  --all                    Every installed module that can be refreshed\n" +
+			"  --all                    Every installed module that can be refreshed (the default)\n" +
 			"  --prerelease             Newest prerelease instead of the latest stable release\n" +
 			"  --force                  Download again even when the installed version already matches\n" +
 			"  --cli                    Replace the decx executable as well\n"
@@ -83,11 +83,12 @@ func installUsage(update bool) string {
 		"Installs modules. An <id> names a known or already installed module and is\n" +
 		"fetched from the release its decx.json manifest declares; owner/repo[@ref]\n" +
 		"downloads that repository archive; a local directory or .zip/.tar.gz archive\n" +
-		"is imported in place. Nothing is installed unless a module is named, --all is\n" +
-		"given, or the module is one of the defaults (jadx, ard-framework). With --cli\n" +
-		"the decx executable is replaced as well; --cli alone only refreshes it.\n\n" +
+		"is imported in place. Without --module every module that declares a release\n" +
+		"source is installed (every shipped module does), which is also what --all\n" +
+		"asks for explicitly. With --cli the decx executable is replaced as well;\n" +
+		"--cli alone only refreshes it.\n\n" +
 		"  --module <id|repo|path>  Module to install (repeatable)\n" +
-		"  --all                    Every module that declares a release source\n" +
+		"  --all                    Every module that declares a release source (the default)\n" +
 		"  --prerelease             Newest prerelease instead of the latest stable release\n" +
 		"  --force                  Download again even when the installed version already matches\n" +
 		"  --cli                    Replace the decx executable as well\n"
@@ -145,14 +146,14 @@ func (a *App) installComponents(ctx context.Context, config *registry.Config, in
 	}
 	if updateCLI && !update && len(args["module"]) == 0 && first(args, "all") != "true" {
 		// `install --cli` alone refreshes the running executable; it does not
-		// also pull in the default modules the way a bare `decx install` does.
+		// also install every module the way a bare `decx install` does.
 		plans = nil
 	}
 	if len(plans) == 0 && !updateCLI {
 		if update {
-			return errors.New("nothing to update; pass --module <id|repo|path> or --all")
+			return errors.New("nothing to update; no module is installed that can be refreshed")
 		}
-		return errors.New("nothing to install; pass --module <id|repo|path> or --all")
+		return errors.New("nothing to install; no module declares an install source")
 	}
 	downloader := install.Downloader{Client: a.HTTP, GitHub: a.GitHub, GitHubAPI: a.GitHubAPI}
 	force := first(args, "force") == "true"
@@ -203,16 +204,15 @@ func (a *App) installModule(ctx context.Context, downloader install.Downloader, 
 // selectModules resolves the requested modules and how each one is installed.
 // A module that was imported from a repository or a path is re-imported from
 // that origin on update; everything else comes from the manifest's release
-// block. A plain install selects the default modules, --all every module with a
-// release source, and a bare update every installed module that can be
-// refreshed.
+// block. A plain install installs every module that declares a release source
+// (the shipped modules all do), --module names one explicitly and a bare update
+// refreshes every installed module that can be refreshed.
 func selectModules(home string, config *registry.Config, args map[string][]string, update bool) ([]modulePlan, error) {
 	names := args["module"]
-	all := first(args, "all") == "true"
 	plans := []modulePlan{}
 	add := func(id string) error {
-		engine, plugin := findModule(config, id)
-		if engine == nil && plugin == nil {
+		module, plugin := findModule(config, id)
+		if module == nil && plugin == nil {
 			return fmt.Errorf("unknown module %q", id)
 		}
 		if update {
@@ -221,11 +221,11 @@ func selectModules(home string, config *registry.Config, args map[string][]strin
 				return nil
 			}
 		}
-		if moduleRelease(engine, plugin) == nil {
+		if moduleRelease(module, plugin) == nil {
 			return fmt.Errorf("module %s does not declare an install source; import it from a repository or a path", id)
 		}
-		if engine != nil {
-			spec := install.EngineSpec(home, *engine)
+		if module != nil {
+			spec := install.ModuleSpec(home, *module)
 			plans = append(plans, modulePlan{id: id, spec: &spec})
 		} else {
 			spec := install.PluginSpec(home, *plugin)
@@ -234,18 +234,18 @@ func selectModules(home string, config *registry.Config, args map[string][]strin
 		return nil
 	}
 	if len(names) == 0 {
-		for i := range config.Engines {
-			engine := &config.Engines[i]
-			if !selectModule(home, update, all, engine.Default, engine.Release != nil, install.Installed(home, *engine), engine.ID) {
+		for i := range config.Modules {
+			module := &config.Modules[i]
+			if !selectModule(home, update, module.Release != nil, install.Installed(home, *module), module.ID) {
 				continue
 			}
-			if err := add(engine.ID); err != nil {
+			if err := add(module.ID); err != nil {
 				return nil, err
 			}
 		}
 		for i := range config.Plugins {
 			plugin := &config.Plugins[i]
-			if !selectModule(home, update, all, plugin.Default, plugin.Release != nil, plugin.Installed, plugin.ID) {
+			if !selectModule(home, update, plugin.Release != nil, plugin.Installed, plugin.ID) {
 				continue
 			}
 			if err := add(plugin.ID); err != nil {
@@ -255,7 +255,7 @@ func selectModules(home string, config *registry.Config, args map[string][]strin
 		return plans, nil
 	}
 	for _, name := range names {
-		if engine, plugin := findModule(config, name); engine != nil || plugin != nil {
+		if module, plugin := findModule(config, name); module != nil || plugin != nil {
 			if err := add(name); err != nil {
 				return nil, err
 			}
@@ -275,23 +275,23 @@ func selectModules(home string, config *registry.Config, args map[string][]strin
 }
 
 // selectModule reports whether one module is part of a bulk selection.
-func selectModule(home string, update, all, isDefault, hasRelease, installed bool, id string) bool {
+func selectModule(home string, update, hasRelease, installed bool, id string) bool {
 	if update {
 		// A bare or --all update only refreshes what is present and refreshed
 		// from somewhere: a release source or a recorded import origin.
 		return installed && (hasRelease || recordedSource(home, id) != nil)
 	}
-	if all {
-		return hasRelease
-	}
-	return isDefault
+	// A plain install and --all both take every module that can be fetched from
+	// a release; the `default` marker only drives the session module choice and
+	// `module list`.
+	return hasRelease
 }
 
-// findModule resolves an id to its engine or plugin definition; engine wins on
+// findModule resolves an id to its module or plugin definition; module wins on
 // the theoretical id collision, matching `decx -m <id>`.
-func findModule(config *registry.Config, id string) (*registry.Engine, *registry.Plugin) {
-	if engine, ok := config.Engine(id); ok {
-		return &engine, nil
+func findModule(config *registry.Config, id string) (*registry.Module, *registry.Plugin) {
+	if module, ok := config.Module(id); ok {
+		return &module, nil
 	}
 	if plugin, ok := config.Plugin(id); ok {
 		return nil, &plugin
@@ -300,9 +300,9 @@ func findModule(config *registry.Config, id string) (*registry.Engine, *registry
 }
 
 // moduleRelease returns the release block of whichever kind is set.
-func moduleRelease(engine *registry.Engine, plugin *registry.Plugin) *registry.Install {
-	if engine != nil {
-		return engine.Release
+func moduleRelease(module *registry.Module, plugin *registry.Plugin) *registry.Install {
+	if module != nil {
+		return module.Release
 	}
 	if plugin != nil {
 		return plugin.Release

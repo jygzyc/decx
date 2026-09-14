@@ -95,11 +95,11 @@ parseFlags:
 		fmt.Fprintf(a.Err, "decx: %s\n", warning)
 	}
 	if moduleID != "" {
-		if engine, ok := c.Engine(moduleID); ok {
-			if !engine.Installed {
-				return fmt.Errorf("module %s is not installed; run `decx install --module %s`", engine.ID, engine.ID)
+		if module, ok := c.Module(moduleID); ok {
+			if !module.Installed {
+				return fmt.Errorf("module %s is not installed; run `decx install --module %s`", module.ID, module.ID)
 			}
-			return a.runTool(ctx, c, engine.Commands, input, "-m "+engine.ID, []string{engine.ID}, nil, nil)
+			return a.runTool(ctx, c, module.Commands, input, "-m "+module.ID, []string{module.ID}, nil, nil)
 		}
 		if plugin, ok := c.Plugin(moduleID); ok {
 			if !plugin.Installed {
@@ -111,8 +111,8 @@ parseFlags:
 	}
 	if len(input) == 0 || input[0] == "--help" || input[0] == "-h" || input[0] == "help" {
 		fmt.Fprintln(a.Out, "Usage: decx [--config dir] [--module id] <command> [arguments]\n\nCLI commands:\n  session          Open, inspect and close managed server sessions\n  install          Download modules into DECX_HOME\n  self update      Update installed modules and the decx executable\n  self skills      Install the DECX agent skills for AI clients\n  module list      List discovered modules and their install state\n\nEvery server and plugin is a module described by its own decx.json manifest.\nRun a module command with `decx -m <module> <command>`.\n\nModules (decx -m <module> <command>):")
-		for _, engine := range c.Engines {
-			fmt.Fprintf(a.Out, "  %-16s %-8s %s\n", engine.ID, registry.KindServer, engine.Description)
+		for _, module := range c.Modules {
+			fmt.Fprintf(a.Out, "  %-16s %-8s %s\n", module.ID, registry.KindServer, module.Description)
 		}
 		for _, plugin := range c.Plugins {
 			fmt.Fprintf(a.Out, "  %-16s %-8s %s\n", plugin.ID, registry.KindPlugin, plugin.Description)
@@ -162,19 +162,19 @@ type moduleView struct {
 }
 
 func (a *App) moduleList(config *registry.Config) []moduleView {
-	views := make([]moduleView, 0, len(config.Engines)+len(config.Plugins))
-	for _, engine := range config.Engines {
-		status := install.Inspect(a.Home, engine)
-		source := recordedSource(a.Home, engine.ID)
+	views := make([]moduleView, 0, len(config.Modules)+len(config.Plugins))
+	for _, module := range config.Modules {
+		status := install.Inspect(a.Home, module)
+		source := recordedSource(a.Home, module.ID)
 		views = append(views, moduleView{
-			ID:          engine.ID,
+			ID:          module.ID,
 			Kind:        registry.KindServer,
-			Description: engine.Description,
-			Default:     engine.Default,
+			Description: module.Description,
+			Default:     module.Default,
 			Installed:   status.Installed,
 			Path:        status.Path,
 			Version:     status.Version,
-			Installable: engine.Release != nil || source != nil,
+			Installable: module.Release != nil || source != nil,
 			Source:      sourceLabel(source),
 		})
 	}
@@ -217,10 +217,10 @@ func sourceLabel(source *registry.Source) string {
 }
 
 // runTool walks a command tree. path is the human-readable prefix for usage and
-// errors, engines selects the server sessions the command may attach to, and
+// errors, modules selects the server sessions the command may attach to, and
 // pluginDef/requestPath carry the runtime plugin plus the command path inside it
-// when the tree belongs to a plugin (both nil for engine trees).
-func (a *App) runTool(ctx context.Context, config *registry.Config, commands []registry.Command, input []string, path string, engines []string, pluginDef *registry.Plugin, requestPath []string) error {
+// when the tree belongs to a plugin (both nil for module trees).
+func (a *App) runTool(ctx context.Context, config *registry.Config, commands []registry.Command, input []string, path string, modules []string, pluginDef *registry.Plugin, requestPath []string) error {
 	if len(input) == 0 || input[0] == "--help" || input[0] == "-h" || input[0] == "help" {
 		fmt.Fprintf(a.Out, "Usage: decx %s <command>\n\n", path)
 		for _, c := range commands {
@@ -234,7 +234,7 @@ func (a *App) runTool(ctx context.Context, config *registry.Config, commands []r
 		}
 		if len(cmd.Subcommands) > 0 {
 			next := append(append([]string{}, requestPath...), cmd.Name)
-			return a.runTool(ctx, config, cmd.Subcommands, input[1:], path+" "+cmd.Name, engines, pluginDef, next)
+			return a.runTool(ctx, config, cmd.Subcommands, input[1:], path+" "+cmd.Name, modules, pluginDef, next)
 		}
 		specs := append(append([]registry.Arg{}, registry.CoreArgs...), cmd.Args...)
 		if pluginDef != nil {
@@ -272,8 +272,8 @@ func (a *App) runTool(ctx context.Context, config *registry.Config, commands []r
 				return errors.New("--port must be between 1 and 65535")
 			}
 		} else {
-			manager := session.Manager{Home: a.Home, Engines: config.Engines, Progress: a.Err}
-			selected, err := manager.Select(ctx, first(args, "session"), engines)
+			manager := session.Manager{Home: a.Home, Modules: config.Modules, Progress: a.Err}
+			selected, err := manager.Select(ctx, first(args, "session"), modules)
 			if err != nil {
 				return err
 			}

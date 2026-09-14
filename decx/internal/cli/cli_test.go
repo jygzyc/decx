@@ -33,8 +33,8 @@ func installManifest(t *testing.T, dir string, manifest registry.Manifest) {
 	}
 }
 
-// queryEngine is a server manifest with one command the tests can exercise.
-func queryEngine(id string) registry.Manifest {
+// queryModule is a server manifest with one command the tests can exercise.
+func queryModule(id string) registry.Manifest {
 	return registry.Manifest{
 		Manifest:    1,
 		Kind:        registry.KindServer,
@@ -44,7 +44,7 @@ func queryEngine(id string) registry.Manifest {
 		Launch:      &registry.Launch{Command: []string{"{binary}", "{target}", "--port", "{port}"}},
 		Commands: []registry.Command{{
 			Name:     "query",
-			About:    "query the test engine",
+			About:    "query the test module",
 			Endpoint: "query",
 			Args:     []registry.Arg{{ID: "text", Kind: "positional", Required: true}},
 			Request:  []registry.Mapping{{Arg: "text", Field: "query", Type: "string", When: "always"}},
@@ -70,7 +70,7 @@ func TestRuntimeToolInvocation(t *testing.T) {
 	defer server.Close()
 	_, port, _ := net.SplitHostPort(strings.TrimPrefix(server.URL, "http://"))
 	home := t.TempDir()
-	installManifest(t, registry.ModuleRoot(home, "custom"), queryEngine("custom"))
+	installManifest(t, registry.ModuleRoot(home, "custom"), queryModule("custom"))
 	var output bytes.Buffer
 	a := App{Home: home, Out: &output, HTTP: server.Client()}
 	if err := a.Run(context.Background(), []string{"-m", "custom", "query", "hello", "--port", port}); err != nil {
@@ -81,7 +81,7 @@ func TestRuntimeToolInvocation(t *testing.T) {
 	}
 }
 
-func TestShippedKunaEngineInvocation(t *testing.T) {
+func TestShippedKunaModuleInvocation(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/api/decx/get_functions" || r.Method != "POST" {
 			t.Errorf("wrong route %s %s", r.Method, r.URL.Path)
@@ -102,7 +102,7 @@ func TestShippedKunaEngineInvocation(t *testing.T) {
 	defer server.Close()
 	_, port, _ := net.SplitHostPort(strings.TrimPrefix(server.URL, "http://"))
 	// The shipped decx.json manifest supplies the runtime definition, so install
-	// it under DECX_HOME to run the engine without a built server.
+	// it under DECX_HOME to run the module without a built server.
 	manifest, err := os.ReadFile(filepath.Join("..", "..", "..", "modules", "decx-kuna", "decx.json"))
 	if err != nil {
 		t.Fatal(err)
@@ -372,14 +372,14 @@ func fakeSums(names ...string) string {
 	return body.String()
 }
 
-// TestSelfInstallDownloadsEngines installs a server and a plugin from their
+// TestSelfInstallDownloadsModules installs a server and a plugin from their
 // releases, keeps plugins opt-in, and makes `self update` a no-op for the
 // versions that are already installed.
-func TestSelfInstallDownloadsEngines(t *testing.T) {
+func TestSelfInstallDownloadsModules(t *testing.T) {
 	t.Chdir(t.TempDir())
-	engineArchive := zipArchive(t, map[string]string{
+	moduleArchive := zipArchive(t, map[string]string{
 		"decx.json": `{"manifest":1,"kind":"server","id":"jadx","description":"JADX server","version":"4.3.1",` +
-			`"release":{"source":"repo","repository":"owner/engines","tag":"jadx-server-v{version}","asset":"jadx-server-{version}.zip","checksums":"SHA256SUMS"},` +
+			`"release":{"source":"repo","repository":"owner/modules","tag":"jadx-server-v{version}","asset":"jadx-server-{version}.zip","checksums":"SHA256SUMS"},` +
 			`"binary":{"kind":"java-jar","path":"jadx-server.jar"},` +
 			`"launch":{"command":["{binary}","{target}","--port","{port}"]},` +
 			`"commands":[{"name":"classes","endpoint":"get_classes"}]}`,
@@ -401,11 +401,28 @@ func TestSelfInstallDownloadsEngines(t *testing.T) {
 		"VERSION":  "4.3.1\n",
 		"index.js": "globalThis.handle = () => ({ ok: true, data: {} });",
 	})
+	ascArchive := zipArchive(t, map[string]string{
+		"decx.json": `{"manifest":1,"kind":"server","id":"asc","description":"ASC server","version":"9.9.9",` +
+			`"release":{"source":"repo","repository":"jygzyc/decx","tag":"asc-server-v{version}","asset":"asc-server-{version}.zip","checksums":"SHA256SUMS"},` +
+			`"binary":{"kind":"program","path":"bin/asc-server"},` +
+			`"launch":{"command":["{binary}","{target}","--port","{port}"]},` +
+			`"commands":[{"name":"find-refs","endpoint":"find_refs"}]}`,
+		"bin/asc-server": "#!/bin/sh\n",
+	})
+	kunaAsset := fmt.Sprintf("kuna-server-9.9.9-%s-%s.zip", runtime.GOOS, runtime.GOARCH)
+	kunaArchive := zipArchive(t, map[string]string{
+		"decx.json": `{"manifest":1,"kind":"server","id":"kuna","description":"Kuna server","version":"9.9.9",` +
+			`"release":{"source":"repo","repository":"jygzyc/decx","tag":"kuna-server-v{version}","asset":"kuna-server-{version}-{os}-{arch}.zip","checksums":"SHA256SUMS"},` +
+			`"binary":{"kind":"program","path":"bin/kuna-server"},` +
+			`"launch":{"command":["{binary}","{target}","--port","{port}"]},` +
+			`"commands":[{"name":"functions","endpoint":"get_functions"}]}`,
+		"bin/kuna-server": "binary",
+	})
 	downloads := 0
 	var base string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
-		case "/repos/owner/engines/releases":
+		case "/repos/owner/modules/releases":
 			_, _ = w.Write([]byte(`[{"tag_name":"jadx-server-v4.3.1","draft":false,"prerelease":false,"assets":[` +
 				`{"name":"jadx-server-4.3.1.zip","browser_download_url":"` + base + `/download/jadx-server-4.3.1.zip"}]}]`))
 		case "/repos/owner/gui/releases":
@@ -414,21 +431,38 @@ func TestSelfInstallDownloadsEngines(t *testing.T) {
 		case "/repos/owner/framework/releases":
 			_, _ = w.Write([]byte(`[{"tag_name":"ard-framework-v4.3.1","draft":false,"prerelease":false,"assets":[` +
 				`{"name":"decx-ard-framework-plugin-4.3.1.zip","browser_download_url":"` + base + `/download/framework.zip"}]}]`))
+		case "/repos/jygzyc/decx/releases":
+			// The compiled-in table resolves the modules that are not present locally,
+			// so a bare `decx install` also pulls asc and kuna from the default repo.
+			_, _ = w.Write([]byte(`[{"tag_name":"asc-server-v9.9.9","draft":false,"prerelease":false,"assets":[` +
+				`{"name":"asc-server-9.9.9.zip","browser_download_url":"` + base + `/download/asc.zip"}]},` +
+				`{"tag_name":"kuna-server-v9.9.9","draft":false,"prerelease":false,"assets":[` +
+				`{"name":"` + kunaAsset + `","browser_download_url":"` + base + `/download/kuna.zip"}]}]`))
 		case "/download/jadx-server-4.3.1.zip":
 			downloads++
-			_, _ = w.Write(engineArchive)
+			_, _ = w.Write(moduleArchive)
 		case "/download/jadx-gui-4.3.1.zip":
 			downloads++
 			_, _ = w.Write(pluginArchive)
 		case "/download/framework.zip":
 			downloads++
 			_, _ = w.Write(frameworkArchive)
-		case "/owner/engines/releases/download/jadx-server-v4.3.1/SHA256SUMS":
-			_, _ = fmt.Fprint(w, sumsBody("jadx-server-4.3.1.zip", engineArchive))
+		case "/download/asc.zip":
+			downloads++
+			_, _ = w.Write(ascArchive)
+		case "/download/kuna.zip":
+			downloads++
+			_, _ = w.Write(kunaArchive)
+		case "/owner/modules/releases/download/jadx-server-v4.3.1/SHA256SUMS":
+			_, _ = fmt.Fprint(w, sumsBody("jadx-server-4.3.1.zip", moduleArchive))
 		case "/owner/gui/releases/download/jadx-gui-v4.3.1/SHA256SUMS":
 			_, _ = fmt.Fprint(w, sumsBody("jadx-gui-4.3.1.zip", pluginArchive))
 		case "/owner/framework/releases/download/ard-framework-v4.3.1/SHA256SUMS":
 			_, _ = fmt.Fprint(w, sumsBody("decx-ard-framework-plugin-4.3.1.zip", frameworkArchive))
+		case "/jygzyc/decx/releases/download/asc-server-v9.9.9/SHA256SUMS":
+			_, _ = fmt.Fprint(w, sumsBody("asc-server-9.9.9.zip", ascArchive))
+		case "/jygzyc/decx/releases/download/kuna-server-v9.9.9/SHA256SUMS":
+			_, _ = fmt.Fprint(w, sumsBody(kunaAsset, kunaArchive))
 		default:
 			http.NotFound(w, r)
 		}
@@ -446,7 +480,7 @@ func TestSelfInstallDownloadsEngines(t *testing.T) {
 		Launch:      &registry.Launch{Command: []string{"{binary}", "{target}", "--port", "{port}"}},
 		Release: &registry.Install{
 			Source:     "repo",
-			Repository: "owner/engines",
+			Repository: "owner/modules",
 			Tag:        "jadx-server-v{version}",
 			Asset:      "jadx-server-{version}.zip",
 			Checksums:  "SHA256SUMS",
@@ -500,20 +534,32 @@ func TestSelfInstallDownloadsEngines(t *testing.T) {
 			t.Fatalf("legacy %s root exists: %v", legacy, err)
 		}
 	}
-	// Plugins without the default marker stay optional: jadx-gui is only
-	// downloaded when named or with --all.
-	if _, err := os.Stat(filepath.Join(home, "modules", "jadx-gui", "index.js")); err == nil {
-		t.Fatal("plugin installed by the default install")
+	// A bare install takes every module that can be fetched: the three local
+	// ones and the asc/kuna entries of the compiled-in table.
+	for _, want := range []struct{ id, artifact string }{
+		{"jadx", "jadx-server.jar"},
+		{"jadx-gui", "index.js"},
+		{"ard-framework", "index.js"},
+		{"asc", filepath.Join("bin", "asc-server")},
+		{"kuna", filepath.Join("bin", "kuna-server")},
+	} {
+		if _, err := os.Stat(filepath.Join(home, "modules", want.id, want.artifact)); err != nil {
+			t.Fatalf("%s: %v", want.id, err)
+		}
 	}
+	if downloads != 5 {
+		t.Fatalf("downloads = %d", downloads)
+	}
+	// A named install refreshes one module on demand.
 	out.Reset()
-	if err := a.Run(context.Background(), []string{"install", "--module", "jadx-gui"}); err != nil {
+	if err := a.Run(context.Background(), []string{"install", "--module", "jadx-gui", "--force"}); err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(out.String(), `"modules":[{"id":"jadx-gui","installed":true`) {
 		t.Fatal(out.String())
 	}
-	if _, err := os.Stat(filepath.Join(home, "modules", "jadx-gui", "index.js")); err != nil {
-		t.Fatal(err)
+	if downloads != 6 {
+		t.Fatalf("downloads = %d", downloads)
 	}
 	// `self update` keeps the current artifacts and does not download again.
 	out.Reset()
@@ -523,7 +569,7 @@ func TestSelfInstallDownloadsEngines(t *testing.T) {
 	if !strings.Contains(out.String(), `"version":"4.3.1"`) {
 		t.Fatal(out.String())
 	}
-	if downloads != 3 {
+	if downloads != 6 {
 		t.Fatalf("downloads = %d", downloads)
 	}
 	// `module list` reports servers and plugins in one listing.
@@ -532,7 +578,7 @@ func TestSelfInstallDownloadsEngines(t *testing.T) {
 		t.Fatal(err)
 	}
 	listed := out.String()
-	for _, want := range []string{`"id":"jadx"`, `"id":"jadx-gui"`, `"id":"ard-framework"`, `"kind":"server"`, `"kind":"plugin"`, `"version":"4.3.1"`, `"installable":true`} {
+	for _, want := range []string{`"id":"jadx"`, `"id":"jadx-gui"`, `"id":"ard-framework"`, `"id":"asc"`, `"id":"kuna"`, `"kind":"server"`, `"kind":"plugin"`, `"version":"4.3.1"`, `"version":"9.9.9"`, `"installable":true`} {
 		if !strings.Contains(listed, want) {
 			t.Fatalf("module list missing %s: %s", want, listed)
 		}
@@ -561,7 +607,7 @@ func TestSelectComponents(t *testing.T) {
 		t.Fatal(err)
 	}
 	config := &registry.Config{
-		Engines: []registry.Engine{
+		Modules: []registry.Module{
 			{ID: "defaulted", Default: true, Release: release},
 			{ID: "optional", Release: release},
 			{ID: "manual"},
@@ -594,8 +640,8 @@ func TestSelectComponents(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := ids(plans); len(got) != 2 || got[0] != "defaulted" || got[1] != "default-plugin" {
-		t.Fatalf("default modules = %v", got)
+	if got := strings.Join(ids(plans), ","); got != "defaulted,optional,running,default-plugin,installed-plugin" {
+		t.Fatalf("bare install modules = %v", got)
 	}
 	if got := ids(mustSelectModules(t, home, config, parse("--all"), false)); len(got) != 5 {
 		t.Fatalf("--all modules = %v", got)
@@ -643,7 +689,7 @@ func mustSelectModules(t *testing.T, home string, config *registry.Config, args 
 func TestInstallModuleClassification(t *testing.T) {
 	release := &registry.Install{Source: "repo", Repository: "owner/repo", Tag: "demo-v{version}", Asset: "demo-{version}.zip"}
 	config := &registry.Config{
-		Engines: []registry.Engine{
+		Modules: []registry.Module{
 			{ID: "jadx", Default: true, Release: release},
 			{ID: "manual"},
 		},
@@ -701,7 +747,7 @@ func TestModuleListMergesKinds(t *testing.T) {
 	t.Chdir(t.TempDir())
 	home := t.TempDir()
 	serverDir := registry.ModuleRoot(home, "analysis")
-	installManifest(t, serverDir, queryEngine("analysis"))
+	installManifest(t, serverDir, queryModule("analysis"))
 	if err := os.WriteFile(filepath.Join(serverDir, "analysis-server"), []byte("server"), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -766,7 +812,7 @@ func TestModuleFlagRoutesServerAndPlugin(t *testing.T) {
 	defer server.Close()
 	_, port, _ := net.SplitHostPort(strings.TrimPrefix(server.URL, "http://"))
 	home := t.TempDir()
-	installManifest(t, registry.ModuleRoot(home, "analysis"), queryEngine("analysis"))
+	installManifest(t, registry.ModuleRoot(home, "analysis"), queryModule("analysis"))
 	toolDir := registry.ModuleRoot(home, "tool")
 	installManifest(t, toolDir, registry.Manifest{
 		Manifest:    1,
@@ -1055,10 +1101,10 @@ func TestSelfInstallSelectionErrors(t *testing.T) {
 	}
 }
 
-// TestPluginInstallsWithoutDefaultEngine installs one named plugin without
-// touching the old engine root, so a plugin-only setup does not need an engine.
-// `self update --module` is the engine-less path.
-func TestPluginInstallsWithoutDefaultEngine(t *testing.T) {
+// TestPluginInstallsWithoutDefaultModule installs one named plugin without
+// touching the old module root, so a plugin-only setup does not need a module.
+// `self update --module` is the module-less path.
+func TestPluginInstallsWithoutDefaultModule(t *testing.T) {
 	t.Chdir(t.TempDir())
 	bundle := zipArchive(t, map[string]string{
 		"decx.json": `{"manifest":1,"kind":"plugin","id":"sample-plugin","description":"Framework workflows","version":"4.3.1",` +
@@ -1175,7 +1221,6 @@ func TestListCommandsAndUnknownSubcommands(t *testing.T) {
 	}{
 		{[]string{"module"}, "module requires a subcommand"},
 		{[]string{"module", "run"}, `unknown module subcommand "run"`},
-		{[]string{"engine", "list"}, `unknown command "engine"`},
 		{[]string{"plugin", "list"}, `unknown command "plugin"`},
 		{[]string{"--plugin", "jadx-gui", "collect"}, `unknown command "--plugin"`},
 		{[]string{"absent"}, `unknown command "absent"`},
@@ -1288,11 +1333,11 @@ func TestSelfUpdateCLIReplacesExecutable(t *testing.T) {
 	}
 }
 
-// TestSessionOpenDefaultsToDefaultEngine pins down that a bare `session open`
-// selects the engine marked as the default even though the known table always
-// registers several engines; the missing server must be reported for jadx, not
-// with the engine-selection error.
-func TestSessionOpenDefaultsToDefaultEngine(t *testing.T) {
+// TestSessionOpenDefaultsToDefaultModule pins down that a bare `session open`
+// selects the module marked as the default even though the known table always
+// registers several modules; the missing server must be reported for jadx, not
+// with the module-selection error.
+func TestSessionOpenDefaultsToDefaultModule(t *testing.T) {
 	t.Chdir(t.TempDir())
 	home := t.TempDir()
 	installManifest(t, registry.ModuleRoot(home, "jadx"), registry.Manifest{
@@ -1309,7 +1354,7 @@ func TestSessionOpenDefaultsToDefaultEngine(t *testing.T) {
 	}
 	a := App{Home: home, Out: &bytes.Buffer{}, Err: &bytes.Buffer{}}
 	err := a.Run(context.Background(), []string{"session", "open", target})
-	if err == nil || strings.Contains(err.Error(), "select a registered engine") {
+	if err == nil || strings.Contains(err.Error(), "select a registered module") {
 		t.Fatalf("err = %v", err)
 	}
 	if !strings.Contains(err.Error(), "jadx") {

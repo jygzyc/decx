@@ -209,15 +209,15 @@ func archiveInstall() *registry.Install {
 	}
 }
 
-func archiveEngine(install *registry.Install) registry.Engine {
-	return registry.Engine{
+func archiveModule(install *registry.Install) registry.Module {
+	return registry.Module{
 		ID:      "kuna",
 		Binary:  registry.Binary{Kind: "program", Path: "bin/kuna-server"},
 		Release: install,
 	}
 }
 
-func archiveSpec(home string) Spec { return EngineSpec(home, archiveEngine(archiveInstall())) }
+func archiveSpec(home string) Spec { return ModuleSpec(home, archiveModule(archiveInstall())) }
 
 // artifactSHA is the hex SHA-256 of a test archive, matching the value the
 // downloader verifies against the release checksums.
@@ -227,10 +227,10 @@ func artifactSHA(content []byte) string {
 }
 
 // kunaArchive builds the release archive layout: decx.json + VERSION + payload.
-func kunaArchive(t *testing.T, engine registry.Engine, version, binary, specs string) []byte {
+func kunaArchive(t *testing.T, module registry.Module, version, binary, specs string) []byte {
 	t.Helper()
 	return tarGzBytes(t, map[string]string{
-		registry.ManifestName: serverManifest(engine),
+		registry.ManifestName: serverManifest(module),
 		registry.VersionName:  version + "\n",
 		"bin/kuna-server":     binary,
 		"specs/kuna.sla":      specs,
@@ -239,8 +239,8 @@ func kunaArchive(t *testing.T, engine registry.Engine, version, binary, specs st
 
 func TestInstallArchiveExtractsSkipsAndUpdates(t *testing.T) {
 	var downloads int32
-	engine := archiveEngine(archiveInstall())
-	archive := kunaArchive(t, engine, "4.4.0", "kuna 4.4.0\n", "specs\n")
+	module := archiveModule(archiveInstall())
+	archive := kunaArchive(t, module, "4.4.0", "kuna 4.4.0\n", "specs\n")
 	name := "kuna-4.4.0.tar.gz"
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/download/"+name {
@@ -278,7 +278,7 @@ func TestInstallArchiveExtractsSkipsAndUpdates(t *testing.T) {
 		t.Fatalf("downloads = %d", got)
 	}
 	// An update replaces the extracted tree with the new release.
-	next := kunaArchive(t, engine, "4.5.0", "kuna 4.5.0\n", "specs 4.5\n")
+	next := kunaArchive(t, module, "4.5.0", "kuna 4.5.0\n", "specs 4.5\n")
 	nextName := "kuna-4.5.0.tar.gz"
 	server.Config.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/download/"+nextName {
@@ -312,8 +312,8 @@ func TestInstallArchiveExtractsSkipsAndUpdates(t *testing.T) {
 }
 
 func TestInstallArchiveKeepsPreviousInstallOnFailure(t *testing.T) {
-	engine := archiveEngine(archiveInstall())
-	good := kunaArchive(t, engine, "4.4.0", "good\n", "specs\n")
+	module := archiveModule(archiveInstall())
+	good := kunaArchive(t, module, "4.4.0", "good\n", "specs\n")
 	bad := tarGzBytes(t, map[string]string{"specs/kuna.sla": "missing the launcher\n"}, nil)
 	serve := func(body []byte) *httptest.Server {
 		return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -343,19 +343,19 @@ func TestInstallArchiveKeepsPreviousInstallOnFailure(t *testing.T) {
 	}
 }
 
-func TestInspectArchiveEngine(t *testing.T) {
+func TestInspectArchiveModule(t *testing.T) {
 	home := t.TempDir()
-	engine := archiveEngine(archiveInstall())
-	if status := Inspect(home, engine); status.Installed {
+	module := archiveModule(archiveInstall())
+	if status := Inspect(home, module); status.Installed {
 		t.Fatalf("status before install = %+v", status)
 	}
 	root := filepath.Join(home, "modules", "kuna")
-	writeServerTree(t, root, engine, "4.4.0", "bin\n")
-	status := Inspect(home, engine)
+	writeServerTree(t, root, module, "4.4.0", "bin\n")
+	status := Inspect(home, module)
 	if !status.Installed || status.Version != "4.4.0" {
 		t.Fatalf("status = %+v", status)
 	}
-	path, version, ok := EngineSpec(home, engine).Probe()
+	path, version, ok := ModuleSpec(home, module).Probe()
 	if !ok || version != "4.4.0" || path != filepath.Join(root, "bin", "kuna-server") {
 		t.Fatalf("probe = %q %q %t", path, version, ok)
 	}

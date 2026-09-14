@@ -14,7 +14,7 @@ decx -m kuna source …                      # optional Kuna module (Rust, nativ
 decx session open <target>                 # manage persistent server processes
 decx -m ard-framework device system-services        # runtime plugin module workflows
 decx -m ard-framework framework collect | process
-decx install                               # download modules (defaults: jadx, ard-framework)
+decx install                               # install every module that ships a release
 decx module list                           # list discovered modules and their install state
 decx self update | skills
 ```
@@ -46,8 +46,8 @@ make release               # pack the host release archive (go run ./cmd/pack)
 - Sessions, logs and downloaded modules also live under `DECX_HOME`; point it at
   a scratch directory for experiments.
 - Module command output is JSON on stdout; progress and logs go to stderr.
-- Reserved top-level names never usable as module ids: `session`, `engine`,
-  `plugin`, `module`, `self`, `install`, `settings`, `help`.
+- Reserved top-level names never usable as module ids: `session`, `module`,
+  `plugin`, `self`, `install`, `settings`, `help`.
 
 ### Registry reference
 
@@ -75,8 +75,8 @@ warning, so `decx install --force` can repair it.
 - Plugin manifests (`kind: "plugin"`) — under the same `$DECX_HOME/modules/<id>`
   root (the manifest decides the kind), naming the `entry` file
   (`dist/ard-framework.js`) and the command tree reached as
-  `decx -m <id> <command>`. The known table marks `jadx` and `ard-framework` as
-  default modules, so a plain `decx install` installs them.
+  `decx -m <id> <command>`. A plain `decx install` installs every module that
+  declares a release source, so a fresh machine gets all of them.
 - Discovery — `$DECX_HOME/modules` is scanned first; an explicit
   `--config <path>` adds that path plus its `modules/` (and the legacy `bin/` or
   `plugins/`) as an extra root, and the nearest `modules/` (servers) or
@@ -87,8 +87,8 @@ warning, so `decx install --force` can repair it.
 
 The CLI is compiled with a **known component** table
 (`decx/internal/registry/known.go`) that fills in components which are not
-present locally — the `jadx` (default), `asc` and `kuna` servers plus the
-default `ard-framework` plugin — so a fresh machine can run
+present locally — the `jadx`, `asc` and `kuna` servers plus the
+`ard-framework` plugin — so a fresh machine can run
 `decx install --module jadx` without any file. It carries no command tree; an
 installed manifest always wins.
 
@@ -130,14 +130,14 @@ Module commands accept `--session <name>` or a direct `--port <port>`; when
 neither is given the CLI auto-selects the only healthy compatible session.
 `decx -m <module> <command> --help` prints the arguments a command takes.
 
-Optional modules are installed with `decx install --module <id>` (nothing
-is downloaded unless a module is selected explicitly or carries the
-`default` marker).
+Modules are installed with `decx install` (every module that declares a release
+source) or `decx install --module <id|repo|path>` for a single one; the
+`default` marker only picks the session engine.
 
 ## Sessions
 
 ```bash
-decx session open <target> --engine jadx [--name <name>] [--port <port>]
+decx session open <target> --module jadx [--name <name>] [--port <port>]
                            [--timeout <seconds>] [--script <path>] [--force]
                            [-- <server arguments>]
 decx session list

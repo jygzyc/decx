@@ -8,13 +8,13 @@ import (
 
 // TestResolveBinaryManagedFallbackAndEnvOverride pins down the shared resolver
 // contract: an environment override wins over every local copy, an installed
-// component is found even when the engine manifest came from a checkout, and
+// component is found even when the module manifest came from a checkout, and
 // the checkout binary remains the fallback when nothing is installed.
 func TestResolveBinaryManagedFallbackAndEnvOverride(t *testing.T) {
 	home := t.TempDir()
 	checkout := t.TempDir()
-	engine := Engine{ID: "jadx", Binary: Binary{Kind: "java-jar", Path: "jadx-server.jar"}, Root: checkout}
-	if _, err := ResolveBinary(home, engine); err == nil {
+	module := Module{ID: "jadx", Binary: Binary{Kind: "java-jar", Path: "jadx-server.jar"}, Root: checkout}
+	if _, err := ResolveBinary(home, module); err == nil {
 		t.Fatal("resolved a binary that exists nowhere")
 	}
 
@@ -30,13 +30,13 @@ func TestResolveBinaryManagedFallbackAndEnvOverride(t *testing.T) {
 		t.Fatal(err)
 	}
 	// The installed copy wins, matching install.Probe.
-	if path, err := ResolveBinary(home, engine); err != nil || path != managed {
+	if path, err := ResolveBinary(home, module); err != nil || path != managed {
 		t.Fatalf("path = %q err = %v, want %q", path, err, managed)
 	}
 	if err := os.Remove(managed); err != nil {
 		t.Fatal(err)
 	}
-	if path, err := ResolveBinary(home, engine); err != nil || path != checkoutBinary {
+	if path, err := ResolveBinary(home, module); err != nil || path != checkoutBinary {
 		t.Fatalf("path = %q err = %v, want %q", path, err, checkoutBinary)
 	}
 
@@ -45,9 +45,9 @@ func TestResolveBinaryManagedFallbackAndEnvOverride(t *testing.T) {
 	if err := os.WriteFile(override, []byte("env"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	engine.Binary.Env = "TEST_DECX_RESOLVE_BINARY"
-	t.Setenv(engine.Binary.Env, override)
-	if path, err := ResolveBinary(home, engine); err != nil || path != override {
+	module.Binary.Env = "TEST_DECX_RESOLVE_BINARY"
+	t.Setenv(module.Binary.Env, override)
+	if path, err := ResolveBinary(home, module); err != nil || path != override {
 		t.Fatalf("path = %q err = %v, want %q", path, err, override)
 	}
 }

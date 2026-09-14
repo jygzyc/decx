@@ -36,7 +36,7 @@ Reuse an active session when it matches the target. Keep one session per target.
 
 ```bash
 decx session list
-decx session open "<target>" --engine jadx --name "<target-name>" --port <port>
+decx session open "<target>" --module jadx --name "<target-name>" --port <port>
 decx session check "<target-name>"
 decx session close "<target-name>"
 decx session close --all
