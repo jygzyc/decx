@@ -1,0 +1,43 @@
+#!/bin/sh
+# DECX engine launcher for kuna-server.
+#
+# Archive entry point. Layout assumed (archive root = $root):
+#   $root/bin/kuna-server   this script
+#   $root/kuna_server       compiled Rust server
+#   $root/specs/            compiled SLEIGH specs (slacomp output)
+#
+# Resolves $0 through symlinks, pins KUNA_SPECS to the bundled specs/ tree,
+# then execs the server so the recorded PID is the server process itself
+# (never fork).
+
+set -u
+
+# resolve $0 through symlinks
+script=$0
+while [ -h "$script" ]; do
+    dir=$(CDPATH= cd -- "$(dirname -- "$script")" && pwd) || exit 1
+    link=$(readlink "$script") || exit 1
+    case $link in
+        /*) script=$link ;;
+        *) script=$dir/$link ;;
+    esac
+done
+script_dir=$(CDPATH= cd -- "$(dirname -- "$script")" && pwd) || exit 1
+root=$(CDPATH= cd -- "$script_dir/.." && pwd) || exit 1
+
+server=$root/kuna_server
+specs=$root/specs
+
+if [ ! -x "$server" ]; then
+    printf 'kuna-server: error: server binary not found: %s\n' "$server" >&2
+    exit 1
+fi
+if [ ! -d "$specs" ]; then
+    printf 'kuna-server: error: compiled specs not found: %s\n' "$specs" >&2
+    exit 1
+fi
+
+KUNA_SPECS=$specs
+export KUNA_SPECS
+
+exec "$server" "$@"

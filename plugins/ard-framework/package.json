@@ -1,0 +1,21 @@
+{
+  "name": "@decx/ard-framework-plugin",
+  "version": "4.2.0",
+  "private": true,
+  "description": "DECX android device and framework workflows, authored in TypeScript and compiled to CommonJS for the in-process plugin runtime",
+  "license": "Apache-2.0",
+  "scripts": {
+    "build": "npm run typecheck && tsc -p tsconfig.json && npm run bundle",
+    "bundle": "esbuild dist/src/index.js --bundle --format=iife --global-name=__decxPlugin --platform=neutral --target=es2022 --outfile=dist/ard-framework.js --alias:fs=./host/fs.js --alias:path=./host/path.js --alias:os=./host/os.js --alias:child_process=./host/child_process.js --alias:crypto=./host/crypto.js --footer:js=\"globalThis.handle = __decxPlugin.handle;\"",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "npm run build && node --test \"dist/tests/*.test.js\""
+  },
+  "devDependencies": {
+    "@types/node": "^24.5.2",
+    "esbuild": "^0.25.0",
+    "typescript": "^5.9.2"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

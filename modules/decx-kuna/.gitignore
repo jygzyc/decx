@@ -1,0 +1,6 @@
+/server/target/
+/.build/
+/dist/
+# decx/.gitignore ignores `bin` trees; the packaging template must stay tracked.
+!bin/
+!bin/kuna-server

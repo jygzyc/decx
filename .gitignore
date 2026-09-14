@@ -33,6 +33,7 @@ var/
 # Node
 node_modules/
 dist/
+package-lock.json
 
 # Virtual Environment
 .env
@@ -76,4 +77,3 @@ CLAUDE.md
 .omo
 .env
 .zcode/
-decx-cli/package-lock.json

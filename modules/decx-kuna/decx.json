@@ -1,0 +1,275 @@
+{
+  "manifest": 1,
+  "kind": "server",
+  "id": "kuna",
+  "description": "kuna-server (Rust Kuna decompiler; native ELF/PE/Mach-O pseudo-C)",
+  "release": {
+    "source": "repo",
+    "checksums": "SHA256SUMS",
+    "format": "zip",
+    "tag": "kuna-server-v{version}",
+    "asset": "kuna-server-{version}-{os}-{arch}.zip"
+  },
+  "binary": {
+    "kind": "program",
+    "path": "bin/kuna-server",
+    "env": "DECX_KUNA_SERVER"
+  },
+  "launch": {
+    "command": [
+      "{binary}",
+      "{target}",
+      "--port",
+      "{port}"
+    ],
+    "stop": "terminate",
+    "trailing_args": true
+  },
+  "commands": [
+    {
+      "name": "functions",
+      "about": "List the functions Kuna discovered in a native binary",
+      "endpoint": "get_functions",
+      "args": [
+        {
+          "id": "contains",
+          "kind": "value",
+          "long": "contains",
+          "type": "string",
+          "help": "Only functions whose name contains this text"
+        },
+        {
+          "id": "include",
+          "kind": "multi",
+          "long": "include",
+          "help": "Only functions matching this pattern (repeatable)"
+        },
+        {
+          "id": "exclude",
+          "kind": "multi",
+          "long": "exclude",
+          "help": "Skip functions matching this pattern (repeatable)"
+        },
+        {
+          "id": "regex",
+          "kind": "flag",
+          "long": "regex",
+          "help": "Treat --include/--exclude as regular expressions"
+        },
+        {
+          "id": "case-sensitive",
+          "kind": "flag",
+          "long": "case-sensitive",
+          "help": "Case-sensitive name matching"
+        },
+        {
+          "id": "limit",
+          "kind": "value",
+          "long": "limit",
+          "type": "u64",
+          "help": "Maximum number of functions to return"
+        },
+        {
+          "id": "offset",
+          "kind": "value",
+          "long": "offset",
+          "type": "u64",
+          "help": "Skip this many matched functions"
+        }
+      ],
+      "request": [
+        {
+          "arg": "contains",
+          "field": "name_contains",
+          "type": "string",
+          "when": "set"
+        },
+        {
+          "arg": "include",
+          "field": "includes",
+          "type": "string[]",
+          "when": "set"
+        },
+        {
+          "arg": "exclude",
+          "field": "excludes",
+          "type": "string[]",
+          "when": "set"
+        },
+        {
+          "arg": "regex",
+          "field": "regex",
+          "type": "bool",
+          "when": "always",
+          "default": false
+        },
+        {
+          "arg": "case-sensitive",
+          "field": "case_sensitive",
+          "type": "bool",
+          "when": "always",
+          "default": false
+        },
+        {
+          "arg": "limit",
+          "field": "limit",
+          "type": "u64",
+          "when": "set"
+        },
+        {
+          "arg": "offset",
+          "field": "offset",
+          "type": "u64",
+          "when": "set"
+        },
+        {
+          "arg": "page",
+          "field": "page",
+          "type": "u64",
+          "when": "always",
+          "default": 1
+        }
+      ]
+    },
+    {
+      "name": "source",
+      "about": "Decompile one function to pseudo-C (by name or address)",
+      "endpoint": "get_function_source",
+      "args": [
+        {
+          "id": "name",
+          "kind": "value",
+          "long": "name",
+          "type": "string",
+          "help": "Function name or alias"
+        },
+        {
+          "id": "address",
+          "kind": "value",
+          "long": "address",
+          "type": "string",
+          "help": "Function entry address (0x-prefixed hex or decimal)"
+        },
+        {
+          "id": "limit",
+          "kind": "value",
+          "long": "limit",
+          "type": "u64",
+          "help": "Maximum number of source lines to return"
+        }
+      ],
+      "request": [
+        {
+          "arg": "name",
+          "field": "name",
+          "type": "string",
+          "when": "set"
+        },
+        {
+          "arg": "address",
+          "field": "address",
+          "type": "string",
+          "when": "set"
+        },
+        {
+          "arg": "limit",
+          "field": "limit",
+          "type": "u64",
+          "when": "set"
+        },
+        {
+          "arg": "page",
+          "field": "page",
+          "type": "u64",
+          "when": "always",
+          "default": 1
+        }
+      ]
+    },
+    {
+      "name": "xref",
+      "about": "List the callers or callees of one function",
+      "endpoint": "get_function_xref",
+      "args": [
+        {
+          "id": "name",
+          "kind": "value",
+          "long": "name",
+          "type": "string",
+          "help": "Function name or alias"
+        },
+        {
+          "id": "address",
+          "kind": "value",
+          "long": "address",
+          "type": "string",
+          "help": "Function entry address (0x-prefixed hex or decimal)"
+        },
+        {
+          "id": "direction",
+          "kind": "value",
+          "long": "direction",
+          "type": "string",
+          "values": [
+            "callers",
+            "callees"
+          ],
+          "help": "Reference direction (default callers)"
+        },
+        {
+          "id": "kind",
+          "kind": "multi",
+          "long": "kind",
+          "help": "Only these reference kinds: call, jump, data, read, write"
+        },
+        {
+          "id": "limit",
+          "kind": "value",
+          "long": "limit",
+          "type": "u64",
+          "help": "Maximum number of references to return"
+        }
+      ],
+      "request": [
+        {
+          "arg": "name",
+          "field": "name",
+          "type": "string",
+          "when": "set"
+        },
+        {
+          "arg": "address",
+          "field": "address",
+          "type": "string",
+          "when": "set"
+        },
+        {
+          "arg": "direction",
+          "field": "direction",
+          "type": "string",
+          "when": "always",
+          "default": "callers"
+        },
+        {
+          "arg": "kind",
+          "field": "kinds",
+          "type": "string[]",
+          "when": "set"
+        },
+        {
+          "arg": "limit",
+          "field": "limit",
+          "type": "u64",
+          "when": "set"
+        },
+        {
+          "arg": "page",
+          "field": "page",
+          "type": "u64",
+          "when": "always",
+          "default": 1
+        }
+      ]
+    }
+  ]
+}

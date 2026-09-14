@@ -1,0 +1,153 @@
+{
+  "manifest": 1,
+  "kind": "plugin",
+  "id": "ard-framework",
+  "description": "Android device and framework workflows (compiled JavaScript plugin)",
+  "release": {
+    "source": "repo",
+    "checksums": "SHA256SUMS",
+    "format": "zip",
+    "tag": "ard-framework-v{version}",
+    "asset": "decx-ard-framework-plugin-{version}.zip"
+  },
+  "entry": "dist/ard-framework.js",
+  "commands": [
+    {
+      "name": "device",
+      "about": "Inspect live state from an adb-connected Android device",
+      "subcommands": [
+        {
+          "name": "system-services",
+          "about": "List live Binder system services",
+          "args": [
+            {
+              "id": "grep",
+              "kind": "value",
+              "long": "grep",
+              "help": "Include only service rows containing this keyword"
+            },
+            {
+              "id": "adb-path",
+              "kind": "value",
+              "long": "adb-path",
+              "help": "Path to the adb executable; defaults to adb on PATH"
+            },
+            {
+              "id": "serial",
+              "kind": "value",
+              "long": "serial",
+              "help": "ADB device serial to use when several are connected"
+            }
+          ]
+        },
+        {
+          "name": "permission-info",
+          "about": "Show live Android permission metadata",
+          "args": [
+            {
+              "id": "permission",
+              "kind": "positional",
+              "required": true,
+              "help": "Permission name such as android.permission.CAMERA"
+            },
+            {
+              "id": "adb-path",
+              "kind": "value",
+              "long": "adb-path",
+              "help": "Path to the adb executable; defaults to adb on PATH"
+            },
+            {
+              "id": "serial",
+              "kind": "value",
+              "long": "serial",
+              "help": "ADB device serial to use when several are connected"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "framework",
+      "about": "Collect, process and pack Android framework artifacts",
+      "subcommands": [
+        {
+          "name": "collect",
+          "about": "Pull framework files from a connected Android device",
+          "args": [
+            {
+              "id": "adb-path",
+              "kind": "value",
+              "long": "adb-path",
+              "help": "Path to the adb executable; defaults to adb on PATH"
+            },
+            {
+              "id": "serial",
+              "kind": "value",
+              "long": "serial",
+              "help": "ADB device serial to use when several are connected"
+            },
+            {
+              "id": "source-dir",
+              "kind": "value",
+              "long": "source-dir",
+              "help": "Directory receiving collected framework files"
+            },
+            {
+              "id": "out-dir",
+              "kind": "value",
+              "long": "out-dir",
+              "help": "Directory for processed framework artifacts and packed jar output"
+            },
+            {
+              "id": "clean-source",
+              "kind": "flag",
+              "long": "clean-source",
+              "help": "Remove the collected source directory after successful processing"
+            }
+          ]
+        },
+        {
+          "name": "process",
+          "about": "Process local framework sources and pack framework_<oem>_<vendor>.jar",
+          "args": [
+            {
+              "id": "oem",
+              "kind": "positional",
+              "help": "OEM name; resolved from the recorded artifact or a connected device when omitted"
+            },
+            {
+              "id": "adb-path",
+              "kind": "value",
+              "long": "adb-path",
+              "help": "Path to the adb executable; defaults to adb on PATH"
+            },
+            {
+              "id": "serial",
+              "kind": "value",
+              "long": "serial",
+              "help": "ADB device serial to use when several are connected"
+            },
+            {
+              "id": "source-dir",
+              "kind": "value",
+              "long": "source-dir",
+              "help": "Directory containing pulled framework files"
+            },
+            {
+              "id": "out-dir",
+              "kind": "value",
+              "long": "out-dir",
+              "help": "Directory for processed framework artifacts and packed jar output"
+            },
+            {
+              "id": "clean-source",
+              "kind": "flag",
+              "long": "clean-source",
+              "help": "Remove the collected source directory after successful processing"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,28 @@
+[package]
+name = "kuna-server"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.90"
+license = "Apache-2.0"
+publish = false
+description = "DECX HTTP engine server for the kuna decompiler (ELF/PE/Mach-O)"
+
+[lib]
+name = "kuna_server"
+path = "src/lib.rs"
+
+[[bin]]
+name = "kuna-server"
+path = "src/main.rs"
+
+[dependencies]
+# Path deps into the pinned kuna submodule workspace (see modules/decx-kuna/kuna).
+kuna-analysis = { path = "../kuna/decompiler/crates/kuna-analysis" }
+kuna-console = { path = "../kuna/decompiler/crates/kuna-console" }
+kuna-decomp = { path = "../kuna/decompiler/crates/kuna-decomp" }
+# Same version/features as the kuna workspace so `object::File` types unify.
+object = { version = "0.39", default-features = false, features = ["read_core", "elf", "pe", "macho", "coff", "std"] }
+regex = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+signal-hook = "0.3"
