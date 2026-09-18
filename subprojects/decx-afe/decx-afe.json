@@ -1,0 +1,43 @@
+{
+  "manifest": 1,
+  "id": "afe",
+  "kind": "binary",
+  "summary": "Android framework collection and preprocessing: pull framework files, expand them and pack an analyzable jar (AFE)",
+  "homepage": "https://github.com/jygzyc/decx",
+  "license": "Apache-2.0",
+  "notes": "the prebuilt release is published from this repository under tools-v* tags; until one exists the tool builds from subprojects/decx-afe",
+  "release": {
+    "repository": "jygzyc/decx",
+    "tagPrefix": "tools-v",
+    "assets": {
+      "macos-arm64": "afe-{version}-macos-arm64.tar.gz",
+      "macos-x64": "afe-{version}-macos-x64.tar.gz",
+      "linux-x64": "afe-{version}-linux-x64.tar.gz",
+      "linux-arm64": "afe-{version}-linux-arm64.tar.gz",
+      "windows-x64": "afe-{version}-windows-x64.zip",
+      "windows-arm64": "afe-{version}-windows-arm64.zip"
+    },
+    "checksums": "afe-SHA256SUMS.txt",
+    "allowSourceFallback": true
+  },
+  "source": {
+    "path": "subprojects/decx-afe",
+    "build": {
+      "manifest": "Cargo.toml",
+      "packages": [
+        "afe"
+      ]
+    }
+  },
+  "bins": [
+    "afe"
+  ],
+  "launch": {
+    "bin": "afe"
+  },
+  "verify": {
+    "args": [
+      "--version"
+    ]
+  }
+}

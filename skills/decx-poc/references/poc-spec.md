@@ -26,3 +26,5 @@ Input: one finalized finding writeup following the `decx-vulnhunt` Finding Write
 - Every field must come from the finalized finding writeup or its evidence artifacts.
 - Stop before project creation if any required field is missing.
 - Do not infer helper components or acquisition steps.
+- One finalized finding per spec and one spec per `exploitId` — a spec never mixes two
+  findings or describes two exploits.

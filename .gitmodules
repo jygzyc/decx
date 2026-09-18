@@ -1,6 +1,6 @@
-[submodule "modules/decx-asc/asc"]
-	path = modules/decx-asc/asc
+[submodule "subprojects/decx-droidasc/source"]
+	path = subprojects/decx-droidasc/source
 	url = https://github.com/MG1937/ASC
-[submodule "modules/decx-kuna/kuna"]
-	path = modules/decx-kuna/kuna
+[submodule "subprojects/decx-kuna/source"]
+	path = subprojects/decx-kuna/source
 	url = https://github.com/Noelo-Lab/kuna

@@ -1,0 +1,130 @@
+name: Kuna
+
+# Kuna is vendored: `subprojects/decx-kuna/source` is pinned by `.gitmodules`
+# and the superproject gitlink. `decx install kuna` downloads the release
+# archive for the host platform plus the separate compiled SLEIGH specs
+# archive, and the generated launcher exports `KUNA_SPECS` so the binary finds
+# its languages without any shell setup. Building those archives from the
+# pinned source is release-kuna.yml's job; this workflow guards the install
+# contract.
+#
+# The release install touches the network (two archives per platform), so it
+# runs on a schedule and on demand; every change to the pin, the manifest or
+# the manager still gets the offline contract check.
+on:
+  push:
+    branches: ['**']
+    paths: ['subprojects/decx-kuna/**', 'decx/**', 'skills/decx-kuna/**', '.github/workflows/decx-kuna.yml']
+  pull_request:
+    paths: ['subprojects/decx-kuna/**', 'decx/**', 'skills/decx-kuna/**', '.github/workflows/decx-kuna.yml']
+  schedule:
+    # Mondays 04:17 UTC: catch a release asset that upstream renamed or pulled.
+    - cron: '17 4 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: kuna-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  contract:
+    name: Pinned checkout contract
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          submodules: recursive
+
+      # The gitlink is what `git submodule status` reports and what PROVENANCE
+      # copies into an install record: a `-` (uninitialised) or `+` (checkout
+      # differs from the pin) means the pin, not the tool, is the problem.
+      - name: The pin is initialised and clean
+        run: |
+          status=$(git submodule status subprojects/decx-kuna/source)
+          echo "$status"
+          case "$status" in
+            ' '*) ;;
+            *) echo "submodule is not at the committed revision" >&2; exit 1 ;;
+          esac
+
+      - name: The checkout still looks like Kuna
+        run: |
+          test -f subprojects/decx-kuna/source/decompiler/Cargo.toml
+          test -d subprojects/decx-kuna/source/specs/Ghidra
+          cat subprojects/decx-kuna/source/VERSION
+
+      # The manifest is the whole install recipe: every platform key the
+      # manager supports has to resolve to an archive name, and the launcher
+      # has to expose the specs directory, or `decx install kuna` fails on
+      # that platform only.
+      - name: The manifest covers every supported platform
+        run: |
+          node -e '
+            const manifest = require("./subprojects/decx-kuna/decx-kuna.json");
+            const keys = ["linux-x64", "linux-arm64", "macos-x64", "macos-arm64", "windows-x64"];
+            const { version, assets } = manifest.release;
+            for (const key of keys) {
+              const name = assets[key];
+              if (typeof name !== "string" || name.length === 0) {
+                throw new Error("release.assets is missing " + key);
+              }
+              const resolved = name.replace("{version}", version);
+              if (resolved.includes("{")) throw new Error(key + " has an unresolved placeholder: " + name);
+              console.log(key.padEnd(12) + resolved);
+            }
+            if (manifest.env?.KUNA_SPECS !== "{prefix}/specs") {
+              throw new Error("env.KUNA_SPECS must point the launcher at the specs tree");
+            }
+            console.log("bin:", manifest.launch.bin, "| bins:", manifest.bins.join(", "));
+          '
+
+  release-install:
+    name: Release install (${{ matrix.os }})
+    if: ${{ github.event_name != 'pull_request' }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-14, windows-latest]
+    defaults:
+      run:
+        shell: bash
+    env:
+      DECX_HOME: ${{ runner.temp }}/decx-home
+    steps:
+      - uses: actions/checkout@v7.0.1
+
+      - name: Install the pinned release with the manager
+        run: node decx/src/cli.ts install kuna --home "$DECX_HOME" --no-links --pretty
+
+      # The version probe the manifest declares: the installed binary answers
+      # with the release it came from, which is also what PROVENANCE claims.
+      - name: The installed binary answers
+        run: node decx/src/cli.ts run --home "$DECX_HOME" kuna --version
+
+      # Compiled specs are the second archive; without them the binary starts
+      # and then fails to decompile anything. The launcher is `kuna` on POSIX
+      # and `kuna.cmd` on Windows, and both carry the KUNA_SPECS export.
+      - name: The specs archive was unpacked
+        run: |
+          specs=$(find "$DECX_HOME/share/kuna/specs" -name '*.sla' | wc -l | tr -d ' ')
+          echo "$specs compiled .sla files"
+          test "$specs" -gt 0
+          launcher="$DECX_HOME/bin/kuna"
+          [ -f "$launcher" ] || launcher="$DECX_HOME/bin/kuna.cmd"
+          ls -l "$launcher"
+          grep -q 'KUNA_SPECS' "$launcher"
+
+      - name: PROVENANCE records the release
+        run: |
+          cat "$DECX_HOME/share/kuna/PROVENANCE"
+          version=$(node -p 'require("./subprojects/decx-kuna/decx-kuna.json").release.version')
+          grep -q "$version" "$DECX_HOME/share/kuna/PROVENANCE"

@@ -1,251 +1,92 @@
-# DECX - Decompiler + X
+# DECX
 
-<div align="center">
+使用原生工具进行逆向分析的 Agent skills，以及用于 Android Framework 收集和预处理的独立工具 **AFE（Android Framework Extract）**。
 
-![DECX Logo](https://img.shields.io/badge/DECX-Decompiler%20%2B%20X-blue?style=for-the-badge&logo=java&logoColor=white)
-![Release](https://img.shields.io/github/v/release/jygzyc/decx?style=for-the-badge&logo=github&color=green)
-![License](https://img.shields.io/github/license/jygzyc/decx?style=for-the-badge&logo=gnu&color=orange)
+DECX 不实现反编译器，也不再提供统一命令包装层。直接使用各工具的原生接口：
 
-**基于 JADX 的 Decompiler + X — 为 AI 辅助代码分析而设计**
+| 任务 | 工具 |
+| --- | --- |
+| APK / DEX 分析 | [DroidASC](https://github.com/MG1937/ASC) |
+| 原生二进制分析 | [Kuna](https://github.com/Noelo-Lab/kuna) |
+| Android Framework 收集和预处理 | [AFE](subprojects/decx-afe/README.md) |
+| 分析方法、漏洞证据、报告和 PoC | [Skills](skills/) |
 
-</div>
+## 安装与管理工具
 
----
-
-## 项目概述
-
-DECX (Decompiler + X) 是一个基于 JADX 反编译器的智能代码分析平台，专门为 AI 辅助代码分析而设计。该平台通过 HTTP API、MCP (Model Context Protocol)、独立 CLI 和工作流技能，为 AI 助手提供强大的 Java 代码分析能力。
-
----
-
-## 安装
-
-### 环境要求
-
-- **Java**: JDK 17+
-- **Node.js**: 22.5+，用于 CLI
-- **JADX**: v1.5.2+，使用 GUI 插件时需要
-
-### CLI 和 AI 技能
-
-给 AI 使用时，安装 CLI 和 DECX server JAR，再从 GitHub 为指定 Agent 下载 DECX 技能：
+工具管理器位于 [`decx/`](decx/README.md)：一个 Node CLI（Node 22.18+，直接执行 TypeScript 源码，无构建、无依赖，每条命令输出一个 JSON 对象），用于安装上述工具并报告当前主机支持的能力。
 
 ```bash
-npm install -g @jygzyc/decx-cli
-decx self install
-decx self skills install --client opencode --client codex
+decx install kuna        # 下载该平台的上游 release 与编译好的 SLEIGH specs
+decx install droidasc    # 在固定版 submodule 上建立私有 venv
+decx install afe         # 优先下载 tools release，否则用 cargo 构建 subprojects/decx-afe
+decx run kuna --help     # 直接运行工具本身，不翻译参数
+decx help install        # 查看管理器或单个命令的用法
 ```
 
-CLI 启动时会在后台检测新版本：结果缓存在 `DECX_HOME` 下，24 小时内不重复联网，且检测不会阻塞或影响当前命令。发现新版本时会在 stderr 打印一行提示，按提示运行 `decx self update` 即可升级。设置 `DECX_NO_UPDATE_CHECK=1` 可关闭该检测。
+工具以数据形式声明在 `subprojects/decx-<id>/decx-<id>.json` 中，不写代码。可执行文件与载荷位于 `$DECX_HOME`（`bin/`、`share/<id>/`，其中 `PROVENANCE` 记录来源与校验值）；管理器只安装工具、不安装语言运行时，各工具保留自己的参数与输出。完整布局、`--links` 与安装规则见 [`decx/README.md`](decx/README.md)。
 
-#### Windows 上 `self update` 报 `spawnSync npm.cmd EINVAL`
+### 平台支持
 
-v4.0.1 之前的 CLI 在 Windows 上会直接启动 `npm.cmd`，部分 Node.js 版本会因此返回 `EINVAL`。旧版无法通过 `self update` 自行修复，需要先在 PowerShell 或 CMD 中手动更新一次：
+管理器按主机平台选择要安装与执行的文件：`<os>-<arch>` 键（如 `macos-arm64`、`windows-x64`）
+决定每个工具用哪个 release asset（或源码构建），`decx run <tool> …` 执行的就是该平台解析出的
+启动器 —— 调用方从不自己挑二进制或路径。
 
-```powershell
-npm.cmd install -g @jygzyc/decx-cli@latest
-```
+安装、使用与编译均支持 macOS、Linux 与 Windows。管理器是纯 Node，在 Windows 的 PowerShell / cmd 中直接运行，并安装 `.exe`/`.cmd` 名称；不依赖 Git Bash、`uname` 或 POSIX 工具。
 
-重新打开终端后，运行 `decx --version`，确认版本为 v4.0.1 或更高，再使用 `decx self update`。如果仍然命中旧版本，可运行 `where.exe decx` 检查 PATH 中是否存在多个 DECX CLI。
+| 工具 | macOS / Linux | Windows |
+| --- | --- | --- |
+| DroidASC | `$PREFIX/bin/droidasc` | `%PREFIX%\bin\droidasc.cmd`（转调 `%PREFIX%\share\droidasc\venv\Scripts\python.exe`） |
+| Kuna | `bin/kuna`（转调 `share/kuna/bin/kuna` 的启动器）、`specs/` | `bin\kuna.cmd`（转调 `share\kuna\bin\kuna.exe` 的启动器）、`specs\` |
+| AFE | `bin/afe` | `bin\afe.exe` |
 
-技能会先下载到 `~/.decx/skills`（或 `$DECX_HOME/skills`），再软链接到所选客户端目录：
+各平台依赖：
 
-| Agent | 链接目标 |
-|---|---|
-| Claude Code | `~/.claude/skills` |
-| Opencode | `~/.agents/skills` |
-| Codex | `~/.codex/skills` |
-| 通用 Agent 配置 | `~/.agents/skills` |
+- **DroidASC** — Python 3.11/3.12（64 位）及 `venv`；全部固定依赖都提供 `win_amd64` wheel，无需编译器。
+- **Kuna** — 安装上游 release（macOS/Linux arm64+x86_64、Windows x86_64），SLEIGH specs 为单独资产；生成的启动器导出 `KUNA_SPECS`。上游没有 Windows arm64 产物，`decx install kuna` 会直接报出来，而不是去编译参考用的源码。
+- **AFE** — 始终从本仓库（`subprojects/decx-afe`，Rust；Windows 上为 MSVC）构建。可选外部提取工具（`debugfs`、`fsck.erofs`、`extract.erofs`）没有 Windows 版本，因此 Windows 上始终使用内置的 ext4/EROFS/ZIP 解析器。
 
-`skills/` 目录包含：
+AFE 只产出文件：设备收集需要 ADB，不支持的文件系统特性可能回退到系统工具，产物该用哪个分析器由调用方决定。详见 [AFE README](subprojects/decx-afe/README.md)。
 
-| 技能 | 用途 |
-|---|---|
-| `decx-cli` | DECX CLI 使用、通用代码导航、源码查看、交叉引用、Manifest/资源检查和工作流路由 |
-| `decx-vulnhunt` | Android 漏洞挖掘（App + Framework 双轨）：导出组件、WebView/Provider/Service/Receiver、Binder/系统服务、AIDL |
-| `decx-poc` | 从一个已最终确认的漏洞发现构建 Android PoC App 和可选辅助服务 |
-| `decx-report` | 从已最终确认的漏洞发现生成 HTML/Markdown 报告 |
+## Skills
 
-### JADX 插件
+仓库中的 [skills](skills/) 按“一个暴露面一个 skill、一个工具一个 skill”组织：`decx-init`、`decx-vulnhunt`、`decx-report`、`decx-poc` 是流程 skill，`decx-droidasc`、`decx-kuna`、`decx-afe` 各自驱动一个已安装的工具，并自带该工具的安装、运行与错误契约。把 harness 指向 `skills/` 即可。管理器不安装 skills。
 
-可从 JADX GUI 插件管理器安装，也可以手动安装插件 JAR：
-
-```bash
-jadx plugins --install-jar <path-to-jadx_decx_plugin.jar>
-```
-
-安装后，在 JADX 中打开 APK/JAR 并启用 DECX。插件会把当前 JADX 项目暴露为 DECX HTTP API 和 MCP 工具。
-
----
-
-## 使用
-
-### CLI + 技能
-
-Agent 驱动分析时，先用 CLI 创建会话，再让已安装技能接管具体分析流程：
-
-```bash
-decx process open target.apk --name target
-decx code classes --limit 50
-decx code search-global "WebView" --limit 20
-decx android exported-components
-decx android deep-links
-decx process close target
-decx process close --port 25419
-```
-
-典型技能顺序：
-
-- `decx-cli` 用于探索、收集证据和工作流路由
-- `decx-vulnhunt` 用于聚焦漏洞挖掘（App 或 Framework 轨道）
-- `decx-report` 用于从已最终确认的漏洞发现生成报告
-- `decx-poc` 用于把一个已最终确认的漏洞发现转换为可构建 PoC
-
-漏洞挖掘会在工作目录中保存分析笔记和已最终确认的漏洞发现，供后续报告和 PoC 技能消费。
-
-常用命令分组：
-
-| 需求 | 命令 |
-|---|---|
-| 会话管理 | `decx process open <file>`、`decx process list`、`decx process check`、`decx process close [name] [--port <port>]` |
-| 代码分析 | `decx code classes`、`class-source`、`method-source`、`method-context`、`search-global`、`search-class`、`xref-method`、`xref-class`、`xref-field`、`implementations`、`subclasses` |
-| APK 分析 | `decx android manifest`、`launcher-activity`、`application`、`exported-components`、`deep-links`、`dynamic-receivers`、`aidl-interfaces`、`resources`、`resource-file`、`strings` |
-| Framework 分析 | `decx android framework collect`、`process [oem]`、`run`、`open [jar]`，以及 `framework-service-implementation <interface>` |
-| 设备辅助 | `decx android device system-services`、`decx android device permission-info <permission>` |
-| CLI/server/skills 管理 | `decx self install`、`decx self skills install`、`decx self update` |
-
-注意：
-
-- 基于会话的 `code` 和 `android` 命令支持 `--page <n>`，也可用 `-s, --session <name>` 或 `--port <port>` 指向指定会话。
-- `decx code class-source` 支持用 `--limit <n>` 最多返回 N 行源码。
-- `decx process open <file>` 会透传标准 `jadx-cli` 参数，默认启用 `--show-bad-code` 和 `--no-imports`，并会移除 `--deobf`，因为 DECX 分析需要保留原始名称。同时默认注入 `--rename-flags case,valid`（剔除 `printable`），确保 `Ď锬볝觧` 这类重度混淆的 Unicode 标识符在反编译结果中原样保留，而不是被改名为 `m0` 之类的别名。
-- `decx process open <file> --script s1.jadx.kts --script s2.jadx.kts` 可在反编译时运行 [Jadx Kotlin 脚本](https://github.com/skylot/jadx/wiki/Jadx-scripts-guide)；服务端内置了 `jadx-script-kotlin` 插件，脚本顶层代码在加载时执行，`afterLoad` 块在类加载完成后执行。会话复用以目标文件 + 脚本集合为键。
-- `decx android resources` 支持用 `--include`、`--no-regex` 按文件名过滤。
-- `decx android device system-services` 和 `permission-info` 是 adb 命令，使用 `--serial` / `--adb-path`，不使用 `--port <port>`。
-- `decx android framework run` 默认从已连接设备收集、处理、打包并打开最终 framework JAR；`process [oem]` 用于处理本地 framework dump，省略 OEM 时会尝试从 `.artifact.json` 或已连接设备解析。
-
-### 插件 + MCP
-
-当你希望 AI 直接分析 JADX GUI 中已打开的项目时，使用插件模式。MCP 服务为进程内 Kotlin SDK Streamable HTTP 端点，默认关闭，可在插件中开启自动启动：
-
-1. 在 JADX 中打开目标 APK/JAR。
-2. 启用 DECX 插件，确认服务可通过 `http://127.0.0.1:25419` 访问。
-3. （可选）在 DECX 面板勾选 *Auto-start MCP with DECX*，DECX 启动时自动启动 MCP 服务于 `http://127.0.0.1:25420/mcp`（HTTP 端口 + 1）。
-4. 在 AI/MCP 客户端中连接 DECX，并调用 `health_check()`。
-5. 使用 MCP 工具进行代码搜索、源码查看、交叉引用、Android Manifest/资源/组件分析、framework 服务查找和 JADX GUI 选中内容读取。
-
-返回内容较大时，MCP 工具均可通过 `page` 参数分页。
-
-插件选项（保存在 `~/.decx/config.json`）：
-
-- `decx.port`：DECX HTTP 服务端口，默认 `25419`
-- `decx.mcpAutoStart`：`true`/`false`，默认 `false` —— DECX 启动时是否自动启动 MCP 服务
-- `decx.cache`：`disk` 或 `memory`，默认 `disk`
-
----
-
-## 错误码
-
-插件模式和独立 server 模式都会返回同一套结构化错误格式：
-
-| 错误码 | 描述 | HTTP 状态码 |
-|--------|------|-------------|
-| **INTERNAL_ERROR** | 内部服务器错误 | 500 |
-| **SERVICE_ERROR** | 服务错误 | 503 |
-| **REQUEST_TIMEOUT** | 请求超时 | 504 |
-| **HEALTH_CHECK_FAILED** | 健康检查失败 | 500 |
-| **UNKNOWN_ENDPOINT** | 未知端点 | 404 |
-| **INVALID_PARAMETER** | 参数无效 | 400 |
-| **METHOD_NOT_FOUND** | 方法未找到 | 404 |
-| **CLASS_NOT_FOUND** | 类未找到 | 404 |
-| **RESOURCE_NOT_FOUND** | 资源未找到 | 404 |
-| **MANIFEST_NOT_FOUND** | AndroidManifest 未找到 | 404 |
-| **FIELD_NOT_FOUND** | 字段未找到 | 404 |
-| **INTERFACE_NOT_FOUND** | 接口未找到 | 404 |
-| **SERVICE_IMPL_NOT_FOUND** | 服务实现未找到 | 404 |
-| **NO_STRINGS_FOUND** | 未找到 strings.xml 资源 | 404 |
-| **NO_MAIN_ACTIVITY** | 未找到 MAIN/LAUNCHER Activity | 404 |
-| **NO_APPLICATION** | 未找到 Application 类 | 404 |
-| **EMPTY_SEARCH_KEY** | 搜索关键字不能为空 | 400 |
-| **DECOMPILATION_SKIPPED** | 反编译被跳过（体积保护） | 503 |
-| **NOT_GUI_MODE** | 非 GUI 模式 | 503 |
-
-**错误响应格式：**
-```json
-{
-  "ok": false,
-  "error": {
-    "code": "CLASS_NOT_FOUND",
-    "message": "Class not found: com.example.Foo"
-  }
-}
-```
-
----
-
-## 开发
-
-### 项目结构
-
-| 路径 | 作用 |
-|---|---|
-| `decx/decx-core/` | 共享 Kotlin API、HTTP + MCP 传输、服务、模型与工具 |
-| `decx/decx-plugin/` | JADX GUI 插件：生命周期、UI 与进程内 MCP 服务装配 |
-| `modules/decx-jadx/` | 独立 headless server 入口和 fat JAR 打包 |
-| `decx/` | TypeScript CLI，负责会话、代码分析、Android 辅助、framework 处理和自管理 |
-| `skills/` | 面向 AI Agent 的 DECX 分析、App/Framework 漏洞挖掘、报告生成和 PoC 构造技能 |
-
-核心请求链路：
+Decx 遵循 [WikiSkill](https://arxiv.org/html/2608.27454) §3：共享工作区是三个**平级**层，而不是每个 skill 各带一个 wiki。
 
 ```text
-CLI / MCP / HTTP
-  -> DecxServer / RouteHandler
-  -> DecxApi / DecxApiImpl
-  -> service/* and utils/*
+raw/                         # 不可变执行记录（默认不发布）
+  traces/                    # 每次 session 一条不可变记录
+wiki/
+  index.md                   # 共享模式目录
+  patterns/                  # 经验沉淀，不是执行指令
+  logs.md                    # 维护日志（保持初始状态；仅 log: true 时追写）
+  skill-impact.md            # 提案账本（保持初始状态；仅 decx_propose 写入）
+skills/
+  <name>/
+    SKILL.md                 # 完整执行流程
+    PURPOSE.md               # 仅维护者使用的模式映射
+    references/              # 可选的可执行参考材料
+.pi/extensions/decx/     # pi 集成，不属于三个知识层
 ```
 
-### 构建
+执行只读 skills、不读 wiki；维护者把 raw 记录沉淀到 wiki；提案者据此提出单个 skill 变更；验证决定是否保留，拒绝只回滚 skill、不回滚 wiki。导入的模式页属于引导知识，结构检查不等于验证分数。raw 默认进入 gitignore，因为可能包含目标数据；只应发布经过审阅的证据。
+
+## 开发验证
 
 ```bash
-cd decx
-./gradlew dist
-
-cd ../decx
-npm install
-npm run build
-npm test
+cd subprojects/decx-afe && cargo build --release && cargo test
+cd decx && npm ci && npm test
+python3 skills/check-skills.py && node --test .pi/extensions/decx/lib.test.ts && node .pi/extensions/decx/cli.ts check
 ```
 
-### 贡献
+各区域的完整门禁见 AGENTS.md §Validation；CI 按对象拆成 `.github/workflows/` 下的多个流程（`decx-cli.yml`、`decx-afe.yml`、`decx-droidasc.yml`、`decx-kuna.yml`），各自用 `paths` 限定触发范围。管理器与 crate 的门禁全部离线运行（fixture 压缩包、伪工具链与临时 prefix）；DroidASC 与 Kuna 两个流程会真实跑一遍安装路径，PR 流程不编译 vendored 的上游源码。发布按对象各有一个流程：`release-cli.yml`（`decx-v*` → `decx-<version>.tar.gz` + `decx-SHA256SUMS.txt`）、`release-afe.yml`（`tools-v*` → 六个平台的 `afe-<version>-<platform>` 包 + `afe-SHA256SUMS.txt`）、`release-kuna.yml`（`kuna-v*` → 从 pin 的源码构建上游五个目标 + 编译 specs）、`release-droidasc.yml`（`droidasc-v*` → pin 源码 tarball）。kuna 与 droidasc 的产物就是 manifest 里 `fallbackRelease` 指向的回退源；上游 release 始终是首选安装源。
 
-1. Fork 本仓库
-2. 创建功能分支
-3. 进行更改
-4. 如适用，添加测试
-5. 提交 Pull Request
+## 范围与非目标
 
----
+DECX 不提供分析 CLI、会话管理、分析器注册表、内嵌 JavaScript 运行时、JADX 集成或分析服务端，也不把一个分析器的命令树翻译成另一个；`decx/` 只做安装、定位与报告，并把参数原样传给工具。DroidASC 与 Kuna 是按原样使用的上游工具。只有在上游工具确有无法覆盖的能力缺口时才增加适配。
+
+`subprojects/` 存放所有子项目，每个子项目都是自包含的：自己的 `README.md`、驱动它的 skill（在 `skills/` 下）、以及管理器读取的工具清单 `decx-<id>.json`。`decx-afe/` 是 DECX 自己维护的 Rust 工具；`decx-droidasc/` 与 `decx-kuna/` 把上游源码作为固定版本的 git submodule 放在 `source/`（见 `.gitmodules`）。
 
 ## 许可证
 
-本项目采用 [GNU许可证](LICENSE) - 详见 [LICENSE](LICENSE) 文件。
-
----
-
-## 致谢
-
-- **[skylot/jadx](https://github.com/skylot/jadx)** - 本项目的基础，强大的 JADX 反编译器，提供插件支持
-- **[zinja-coder/jadx-ai-mcp](https://github.com/zinja-coder/jadx-ai-mcp)** - 为本项目提供了很多思路和灵感，关于 JADX MCP 集成的优秀实践
-- **[Kotlin MCP SDK](https://github.com/modelcontextprotocol/kotlin-sdk)**: 进程内 MCP 服务实现
-- **[Ktor](https://ktor.io/)**: MCP 服务的 Streamable HTTP 传输
-- **[Javalin](https://javalin.io/)**: HTTP API 的轻量级 Web 框架
-
----
-
-<div align="center">
-
-**⭐ 如果这个项目对您有帮助，请给一个Star！**
-
-![Star History](https://img.shields.io/github/stars/jygzyc/decx?style=social)
-
-</div>
+详见 [LICENSE](LICENSE)。DroidASC、Kuna 分别遵循其上游许可证，安装脚本不改变其许可条件。

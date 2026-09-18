@@ -28,6 +28,8 @@ Do not use for vulnerability discovery, chain tracing, PoC construction, or gene
 | Generate HTML + Chinese Markdown + English Markdown by default | complete default output |
 | All formats must use the same finding IDs and evidence model | avoids divergence |
 
+Maintenance record (evidence, history, pattern pages): `wiki/` — read by the maintainer/proposer, never during execution.
+
 ## References
 
 - `references/finding-intake.md`

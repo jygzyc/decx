@@ -1,79 +1,33 @@
-# Test Directories
-.decx_test/
-.decx
-.decx-analysis/
+# Rust
+target/
+**/*.rs.bk
 
-# FileDump
-Source/
-Output/
-/docs/
-
-# Python
+# Python (installation/tests may create virtualenvs)
 __pycache__/
 *.py[cod]
-*$py.class
-*.so
-.Python
-env/
-build/
-develop-eggs/
-dist/
-downloads/
-eggs/
-.eggs/
-parts/
-sdist/
-var/
-*.egg-info/
-.installed.cfg
-*.egg
-.ruff_cache/
-.pytest_cache/
-
-# Node
-node_modules/
-dist/
-package-lock.json
-
-# Virtual Environment
-.env
 .venv/
 venv/
-ENV/
 
-# IDE
+# Node (skill helper scripts only)
+node_modules/
+# Built CLI package output
+decx/dist/
+decx/artifacts/
+
+# Install roots the workflows use when they exercise the manager (.ci-home)
+.ci-home/
+
+# Raw execution records may contain target data; publish only reviewed evidence.
+/raw/*
+!/raw/README.md
+# ...and the rule that keeps per-run traces out of the repository
+!/raw/.gitignore
+
+# IDE / OS
 .idea/
 *.iml
-*.ipr
-*.iws
-.project
-.settings
 .vscode/
-.trae/
-temp/
-*.code-workspace
-
-# OS
 .DS_Store
 Thumbs.db
 *.swp
-*.swo
 *~
-
-# Logs
-*.log
-logs/
-
-# Database
-*.sqlite3
-*.db
-
-# AI
-CLAUDE.md
-.claude/
-.agents/
-.sisyphus/
-.codegraph/
-.omo
-.env
-.zcode/

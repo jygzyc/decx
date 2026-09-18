@@ -1,0 +1,107 @@
+name: AFE
+
+# Android Framework Extract is DECX's own crate -- the Android collection,
+# ext4/EROFS parsing and archive packing that the framework skills drive -- and
+# the only Rust in this repository. `subprojects/decx-droidasc/source` and
+# `subprojects/decx-kuna/source` are vendored upstream checkouts with CI of their
+# own; the vendored trees are only compiled by the release workflows, never here.
+on:
+  push:
+    branches: ['**']
+    paths: ['subprojects/decx-afe/**', '.github/workflows/decx-afe.yml']
+  pull_request:
+    paths: ['subprojects/decx-afe/**', '.github/workflows/decx-afe.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: afe-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  hygiene:
+    name: Format and lints
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        shell: bash
+        working-directory: subprojects/decx-afe
+    steps:
+      - uses: actions/checkout@v7.0.1
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: subprojects/decx-afe
+
+      # Formatting and lints are platform-independent, so they run once instead
+      # of on every leg of the test matrix.
+      - run: cargo fmt --check
+
+      - run: cargo clippy --all-targets -- -D warnings
+
+  test:
+    name: Build and test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-14, windows-latest]
+    defaults:
+      run:
+        shell: bash
+        working-directory: subprojects/decx-afe
+    steps:
+      - uses: actions/checkout@v7.0.1
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: subprojects/decx-afe
+
+      # Unit and integration tests, including the image-parsing fixtures, on a
+      # native runner for every platform the crate claims to support.
+      - run: cargo test
+
+      # The exact artifact `decx install afe` builds, plus the entry point the
+      # launcher calls: a release build that cannot answer `--help` is not
+      # installable.
+      - run: cargo build --release
+
+      - name: Smoke the release binary
+        run: cargo run --release -- --help
+
+  windows-arm64:
+    name: Windows arm64 cross check
+    runs-on: windows-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        shell: bash
+        working-directory: subprojects/decx-afe
+    steps:
+      - uses: actions/checkout@v7.0.1
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-pc-windows-msvc
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: subprojects/decx-afe
+
+      # `decx install afe` ships a native windows-11-arm build from release-afe;
+      # keep the cheap type-check here so MSVC-specific breakage surfaces on
+      # every change instead of at release time.
+      - run: cargo check --target aarch64-pc-windows-msvc

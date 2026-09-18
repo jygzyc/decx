@@ -1,191 +1,90 @@
-name: Release Go CLI
+name: release-cli
 
 on:
   push:
-    tags: ['v*']
+    tags:
+      - 'decx-v*'
   workflow_dispatch:
 
-# Pre-tag, cross-platform verification lives in test.yml; this workflow only
-# runs for its own tags (or a manual dispatch, where the release jobs below
-# refuse to publish because the ref is not a tag).
-
 permissions:
-  contents: read
+  contents: write
 
 jobs:
-  test:
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          # The plugin engine (quickjs-go) needs cgo, so every supported target
-          # is tested and built on a native runner; the release job packages
-          # the same six targets. The race flag marks where Go's race detector
-          # exists: it has no windows/arm64 runtime.
-          - os: ubuntu-latest
-            target: linux/amd64
-            race: true
-          - os: ubuntu-24.04-arm
-            target: linux/arm64
-            race: true
-          - os: macos-15-intel
-            target: darwin/amd64
-            race: true
-          - os: macos-14
-            target: darwin/arm64
-            race: true
-          - os: windows-latest
-            target: windows/amd64
-            race: true
-          - os: windows-11-arm
-            target: windows/arm64
-            race: false
-    runs-on: ${{ matrix.os }}
-    env:
-      # The Windows arm64 leg builds under msys2 CLANGARM64, whose compiler is
-      # not named gcc; the other legs use the platform default CC.
-      CC: "${{ matrix.target == 'windows/arm64' && 'aarch64-w64-mingw32-gcc' || '' }}"
-    steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-go@v6
-        with:
-          go-version-file: decx/go.mod
-          cache-dependency-path: decx/go.sum
-      - name: Install C toolchain (Windows amd64)
-        if: runner.os == 'Windows' && matrix.target == 'windows/amd64'
-        uses: msys2/setup-msys2@v2
-        with:
-          msystem: MINGW64
-          install: mingw-w64-x86_64-gcc
-      - name: Install C toolchain (Windows arm64)
-        if: runner.os == 'Windows' && matrix.target == 'windows/arm64'
-        uses: msys2/setup-msys2@v2
-        with:
-          msystem: CLANGARM64
-          install: mingw-w64-clang-aarch64-gcc
-      # The platform-independent ard-framework bundle the CLI evaluates
-      # in-process is built and exercised on every OS, so a platform-specific
-      # bundle failure cannot hide until release. The go test run below also
-      # executes compiled plugin code through the embedded engine
-      # (internal/plugin's EROFS fixture test) once the bundle exists.
-      - uses: actions/setup-node@v5
-        with:
-          node-version: 24
-          cache: npm
-          cache-dependency-path: plugins/ard-framework/package-lock.json
-      - run: npm ci --no-audit --no-fund
-        working-directory: plugins/ard-framework
-      - run: npm run build
-        working-directory: plugins/ard-framework
-      - run: node --test "dist/tests/*.test.js"
-        working-directory: plugins/ard-framework
-      - name: Build CLI
-        run: go build ./cmd/decx
-        working-directory: decx
-      - name: Run tests (race)
-        if: ${{ matrix.race }}
-        run: go test -race ./...
-        working-directory: decx
-      - name: Run tests
-        if: ${{ !matrix.race }}
-        run: go test ./...
-        working-directory: decx
-      - run: go vet ./...
-        working-directory: decx
-      # Follow-up: add a CLI-level plugin smoke test (`decx -m ard-framework
-      # ...`) once the module command surface settles; every shipped plugin
-      # command needs an adb device or a framework source tree, so none of them
-      # runs unattended today.
-
-  # The plugin engine (quickjs-go) needs cgo, so every platform is built on a
-  # native runner instead of being cross-compiled from a single job.
-  release:
-    needs: test
-    if: startsWith(github.ref, 'refs/tags/v')
-    permissions:
-      contents: read
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - os: ubuntu-latest
-            target: linux/amd64
-          - os: ubuntu-24.04-arm
-            target: linux/arm64
-          - os: macos-15-intel
-            target: darwin/amd64
-          - os: macos-14
-            target: darwin/arm64
-          - os: windows-latest
-            target: windows/amd64
-          - os: windows-11-arm
-            target: windows/arm64
-    runs-on: ${{ matrix.os }}
-    steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-go@v6
-        with:
-          go-version-file: decx/go.mod
-          cache-dependency-path: decx/go.sum
-      - name: Install C toolchain (Windows amd64)
-        if: runner.os == 'Windows' && matrix.target == 'windows/amd64'
-        uses: msys2/setup-msys2@v2
-        with:
-          msystem: MINGW64
-          install: mingw-w64-x86_64-gcc
-      - name: Install C toolchain (Windows arm64)
-        if: runner.os == 'Windows' && matrix.target == 'windows/arm64'
-        uses: msys2/setup-msys2@v2
-        with:
-          msystem: CLANGARM64
-          install: mingw-w64-clang-aarch64-gcc
-      - name: Verify version
-        shell: bash
-        run: test "${GITHUB_REF_NAME#v}" = "$(tr -d '[:space:]' < version)"
-      - name: Build native archive
-        shell: bash
-        env:
-          CC: ${{ matrix.target == 'windows/arm64' && 'aarch64-w64-mingw32-gcc' || '' }}
-        run: go run ./cmd/pack
-        working-directory: decx
-      - name: Keep checksums per platform
-        shell: bash
-        run: mv decx/dist/SHA256SUMS "decx/dist/SHA256SUMS.${{ matrix.target == 'windows/amd64' && 'windows-amd64' || matrix.target == 'windows/arm64' && 'windows-arm64' || matrix.target == 'linux/amd64' && 'linux-amd64' || matrix.target == 'linux/arm64' && 'linux-arm64' || matrix.target == 'darwin/amd64' && 'darwin-amd64' || 'darwin-arm64' }}"
-      - uses: actions/upload-artifact@v5
-        with:
-          name: decx-cli-${{ matrix.target }}
-          if-no-files-found: error
-          path: |
-            decx/dist/*.tar.gz
-            decx/dist/*.zip
-            decx/dist/SHA256SUMS.*
-
-  publish:
-    needs: release
-    if: startsWith(github.ref, 'refs/tags/v')
+  pack:
+    name: build and pack the CLI
     runs-on: ubuntu-latest
-    permissions:
-      contents: write
+    outputs:
+      tag: ${{ steps.check.outputs.tag }}
     steps:
-      - uses: actions/download-artifact@v6
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-node@v7
         with:
+          node-version: '24'
+      - name: validate the tag matches decx/package.json
+        id: check
+        run: |
+          node decx/scripts/check-release.mjs "${GITHUB_REF_NAME}"
+          echo "tag=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
+      - name: build, pack and smoke the CLI
+        working-directory: decx
+        run: |
+          npm ci
+          npm run typecheck
+          npm test
+          npm run build
+          npm run pack
+          npm run smoke
+      - uses: actions/upload-artifact@v7
+        with:
+          name: decx-cli
+          path: decx/artifacts/
+          retention-days: 7
+
+  smoke:
+    name: smoke the packed CLI (${{ matrix.os }})
+    needs: pack
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    steps:
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+      - uses: actions/download-artifact@v8
+        with:
+          name: decx-cli
           path: artifacts
-          merge-multiple: true
-      - name: Merge checksums and verify archives
+      - name: unpack and smoke from a non-repo directory
         shell: bash
         run: |
-          cd artifacts
-          archives=$(ls *.tar.gz *.zip 2>/dev/null | wc -l)
-          if [ "$archives" -ne 6 ]; then
-            echo "expected 6 archives, found $archives" >&2
-            ls -l >&2
-            exit 1
-          fi
-          cat $(ls SHA256SUMS.* | sort) > SHA256SUMS
-          cat SHA256SUMS
-      - uses: softprops/action-gh-release@v3
+          set -euo pipefail
+          mkdir smoke && tar -xzf artifacts/decx-*.tar.gz -C smoke
+          cd smoke/decx-*
+          node decx/lib/cli.js version
+          node decx/lib/cli.js help
+          node decx/lib/cli.js install 2>&1 | grep -q '"code":"USAGE"'
+
+  release:
+    name: publish the GitHub release
+    needs: [pack, smoke]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v8
         with:
-          files: |
-            artifacts/*.tar.gz
-            artifacts/*.zip
-            artifacts/SHA256SUMS
+          name: decx-cli
+          path: artifacts
+      - name: publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          tag="${{ needs.pack.outputs.tag }}"
+          if gh release view "$tag" >/dev/null 2>&1; then
+            gh release upload "$tag" artifacts/* --clobber
+          else
+            gh release create "$tag" artifacts/* \
+              --title "decx CLI ${tag#decx-v}" \
+              --notes "DECX toolkit manager ${tag#decx-v}. The tarball is a self-contained Node 22.18+ CLI: unpack and run \`node decx/lib/cli.js install <tool>\`."
+          fi

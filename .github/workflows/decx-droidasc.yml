@@ -1,0 +1,83 @@
+name: DroidASC
+
+# DroidASC is vendored, not ours: `subprojects/decx-droidasc/source` is pinned by
+# `.gitmodules` and the superproject gitlink, and upstream runs its own test
+# suite in its own repository. What has to keep working *here* is the DECX
+# install path over that pin -- the manager builds a private virtualenv next to
+# the checkout's entry point and the launcher drives `main.py` with no system
+# Python packages and no shell setup. Building and publishing the pinned source
+# payload is release-droidasc.yml's job.
+on:
+  push:
+    branches: ['**']
+    paths: ['subprojects/decx-droidasc/**', 'decx/**', 'skills/decx-droidasc/**', '.github/workflows/decx-droidasc.yml']
+  pull_request:
+    paths: ['subprojects/decx-droidasc/**', 'decx/**', 'skills/decx-droidasc/**', '.github/workflows/decx-droidasc.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: droidasc-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  install:
+    name: Install the pin (${{ matrix.os }}, Python ${{ matrix.python }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Upstream tests 3.11 and 3.12; DECX only claims >= 3.10, so the
+          # oldest upstream-supported interpreter is checked on the default
+          # runner and the newest on all three platforms.
+          - os: ubuntu-latest
+            python: '3.11'
+          - os: ubuntu-latest
+            python: '3.12'
+          - os: macos-14
+            python: '3.12'
+          - os: windows-latest
+            python: '3.12'
+    defaults:
+      run:
+        shell: bash
+    env:
+      # Never the real home directory: the manager writes `bin/`, `share/` and
+      # a PROVENANCE record, and `--no-links` keeps it out of PATH as well.
+      DECX_HOME: ${{ runner.temp }}/decx-home
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          submodules: recursive
+
+      - uses: actions/setup-python@v7.0.0
+        with:
+          python-version: ${{ matrix.python }}
+          cache: pip
+          cache-dependency-path: subprojects/decx-droidasc/source/requirements.txt
+
+      - name: Show the pin under test
+        run: git submodule status subprojects/decx-droidasc/source
+
+      # androguard is installed into the tool's own virtualenv, so this is also
+      # the check that the manifest's requirement pin resolves on every
+      # platform.
+      - name: Install with the manager
+        run: node decx/src/cli.ts install droidasc --home "$DECX_HOME" --no-links --pretty
+
+      # `decx run` execs the generated launcher with the arguments untouched;
+      # the help text is upstream's, which is what a skill reads before it
+      # guesses.
+      - name: Run the installed tool
+        run: node decx/src/cli.ts run --home "$DECX_HOME" droidasc --help
+
+      - name: PROVENANCE records the pinned revision
+        run: |
+          pinned="$(bash .github/scripts/pinned-gitlink.sh subprojects/decx-droidasc/source)"
+          echo "gitlink: $pinned"
+          grep -q "subprojects/decx-droidasc/source" "$DECX_HOME/share/droidasc/PROVENANCE"
+          grep -qi "$pinned" "$DECX_HOME/share/droidasc/PROVENANCE"

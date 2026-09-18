@@ -1,251 +1,132 @@
-# DECX - Decompiler + X
+# DECX
 
-<div align="center">
+Agent workflows for reverse engineering with native tools, plus **Android Framework
+Extract (AFE)** for collecting and preparing Android framework files.
 
-![DECX Logo](https://img.shields.io/badge/DECX-Decompiler%20%2B%20X-blue?style=for-the-badge&logo=java&logoColor=white)
-![Release](https://img.shields.io/github/v/release/jygzyc/decx?style=for-the-badge&logo=github&color=green)
-![License](https://img.shields.io/github/license/jygzyc/decx?style=for-the-badge&logo=gnu&color=orange)
+DECX does not implement a decompiler or wrap tools behind a unified command API.
+Use each analyzer's native interface:
 
-**A JADX-based Decompiler + X - Designed for AI-assisted code analysis**
+| Task | Tool |
+| --- | --- |
+| APK / DEX analysis | [DroidASC](https://github.com/MG1937/ASC) |
+| Native binary analysis | [Kuna](https://github.com/Noelo-Lab/kuna) |
+| Android framework collection and preprocessing | [AFE](subprojects/decx-afe/README.md) |
+| Analysis methodology, findings, reports and PoCs | [Skills](skills/) |
 
-</div>
+## Install and manage tools
 
----
-
-## Overview
-
-DECX (Decompiler + X) is a smart code analysis platform built on the JADX decompiler, designed specifically for AI-assisted code analysis. The platform provides powerful Java code analysis capabilities to AI assistants through an HTTP API, MCP (Model Context Protocol), a standalone CLI, and workflow skills.
-
----
-
-## Installation
-
-### Prerequisites
-
-- **Java**: JDK 17+
-- **Node.js**: 22.5+ for the CLI
-- **JADX**: v1.5.2+ with plugin support if you use the GUI plugin
-
-### CLI And AI Skills
-
-For AI-assisted CLI work, install the CLI and server JAR, then download the DECX skills for your agent:
+The toolkit manager lives in [`decx/`](decx/README.md) — a Node CLI (Node 22.18+, no build step,
+no dependencies, one JSON object per command) that installs the tools above and reports what this
+host supports.
 
 ```bash
-npm install -g @jygzyc/decx-cli
-decx self install
-decx self skills install --client opencode --client codex
+decx install kuna        # upstream release for this platform, plus compiled SLEIGH specs
+decx install droidasc    # private venv over the pinned submodule
+decx install afe         # prebuilt tools release, else cargo build of subprojects/decx-afe
+decx run kuna --help     # runs the tool itself; arguments are never translated
+decx help install        # usage for the manager or one command
 ```
 
-The CLI checks for updates in the background on startup: the result is cached under `DECX_HOME` for 24 hours and the check never blocks or breaks the command you ran. When a newer release exists, a one-line hint on stderr points you to `decx self update`. Set `DECX_NO_UPDATE_CHECK=1` to disable the check.
+Tools are declared as data in `subprojects/decx-<id>/decx-<id>.json`, never as code. Executables
+and payloads live under `$DECX_HOME` (`bin/`, `share/<id>/` with a `PROVENANCE` record); the
+manager installs tools, not language runtimes, and each tool keeps its own arguments and output.
+Layout, `--links` and install rules: [`decx/README.md`](decx/README.md).
 
-#### Windows `spawnSync npm.cmd EINVAL` during `self update`
+### Platform support
 
-CLI versions older than v4.0.1 started `npm.cmd` directly on Windows, which can return `EINVAL` with some Node.js versions. An affected CLI cannot bootstrap this fix through `self update`; update it once from PowerShell or CMD instead:
+macOS, Linux and Windows are supported for installing, using and building. The manager is
+plain Node, so it runs in PowerShell or cmd on Windows and installs `.exe`/`.cmd` names
+there; no Git Bash, `uname` or POSIX tooling is involved.
 
-```powershell
-npm.cmd install -g @jygzyc/decx-cli@latest
+| Tool | macOS / Linux | Windows |
+| --- | --- | --- |
+| DroidASC | `$PREFIX/bin/droidasc` | `%PREFIX%\bin\droidasc.cmd` (launcher for `%PREFIX%\share\droidasc\venv\Scripts\python.exe`) |
+| Kuna | `bin/kuna` (launcher for `share/kuna/bin/kuna`), `specs/` | `bin\kuna.cmd` (launcher for `share\kuna\bin\kuna.exe`), `specs\` |
+| AFE | `bin/afe` | `bin\afe.exe` |
+
+What each platform needs:
+
+- **DroidASC** — Python 3.11/3.12 (64-bit) with `venv`; every pinned dependency ships a
+  `win_amd64` wheel, so no compiler is needed.
+- **Kuna** — installs the upstream release (macOS/Linux arm64+x86_64, Windows x86_64) with the
+  compiled SLEIGH specs as a separate asset; the generated launcher exports `KUNA_SPECS`. There is
+  no Windows arm64 release, and `decx install kuna` reports that instead of building the reference
+  checkout.
+- **AFE** — always built from this repository (`subprojects/decx-afe`, Rust; MSVC on Windows). Its
+  optional external extractors (`debugfs`, `fsck.erofs`, `extract.erofs`) have no Windows builds,
+  so on Windows AFE always uses its native ext4/EROFS/ZIP readers.
+
+AFE only prepares artifacts: device collection needs ADB, unsupported image features may fall back
+to platform tools, and picking an analyzer for the result stays the caller's job. See the
+[AFE README](subprojects/decx-afe/README.md).
+
+## Skills
+
+The repository's [skills](skills/) are one per analysis surface and one per tool: `decx-init`,
+`decx-vulnhunt`, `decx-report` and `decx-poc` are the process skills, while `decx-droidasc`,
+`decx-kuna` and `decx-afe` each drive one installed tool and carry that tool's own install, run
+and error contract. Point the agent harness at `skills/`. The manager does not install skills.
+
+DECX follows [WikiSkill](https://arxiv.org/html/2608.27454) §3: a shared workspace with three
+**sibling** layers, not a wiki inside every skill.
+
+```text
+raw/                         # immutable execution records (private by default)
+  traces/                    # one immutable file per session trace
+wiki/
+  index.md                   # shared pattern catalog
+  patterns/                  # consolidated experience, not execution instructions
+  logs.md                    # maintainer log (seeded; written only with log: true)
+  skill-impact.md            # proposal ledger (seeded; written by decx_propose)
+skills/
+  <name>/
+    SKILL.md                 # complete execution procedure
+    PURPOSE.md               # maintenance-only links to motivating patterns
+    references/              # optional executable reference material
+.pi/extensions/decx/     # pi integration, outside the three knowledge layers
 ```
 
-Reopen the terminal and run `decx --version` to confirm v4.0.1 or newer before using `decx self update` again. If an older version is still selected, run `where.exe decx` to check for multiple DECX CLI installations on PATH.
-
-Skills are downloaded to `~/.decx/skills` (or `$DECX_HOME/skills`) and linked into the selected client directories:
-
-| Agent | Link target |
-|---|---|
-| Claude Code | `~/.claude/skills` |
-| Opencode | `~/.agents/skills` |
-| Codex | `~/.codex/skills` |
-| Common agent setup | `~/.agents/skills` |
-
-The `skills/` directory contains:
-
-| Skill | Use |
-|---|---|
-| `decx-cli` | DECX CLI usage, general code navigation, source lookup, xrefs, manifest/resource inspection, and workflow routing |
-| `decx-vulnhunt` | Android vulnerability hunting (App + Framework tracks): exported components, WebView/Provider/Service/Receiver, Binder/system services, AIDL |
-| `decx-poc` | Build a focused Android PoC app and optional helper server from one finalized finding writeup |
-| `decx-report` | Generate HTML/Markdown reports from finalized finding writeups |
-
-### JADX Plugin
-
-Install the plugin from the JADX GUI plugin manager, or install a plugin JAR manually:
-
-```bash
-jadx plugins --install-jar <path-to-jadx_decx_plugin.jar>
-```
-
-After installation, open an APK/JAR in JADX and enable DECX. The plugin exposes the DECX HTTP API and MCP tools for the currently opened JADX project.
-
----
-
-## Usage
-
-### CLI + Skills
-
-For agent-driven analysis, use the CLI to create a session and let the installed skills drive the detailed workflow:
-
-```bash
-decx process open target.apk --name target
-decx code classes --limit 50
-decx code search-global "WebView" --limit 20
-decx android exported-components
-decx android deep-links
-decx process close target
-decx process close --port 25419
-```
-
-Typical skill sequence:
-
-- `decx-cli` for exploration, evidence gathering, and routing
-- `decx-vulnhunt` for focused vulnerability hunting (App or Framework track)
-- `decx-report` for generating reports from finalized finding writeups
-- `decx-poc` for turning one finalized finding writeup into a buildable PoC
-
-Vulnerability hunting keeps notes and finalized finding writeups in the working directory. Downstream report and PoC skills consume those finding writeups.
-
-Useful command groups:
-
-| Need | Commands |
-|---|---|
-| Session lifecycle | `decx process open <file>`, `decx process list`, `decx process check`, `decx process close [name] [--port <port>]` |
-| Code analysis | `decx code classes`, `class-source`, `method-source`, `method-context`, `search-global`, `search-class`, `xref-method`, `xref-class`, `xref-field`, `implementations`, `subclasses` |
-| APK analysis | `decx android manifest`, `launcher-activity`, `application`, `exported-components`, `deep-links`, `dynamic-receivers`, `aidl-interfaces`, `resources`, `resource-file`, `strings` |
-| Framework analysis | `decx android framework collect`, `process [oem]`, `run`, `open [jar]`, plus `framework-service-implementation <interface>` |
-| Live device helpers | `decx android device system-services`, `decx android device permission-info <permission>` |
-| CLI/server/skills management | `decx self install`, `decx self skills install`, `decx self update` |
-
-Notes:
-
-- Session-backed `code` and `android` commands support `--page <n>` and can target a session with `-s, --session <name>` or a port with `--port <port>`.
-- `decx code class-source` supports `--limit <n>` to return at most N source lines.
-- `decx process open <file>` passes standard `jadx-cli` flags through, enables `--show-bad-code` and `--no-imports` by default, and strips `--deobf` because DECX analysis requires original names. It also defaults `--rename-flags` to `case,valid` (dropping the `printable` token) so heavily obfuscated Unicode identifiers such as `Ď锬볝觧` survive decompilation instead of being aliased to `m0`.
-- `decx process open <file> --script s1.jadx.kts --script s2.jadx.kts` runs [Jadx Kotlin scripts](https://github.com/skylot/jadx/wiki/Jadx-scripts-guide) during decompilation; the server bundles the `jadx-script-kotlin` plugin, so top-level code runs at load and `afterLoad` blocks after classes load. Reuse is keyed on the target file plus the script set.
-- `decx android resources` supports file-name filtering with `--include` and `--no-regex`.
-- `decx android device system-services` and `permission-info` are adb-backed commands. They use `--serial` / `--adb-path`, not `--port <port>`.
-- `decx android framework run` collects from the connected device, processes, packs, and opens the final framework JAR by default; `process [oem]` is for local framework dumps and can resolve OEM from `.artifact.json` or a connected device when omitted.
-
-### Plugin + MCP
-
-Use the plugin when you want the AI assistant to work against the project already opened in JADX GUI. The MCP server is an in-process Kotlin SDK Streamable HTTP endpoint; it is disabled by default and can be auto-started with the plugin:
-
-1. Open the target APK/JAR in JADX.
-2. Enable the DECX plugin and confirm the server is available at `http://127.0.0.1:25419`.
-3. (Optional) Toggle *Auto-start MCP with DECX* in the DECX panel to start the MCP server at `http://127.0.0.1:25420/mcp` (HTTP port + 1) whenever DECX starts.
-4. Connect your MCP client to DECX and call `health_check()`.
-5. Use MCP tools for code search/source/xrefs, Android manifest/resources/components, framework service lookup, and JADX GUI selections.
-
-All MCP tools support pagination with `page` where the returned content is large.
-
-Plugin options (stored in `~/.decx/config.json`):
-
-- `decx.port`: DECX HTTP server port, default `25419`
-- `decx.mcpAutoStart`: `true`/`false`, default `false` — auto-start the MCP server with DECX
-- `decx.cache`: `disk` or `memory`, default `disk`
-
----
-
-## Error Codes
-
-DECX returns the same structured error format from plugin and standalone server modes:
-
-| Code | Description | HTTP Status |
-|------|-------------|-------------|
-| **INTERNAL_ERROR** | Internal server error | 500 |
-| **SERVICE_ERROR** | Service error | 503 |
-| **REQUEST_TIMEOUT** | Request timed out | 504 |
-| **HEALTH_CHECK_FAILED** | Health check failed | 500 |
-| **UNKNOWN_ENDPOINT** | Unknown endpoint | 404 |
-| **INVALID_PARAMETER** | Invalid parameter | 400 |
-| **METHOD_NOT_FOUND** | Method not found | 404 |
-| **CLASS_NOT_FOUND** | Class not found | 404 |
-| **RESOURCE_NOT_FOUND** | Resource not found | 404 |
-| **MANIFEST_NOT_FOUND** | AndroidManifest not found | 404 |
-| **FIELD_NOT_FOUND** | Field not found | 404 |
-| **INTERFACE_NOT_FOUND** | Interface not found | 404 |
-| **SERVICE_IMPL_NOT_FOUND** | Service implementation not found | 404 |
-| **NO_STRINGS_FOUND** | No strings.xml resource found | 404 |
-| **NO_MAIN_ACTIVITY** | No MAIN/LAUNCHER Activity found | 404 |
-| **NO_APPLICATION** | Application class not found | 404 |
-| **EMPTY_SEARCH_KEY** | Search key cannot be empty | 400 |
-| **DECOMPILATION_SKIPPED** | Decompilation skipped (size guard) | 503 |
-| **NOT_GUI_MODE** | Not in GUI mode | 503 |
-
-**Error Response Format:**
-```json
-{
-  "ok": false,
-  "error": {
-    "code": "CLASS_NOT_FOUND",
-    "message": "Class not found: com.example.Foo"
-  }
-}
-```
-
----
+Execution reads skills and never the wiki; the maintainer consolidates raw records into the wiki,
+the proposer derives a single-skill change, validation decides whether to keep it, and rejection
+rolls back the skill, never the wiki. Imported pages are bootstrap knowledge and the structural
+checks are not a validation score. Raw records are gitignored by default because they may contain
+target data; publish only reviewed evidence.
 
 ## Development
 
-### Project Structure
-
-| Path | Role |
-|---|---|
-| `decx/decx-core/` | Shared Kotlin API, HTTP + MCP transport, services, models, and utilities |
-| `decx/decx-plugin/` | JADX GUI plugin: lifecycle, UI, and in-process MCP server wiring |
-| `modules/decx-jadx/` | Standalone headless server entry point and fat JAR packaging |
-| `decx/` | TypeScript CLI for sessions, code analysis, Android helpers, framework processing, and self-management |
-| `skills/` | AI agent skills for DECX analysis, app/framework vulnerability hunting, reporting, and PoC construction |
-
-Core request path:
-
-```text
-CLI / MCP / HTTP
-  -> DecxServer / RouteHandler
-  -> DecxApi / DecxApiImpl
-  -> service/* and utils/*
-```
-
-### Build
-
 ```bash
-cd decx
-./gradlew dist
-
-cd ../decx
-npm install
-npm run build
-npm test
+cd subprojects/decx-afe && cargo build --release && cargo test
+cd decx && npm ci && npm test
+python3 skills/check-skills.py && node --test .pi/extensions/decx/lib.test.ts && node .pi/extensions/decx/cli.ts check
 ```
 
-### Contributing
+AGENTS.md §Validation lists the full gate per area; CI is one workflow per subject under
+`.github/workflows/` — `decx-cli.yml`, `decx-afe.yml`, `decx-droidasc.yml` and
+`decx-kuna.yml` — each scoped to its own paths. The manager and crate gates run offline
+(fixture archives, fake toolchains, temp prefixes); the DroidASC and Kuna workflows
+deliberately exercise the real install paths, and the PR workflows never compile the
+vendored upstream checkouts. Publishing is one workflow per piece: `release-cli.yml`
+(`decx-v*` → `decx-<version>.tar.gz` + `decx-SHA256SUMS.txt`), `release-afe.yml`
+(`tools-v*` → the six `afe-<version>-<platform>` archives + `afe-SHA256SUMS.txt`),
+`release-kuna.yml` (`kuna-v*` → builds the pinned checkout for upstream's five targets +
+compiled specs) and `release-droidasc.yml` (`droidasc-v*` → the pinned source tarball). The
+kuna and droidasc assets back the manifests' `fallbackRelease` blocks; upstream releases stay
+the primary install source.
 
-1. Fork this repository
-2. Create a feature branch
-3. Make your changes
-4. Add tests if applicable
-5. Submit a Pull Request
+## Scope and non-goals
 
----
+DECX ships no analysis CLI, session manager, analyzer registry, embedded JavaScript runtime, JADX
+integration or analysis server, and it never translates one analyzer's command tree onto another;
+`decx/` installs, locates and reports tools and passes arguments through unchanged. DroidASC and
+Kuna are upstream tools used as they are. Adapters exist only for a demonstrated native-tool
+limitation.
+
+`subprojects/` holds every subproject, and each one is self-contained: its own `README.md`, the
+skill that drives it under `skills/`, and the `decx-<id>.json` manifest the manager reads.
+`decx-afe/` is DECX's own Rust tool; `decx-droidasc/` and `decx-kuna/` pin the upstream checkout as
+a git submodule under `source/` (see `.gitmodules`).
 
 ## License
 
-This project is licensed under [GNU License](LICENSE) - see the [LICENSE](LICENSE) file for details.
-
----
-
-## Credits
-
-- **[skylot/jadx](https://github.com/skylot/jadx)** - The foundation of this project, a powerful JADX decompiler with plugin support
-- **[zinja-coder/jadx-ai-mcp](https://github.com/zinja-coder/jadx-ai-mcp)** - Provided many ideas and inspiration, excellent practices for JADX MCP integration
-- **[Kotlin MCP SDK](https://github.com/modelcontextprotocol/kotlin-sdk)**: In-process MCP server implementation
-- **[Ktor](https://ktor.io/)**: Streamable HTTP transport for the MCP server
-- **[Javalin](https://javalin.io/)**: Lightweight web framework for the HTTP API
-
----
-
-<div align="center">
-
-**⭐ If this project helps you, please give it a Star!**
-
-![Star History](https://img.shields.io/github/stars/jygzyc/decx?style=social)
-
-</div>
+See [LICENSE](LICENSE). DroidASC and Kuna are distributed under their respective upstream
+licenses. Installing them does not change those licenses.

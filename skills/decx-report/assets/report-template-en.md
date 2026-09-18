@@ -6,7 +6,6 @@
 |---|---|
 | Target | `{{target}}` |
 | Scope | `{{scope}}` |
-| Session | `{{sessionName}}` |
 | Date | `{{date}}` |
 
 ## Findings Summary

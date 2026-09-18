@@ -1,0 +1,84 @@
+name: decx CLI
+
+# The manager is plain Node with no runtime dependencies: it discovers the tools
+# in `subprojects/*/decx-*.json`, installs them under `$DECX_HOME` and runs their
+# launchers untouched. Its tests are offline by construction -- fixture archives
+# served from the test's own temp directory, fake python/pip/cargo on PATH,
+# temporary `--home` roots -- so the matrix can be wide: both Node lines agents
+# run today, on every platform the repository claims to support.
+on:
+  push:
+    branches: ['**']
+    paths: ['decx/**', 'subprojects/**', '.github/workflows/decx-cli.yml']
+  pull_request:
+    paths: ['decx/**', 'subprojects/**', '.github/workflows/decx-cli.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: decx-cli-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  manager:
+    name: Manager (${{ matrix.os }}, Node ${{ matrix.node }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-14, windows-latest]
+        node: ['22.18', '24']
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v7.0.1
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+          cache-dependency-path: decx/package-lock.json
+
+      - run: npm ci --no-audit --no-fund
+        working-directory: decx
+
+      - run: npm run typecheck
+        working-directory: decx
+
+      - run: npm test
+        working-directory: decx
+
+      # The contract the skills and the docs rely on: a command prints exactly one
+      # JSON envelope on stdout (`--pretty` only changes the spacing), diagnostics
+      # go to stderr, and exit codes stay 0/1/2. Parsing the envelope here is what
+      # keeps `decx` scriptable.
+      - name: One JSON envelope per command
+        working-directory: decx
+        run: |
+          node src/cli.ts help > /dev/null
+          node src/cli.ts version --pretty | node -e '
+            let raw = "";
+            process.stdin.on("data", (chunk) => (raw += chunk));
+            process.stdin.on("end", () => {
+              const envelope = JSON.parse(raw);
+              if (envelope === null || typeof envelope !== "object" || Array.isArray(envelope)) {
+                throw new Error("stdout is not a JSON object envelope");
+              }
+              console.log("envelope keys: " + Object.keys(envelope).join(", "));
+            });
+          '
+
+      # Usage errors are the manager's third exit code and the one an agent hits
+      # first, so it is checked rather than assumed.
+      - name: Unknown commands fail as usage errors
+        working-directory: decx
+        run: |
+          set +e
+          node src/cli.ts definitely-not-a-command > /dev/null 2>&1
+          code=$?
+          set -e
+          test "$code" -eq 2 || { echo "expected exit 2, got $code"; exit 1; }

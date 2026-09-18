@@ -1,0 +1,284 @@
+# Purpose: build Kuna from the pinned submodule checkout and publish the
+# fallback release assets the kuna manifest installs from this repository when
+# the upstream release is unavailable or unverifiable.
+name: release-kuna
+
+# Adapted from upstream's own release pipeline
+# (subprojects/decx-kuna/source/.github/workflows/release.yml): same build
+# matrix (its five targets), same `make specs` for the platform-independent
+# SLEIGH tree, same KUNA_VERSION baking so `kuna --version` reports the
+# release. What differs is the source (the pinned gitlink, not upstream main)
+# and the asset names, which follow the manifest's fallbackRelease contract
+# (subprojects/decx-kuna/decx-kuna.json) verbatim -- the manager reads those
+# names, so they are not up for design:
+#   kuna-v{version}-linux-x86_64.tar.gz    kuna-v{version}-macos-arm64.tar.gz
+#   kuna-v{version}-linux-arm64.tar.gz     kuna-v{version}-windows-x86_64.zip
+#   kuna-v{version}-macos-x86_64.tar.gz    (kuna, decomp_dbg, slacomp)
+#   kuna-v{version}-specs.tar.gz           compiled specs/ (platform-independent)
+#   kuna-SHA256SUMS.txt                    sha256 of every published asset
+# Upstream ships no windows-arm64 build, so neither does this fallback -- the
+# manager reports that platform as unsupported instead of inventing an asset.
+on:
+  push:
+    tags: ['kuna-v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Tag to publish, e.g. kuna-v1.515
+        required: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-kuna-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  validate:
+    name: Validate the tag against the pin
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.meta.outputs.tag }}
+      version: ${{ steps.meta.outputs.version }}
+      pinned: ${{ steps.meta.outputs.pinned }}
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          submodules: recursive
+          # Upstream's minor version is a commit count over full history; the
+          # submodule carries its own tags, so `git describe` resolves the
+          # pinned release (v1.515 -> 1.515).
+          fetch-depth: 0
+
+      - id: meta
+        run: |
+          set -eu
+          # The checkout action may clone the submodule shallowly; the release
+          # tag on the pinned commit must be resolvable, so fetch it fully.
+          git -C subprojects/decx-kuna/source fetch --tags --force origin 2>/dev/null || \
+            git -C subprojects/decx-kuna/source fetch --unshallow --tags origin 2>/dev/null || true
+          tag="${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}"
+          case "$tag" in
+            kuna-v*) version="${tag#kuna-v}" ;;
+            *) echo "::error::tag '$tag' must look like kuna-v<major.minor>"; exit 1 ;;
+          esac
+          # Kuna versions are MAJOR.MINOR (scripts/version.sh); that shape is
+          # what `kuna --version` reports and what the manifest pins.
+          case "$version" in
+            ''|*.*.*|*[!0-9.]*)
+              echo "::error::tag version '$version' must look like 1.515"
+              exit 1 ;;
+          esac
+          pinned="$(bash .github/scripts/pinned-gitlink.sh subprojects/decx-kuna/source)"
+          echo "pinned gitlink: $pinned"
+          actual="$(git -C subprojects/decx-kuna/source rev-parse HEAD)"
+          if [ "$actual" != "$pinned" ]; then
+            echo "::error::submodule checkout $actual does not match the pinned gitlink $pinned"
+            exit 1
+          fi
+          described="$(git -C subprojects/decx-kuna/source describe --tags --exact-match "$pinned" 2>/dev/null || true)"
+          echo "pinned tag: ${described:-<none>}"
+          if [ "$described" != "v$version" ]; then
+            echo "::error::tag version '$version' does not match the pinned checkout tag '${described:-<none>}'"
+            echo "::error::re-tag to match the pin, or move the submodule pin to the v$version commit"
+            exit 1
+          fi
+          {
+            echo "tag=$tag"
+            echo "version=$version"
+            echo "pinned=$pinned"
+          } >> "$GITHUB_OUTPUT"
+
+  build:
+    name: ${{ matrix.platform }}
+    needs: validate
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Upstream's five-target matrix (release.yml); the platform keys are
+          # the manifest's. Upstream has no windows-arm64 target and neither
+          # does this workflow.
+          - platform: linux-x64
+            os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            name: linux-x86_64
+          - platform: linux-arm64
+            os: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-gnu
+            name: linux-arm64
+          - platform: macos-arm64
+            os: macos-latest
+            target: aarch64-apple-darwin
+            name: macos-arm64
+          - platform: macos-x64
+            os: macos-latest
+            target: x86_64-apple-darwin
+            name: macos-x86_64
+          - platform: windows-x64
+            os: windows-latest
+            target: x86_64-pc-windows-msvc
+            name: windows-x86_64
+    runs-on: ${{ matrix.os }}
+    env:
+      # Baked into `kuna --version` via option_env! in kuna-cli, exactly as
+      # upstream's release job does.
+      KUNA_VERSION: ${{ needs.validate.outputs.version }}
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          submodules: recursive
+
+      - name: The submodule is at the pin
+        run: |
+          test "$(git -C subprojects/decx-kuna/source rev-parse HEAD)" = "${{ needs.validate.outputs.pinned }}"
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: subprojects/decx-kuna/source/decompiler
+          key: ${{ matrix.target }}
+
+      # Upstream builds kuna-cli, kuna-console (decomp_dbg), kuna-slacomp and
+      # kuna-ghidra in one shot; the fallback archive only ships the three
+      # user-facing binaries the manifest declares (the Ghidra extension is
+      # upstream-release territory, not an install fallback).
+      - name: Build the pinned source
+        working-directory: subprojects/decx-kuna/source/decompiler
+        run: cargo build --release --locked --target ${{ matrix.target }} -p kuna-cli -p kuna-console -p kuna-slacomp
+
+      # x86_64-apple-darwin is cross-compiled on the arm64 runner and cannot
+      # execute here; every other leg smokes natively.
+      - name: Smoke (kuna --version reports the release)
+        if: matrix.target != 'x86_64-apple-darwin'
+        shell: bash
+        run: |
+          ext=""
+          if [ "${{ runner.os }}" = "Windows" ]; then ext=".exe"; fi
+          bin="subprojects/decx-kuna/source/decompiler/target/${{ matrix.target }}/release/kuna$ext"
+          out="$("$bin" --version)"
+          echo "$out"
+          [ "$out" = "kuna ${{ needs.validate.outputs.version }}" ]
+
+      - name: Package the archive
+        shell: bash
+        run: |
+          set -eu
+          version="${{ needs.validate.outputs.version }}"
+          bindir="subprojects/decx-kuna/source/decompiler/target/${{ matrix.target }}/release"
+          # The asset name is the manifest's fallbackRelease contract exactly:
+          # kuna-v{version}-{asset-suffix}, suffix = matrix.name (upstream's
+          # macos-x86_64 / linux-x86_64 / windows-x86_64 naming, NOT the
+          # manifest's macos-x64 lookup key).
+          pkg="kuna-v$version-${{ matrix.name }}"
+          ext=""
+          if [ "${{ runner.os }}" = "Windows" ]; then ext=".exe"; fi
+          mkdir -p "dist/$pkg"
+          cp "$bindir/kuna$ext" "$bindir/decomp_dbg$ext" "$bindir/slacomp$ext" "dist/$pkg/"
+          cd dist
+          if [ "${{ runner.os }}" = "Windows" ]; then
+            7z a "$pkg.zip" "$pkg" > /dev/null
+          else
+            tar czf "$pkg.tar.gz" "$pkg"
+          fi
+          rm -r "$pkg"
+          ls -l
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: kuna-${{ matrix.platform }}
+          path: dist/*
+          if-no-files-found: error
+
+  specs:
+    name: Compiled SLEIGH specs
+    needs: validate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          submodules: recursive
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: subprojects/decx-kuna/source/decompiler
+
+      # Upstream's own step: build slacomp, then compile every vendored
+      # .slaspec to .sla inside specs/. The tree is platform-independent, so
+      # one asset serves every OS.
+      - name: Compile every .slaspec -> .sla
+        working-directory: subprojects/decx-kuna/source
+        run: make specs
+
+      - name: Package the specs tree
+        run: |
+          set -eu
+          version="${{ needs.validate.outputs.version }}"
+          sla_count="$(find subprojects/decx-kuna/source/specs -name '*.sla' | wc -l | tr -d ' ')"
+          echo "$sla_count compiled .sla files"
+          test "$sla_count" -gt 0
+          mkdir -p dist
+          tar czf "dist/kuna-v$version-specs.tar.gz" -C subprojects/decx-kuna/source specs
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: kuna-specs
+          path: dist/*
+          if-no-files-found: error
+
+  publish:
+    name: Publish ${{ needs.validate.outputs.tag }}
+    needs: [validate, build, specs]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: kuna-*
+          path: dist
+          merge-multiple: true
+
+      - name: Verify the asset set and write checksums
+        working-directory: dist
+        run: |
+          set -eu
+          version="${{ needs.validate.outputs.version }}"
+          expected="kuna-v$version-linux-x86_64.tar.gz kuna-v$version-linux-arm64.tar.gz kuna-v$version-macos-x86_64.tar.gz kuna-v$version-macos-arm64.tar.gz kuna-v$version-windows-x86_64.zip kuna-v$version-specs.tar.gz"
+          for asset in $expected; do
+            if [ ! -f "$asset" ]; then
+              echo "::error::missing release asset $asset"
+              exit 1
+            fi
+          done
+          : > kuna-SHA256SUMS.txt
+          for asset in $expected; do
+            sha256sum "$asset" >> kuna-SHA256SUMS.txt
+          done
+          cat kuna-SHA256SUMS.txt
+
+      - name: Publish the release
+        working-directory: dist
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ needs.validate.outputs.tag }}
+          VERSION: ${{ needs.validate.outputs.version }}
+          PINNED: ${{ needs.validate.outputs.pinned }}
+        run: |
+          set -eu
+          notes="$(printf 'Kuna %s built from the pinned submodule `subprojects/decx-kuna/source` at `%s`.\n\nEach archive ships `kuna` (the CLI), `decomp_dbg` (the decompiler console) and `slacomp` (the SLEIGH compiler). Extract `kuna-v%s-specs.tar.gz` and point `KUNA_SPECS` at the extracted `specs/` directory; `decx install kuna` does both.\n\nNo windows-arm64 asset: upstream Kuna does not build one, so the manager reports that platform as unsupported instead of substituting an emulation.' "$VERSION" "$PINNED" "$VERSION")"
+          if gh release view "$TAG" > /dev/null 2>&1; then
+            gh release upload "$TAG" --clobber ./*
+          else
+            gh release create "$TAG" --title "$TAG" --notes "$notes" ./*
+          fi

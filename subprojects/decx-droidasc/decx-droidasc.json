@@ -1,0 +1,44 @@
+{
+  "manifest": 1,
+  "id": "droidasc",
+  "kind": "python-venv",
+  "summary": "APK/DEX analysis on demand: class lookup and reference search (upstream DroidASC, pure Python, no JVM)",
+  "homepage": "https://github.com/MG1937/ASC",
+  "license": "Apache-2.0",
+  "notes": "upstream 0.1.0 repackaged the tree as the `droidasc` package (pyproject requires-python >=3.10, androguard pinned to 4.1.3); the manager copies `droidasc/` next to `main.py` and runs the checkout entry point; without a local checkout the venv is built from the pinned upstream source archive, with the repo's own droidasc-v* source archive as the fallback",
+  "requires": {
+    "python": ">=3.10"
+  },
+  "python": {
+    "path": "subprojects/decx-droidasc/source",
+    "entry": "main.py",
+    "requirements": "requirements.txt",
+    "payload": [
+      "droidasc"
+    ],
+    "archive": {
+      "repository": "MG1937/ASC",
+      "ref": "ff1df854bb9db63066364bbb0d16484fcc72fb75"
+    }
+  },
+  "fallbackRelease": {
+    "repository": "jygzyc/decx",
+    "version": "0.1.0",
+    "tag": "droidasc-v0.1.0",
+    "assets": {
+      "any": "droidasc-{version}-source.tar.gz"
+    },
+    "checksums": "droidasc-SHA256SUMS.txt"
+  },
+  "launch": {
+    "bin": "droidasc"
+  },
+  "bins": [
+    "droidasc"
+  ],
+  "verify": {
+    "args": [
+      "--help"
+    ]
+  }
+}

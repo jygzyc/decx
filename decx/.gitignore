@@ -1,5 +1,1 @@
-.build/
-dist/
-decx
-*.test
-.decx_test/
+node_modules/

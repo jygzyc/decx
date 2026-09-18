@@ -1,0 +1,109 @@
+# Purpose: publish the pinned DroidASC source payload `decx install droidasc`
+# can fall back to downloading instead of requiring the vendored checkout.
+name: release-droidasc
+
+# The asset contract (consumed by the droidasc manifest's install fallback):
+#   droidasc-{version}-source.tar.gz   main.py + droidasc/ + requirements.txt
+#                                      (+ LICENSE/VERSION when upstream ships
+#                                      them) from the pinned submodule gitlink
+#   droidasc-SHA256SUMS.txt            sha256 of every published asset
+# The payload is a relocatable source tree, never a built virtualenv: a venv
+# hard-codes the build machine's interpreter paths and is not portable across
+# OS or Python installs. The manager assembles the venv on the user's machine.
+on:
+  push:
+    tags: ['droidasc-v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Tag to publish, e.g. droidasc-v0.1.0
+        required: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-droidasc-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Package the pinned source
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.package.outputs.tag }}
+      version: ${{ steps.package.outputs.version }}
+      pinned: ${{ steps.package.outputs.pinned }}
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          submodules: recursive
+
+      - id: package
+        run: |
+          set -eu
+          tag="${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}"
+          case "$tag" in
+            droidasc-v*) version="${tag#droidasc-v}" ;;
+            *) echo "::error::tag '$tag' must look like droidasc-v<version>"; exit 1 ;;
+          esac
+          # Version lands in the asset name; keep it a plain version string.
+          case "$version" in
+            ''|*[!0-9.]*)
+              echo "::error::tag version '$version' must be numeric like 0.1.0"
+              exit 1 ;;
+          esac
+          out="dist/droidasc-$version-source.tar.gz"
+          bash .github/scripts/package-droidasc-source.sh "$out" "$version" | tee package.log
+          pinned="$(sed -n 's/^pinned=//p' package.log)"
+          test -n "$pinned"
+          {
+            echo "tag=$tag"
+            echo "version=$version"
+            echo "pinned=$pinned"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Checksums
+        working-directory: dist
+        run: |
+          set -eu
+          # One asset per release; name it from disk rather than trusting the
+          # output plumbing.
+          assets=$(ls droidasc-*-source.tar.gz)
+          test "$(echo "$assets" | wc -l | tr -d ' ')" = "1"
+          sha256sum $assets > droidasc-SHA256SUMS.txt
+          cat droidasc-SHA256SUMS.txt
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: droidasc-source
+          path: dist/*
+          if-no-files-found: error
+
+  publish:
+    name: Publish ${{ needs.build.outputs.tag }}
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: droidasc-source
+          path: dist
+      - name: Publish the release
+        working-directory: dist
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ needs.build.outputs.tag }}
+          PINNED: ${{ needs.build.outputs.pinned }}
+        run: |
+          set -eu
+          version="${TAG#droidasc-v}"
+          notes="$(printf 'DroidASC source payload %s, exported from the pinned submodule\n`subprojects/decx-droidasc/source` at `%s`.\n\n`droidasc-%s-source.tar.gz` carries the interpreter payload (`main.py`, `droidasc/`, `requirements.txt`); the manager builds the private virtualenv on the install machine.' "$version" "$PINNED" "$version")"
+          if gh release view "$TAG" > /dev/null 2>&1; then
+            gh release upload "$TAG" --clobber ./*
+          else
+            gh release create "$TAG" --title "$TAG" --notes "$notes" ./*
+          fi
