@@ -1,21 +1,24 @@
-# Purpose: build Kuna from the pinned submodule checkout and publish the
-# fallback release assets the kuna manifest installs from this repository when
-# the upstream release is unavailable or unverifiable.
-name: release-kuna
-
-# Adapted from upstream's own release pipeline
+# Purpose: publish the fallback release assets the kuna manifest installs from
+# this repository when the upstream release is unavailable or unverifiable.
+#
+# The preferred source is UPSTREAM'S OWN RELEASE: the mirror job downloads
+# Noelo-Lab/kuna's v{version} assets and repacks every one of them as a zip.
+# Only when that release cannot be fetched (network, deleted tag, renamed
+# asset) does this workflow fall back to building the pinned submodule
+# checkout, adapted from upstream's own release pipeline
 # (subprojects/decx-kuna/source/.github/workflows/release.yml): same build
 # matrix (its five targets), same `make specs` for the platform-independent
 # SLEIGH tree, same KUNA_VERSION baking so `kuna --version` reports the
-# release. What differs is the source (the pinned gitlink, not upstream main)
-# and the asset names, which follow the manifest's fallbackRelease contract
-# (subprojects/decx-kuna/decx-kuna.json) verbatim -- the manager reads those
-# names, so they are not up for design:
-#   kuna-v{version}-linux-x86_64.tar.gz    kuna-v{version}-macos-arm64.tar.gz
-#   kuna-v{version}-linux-arm64.tar.gz     kuna-v{version}-windows-x86_64.zip
-#   kuna-v{version}-macos-x86_64.tar.gz    (kuna, decomp_dbg, slacomp)
-#   kuna-v{version}-specs.tar.gz           compiled specs/ (platform-independent)
-#   kuna-SHA256SUMS.txt                    sha256 of every published asset
+# release.
+#
+# Either way the published assets are zips whose names follow the manifest's
+# fallbackRelease contract (subprojects/decx-kuna/decx-kuna.json) verbatim --
+# the manager reads those names, so they are not up for design:
+#   kuna-v{version}-linux-x86_64.zip    kuna-v{version}-macos-arm64.zip
+#   kuna-v{version}-linux-arm64.zip     kuna-v{version}-windows-x86_64.zip
+#   kuna-v{version}-macos-x86_64.zip    (kuna, decomp_dbg, slacomp)
+#   kuna-v{version}-specs.zip           compiled specs/ (platform-independent)
+#   kuna-SHA256SUMS.txt                 sha256 of every published asset
 # Upstream ships no windows-arm64 build, so neither does this fallback -- the
 # manager reports that platform as unsupported instead of inventing an asset.
 on:
@@ -93,9 +96,109 @@ jobs:
             echo "pinned=$pinned"
           } >> "$GITHUB_OUTPUT"
 
-  build:
-    name: ${{ matrix.platform }}
+  # Preferred path: mirror upstream's release. A missing or unreachable
+  # upstream release is NOT a failure here -- it selects the source-build legs.
+  mirror:
+    name: Fetch upstream's release assets
     needs: validate
+    runs-on: ubuntu-latest
+    outputs:
+      ok: ${{ steps.fetch.outputs.ok }}
+    steps:
+      - id: fetch
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.validate.outputs.version }}
+        run: |
+          set -u
+          mkdir -p upstream
+          ok=true
+          gh release download "v$VERSION" --repo Noelo-Lab/kuna --dir upstream --clobber \
+            --pattern "kuna-v$VERSION-linux-x86_64.tar.gz" \
+            --pattern "kuna-v$VERSION-linux-arm64.tar.gz" \
+            --pattern "kuna-v$VERSION-macos-x86_64.tar.gz" \
+            --pattern "kuna-v$VERSION-macos-arm64.tar.gz" \
+            --pattern "kuna-v$VERSION-windows-x86_64.zip" \
+            --pattern "kuna-v$VERSION-specs.tar.gz" || ok=false
+          for suffix in linux-x86_64.tar.gz linux-arm64.tar.gz macos-x86_64.tar.gz macos-arm64.tar.gz windows-x86_64.zip specs.tar.gz; do
+            if [ ! -s "upstream/kuna-v$VERSION-$suffix" ]; then
+              echo "upstream asset missing: kuna-v$VERSION-$suffix"
+              ok=false
+            fi
+          done
+          echo "mirror ok=$ok"
+          echo "ok=$ok" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/upload-artifact@v7.0.1
+        if: steps.fetch.outputs.ok == 'true'
+        with:
+          name: kuna-upstream
+          path: upstream/*
+          if-no-files-found: error
+
+  # Every asset becomes a zip, whatever upstream's own container was; the
+  # manifest's fallbackRelease names .zip for all six.
+  repack:
+    name: Repack upstream assets as zip
+    needs: [validate, mirror]
+    if: needs.mirror.outputs.ok == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: kuna-upstream
+          path: upstream
+
+      - name: Repack to zip and write checksums
+        env:
+          VERSION: ${{ needs.validate.outputs.version }}
+        run: |
+          set -eu
+          mkdir -p dist
+          repack() {
+            src="$1"
+            out="$2"
+            tmp="$(mktemp -d)"
+            case "$src" in
+              *.zip) unzip -q "$src" -d "$tmp" ;;
+              *) tar xzf "$src" -C "$tmp" ;;
+            esac
+            (cd "$tmp" && zip -q -r - .) > "$out"
+            rm -rf "$tmp"
+          }
+          for platform in linux-x86_64 linux-arm64 macos-x86_64 macos-arm64 windows-x86_64; do
+            src="upstream/kuna-v$VERSION-$platform.tar.gz"
+            if [ "$platform" = "windows-x86_64" ]; then
+              src="upstream/kuna-v$VERSION-$platform.zip"
+            fi
+            repack "$src" "dist/kuna-v$VERSION-$platform.zip"
+          done
+          repack "upstream/kuna-v$VERSION-specs.tar.gz" "dist/kuna-v$VERSION-specs.zip"
+          # Sanity: every platform zip carries the binaries, the specs zip
+          # carries compiled .sla files.
+          for platform in linux-x86_64 linux-arm64 macos-x86_64 macos-arm64; do
+            unzip -Z1 "dist/kuna-v$VERSION-$platform.zip" | grep -q 'kuna$'
+          done
+          unzip -Z1 "dist/kuna-v$VERSION-windows-x86_64.zip" | grep -q 'kuna.exe$'
+          test "$(unzip -Z1 "dist/kuna-v$VERSION-specs.zip" | grep -c '\.sla$')" -gt 0
+          : > dist/kuna-SHA256SUMS.txt
+          for asset in dist/*.zip; do
+            (cd dist && sha256sum "$(basename "$asset")") >> dist/kuna-SHA256SUMS.txt
+          done
+          cat dist/kuna-SHA256SUMS.txt
+
+      - uses: actions/upload-artifact@v7.0.1
+        with:
+          name: kuna-fallback
+          path: dist/*
+          if-no-files-found: error
+
+  # Fallback path: build the pinned submodule checkout. Runs only when the
+  # upstream release could not be mirrored.
+  build:
+    name: ${{ matrix.platform }} (from source)
+    needs: [validate, mirror]
+    if: needs.mirror.outputs.ok != 'true'
     strategy:
       fail-fast: false
       matrix:
@@ -174,7 +277,7 @@ jobs:
           version="${{ needs.validate.outputs.version }}"
           bindir="subprojects/decx-kuna/source/decompiler/target/${{ matrix.target }}/release"
           # The asset name is the manifest's fallbackRelease contract exactly:
-          # kuna-v{version}-{asset-suffix}, suffix = matrix.name (upstream's
+          # kuna-v{version}-{asset-suffix}.zip, suffix = matrix.name (upstream's
           # macos-x86_64 / linux-x86_64 / windows-x86_64 naming, NOT the
           # manifest's macos-x64 lookup key).
           pkg="kuna-v$version-${{ matrix.name }}"
@@ -182,24 +285,24 @@ jobs:
           if [ "${{ runner.os }}" = "Windows" ]; then ext=".exe"; fi
           mkdir -p "dist/$pkg"
           cp "$bindir/kuna$ext" "$bindir/decomp_dbg$ext" "$bindir/slacomp$ext" "dist/$pkg/"
-          cd dist
           if [ "${{ runner.os }}" = "Windows" ]; then
-            7z a "$pkg.zip" "$pkg" > /dev/null
+            (cd dist && 7z a "$pkg.zip" "$pkg" > /dev/null)
           else
-            tar czf "$pkg.tar.gz" "$pkg"
+            (cd dist && zip -q -r "$pkg.zip" "$pkg")
           fi
-          rm -r "$pkg"
-          ls -l
+          rm -r "dist/$pkg"
+          ls -l dist
 
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@v7.0.1
         with:
           name: kuna-${{ matrix.platform }}
           path: dist/*
           if-no-files-found: error
 
   specs:
-    name: Compiled SLEIGH specs
-    needs: validate
+    name: Compiled SLEIGH specs (from source)
+    needs: [validate, mirror]
+    if: needs.mirror.outputs.ok != 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7.0.1
@@ -227,20 +330,21 @@ jobs:
           echo "$sla_count compiled .sla files"
           test "$sla_count" -gt 0
           mkdir -p dist
-          tar czf "dist/kuna-v$version-specs.tar.gz" -C subprojects/decx-kuna/source specs
+          (cd subprojects/decx-kuna/source && zip -q -r "$GITHUB_WORKSPACE/dist/kuna-v$version-specs.zip" specs)
 
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@v7.0.1
         with:
           name: kuna-specs
           path: dist/*
           if-no-files-found: error
 
-  publish:
-    name: Publish ${{ needs.validate.outputs.tag }}
-    needs: [validate, build, specs]
+  # Merge the source-build legs into the same artifact the repack leg would
+  # have produced, so publish has exactly one input either way.
+  collect:
+    name: Checksums for the source build
+    needs: [validate, mirror, build, specs]
+    if: needs.mirror.outputs.ok != 'true'
     runs-on: ubuntu-latest
-    permissions:
-      contents: write
     steps:
       - uses: actions/download-artifact@v8
         with:
@@ -250,10 +354,11 @@ jobs:
 
       - name: Verify the asset set and write checksums
         working-directory: dist
+        env:
+          VERSION: ${{ needs.validate.outputs.version }}
         run: |
           set -eu
-          version="${{ needs.validate.outputs.version }}"
-          expected="kuna-v$version-linux-x86_64.tar.gz kuna-v$version-linux-arm64.tar.gz kuna-v$version-macos-x86_64.tar.gz kuna-v$version-macos-arm64.tar.gz kuna-v$version-windows-x86_64.zip kuna-v$version-specs.tar.gz"
+          expected="kuna-v$VERSION-linux-x86_64.zip kuna-v$VERSION-linux-arm64.zip kuna-v$VERSION-macos-x86_64.zip kuna-v$VERSION-macos-arm64.zip kuna-v$VERSION-windows-x86_64.zip kuna-v$VERSION-specs.zip"
           for asset in $expected; do
             if [ ! -f "$asset" ]; then
               echo "::error::missing release asset $asset"
@@ -266,6 +371,25 @@ jobs:
           done
           cat kuna-SHA256SUMS.txt
 
+      - uses: actions/upload-artifact@v7.0.1
+        with:
+          name: kuna-fallback
+          path: dist/*
+          if-no-files-found: error
+
+  publish:
+    name: Publish ${{ needs.validate.outputs.tag }}
+    needs: [validate, mirror, repack, collect]
+    if: always() && needs.validate.result == 'success' && (needs.repack.result == 'success' || needs.collect.result == 'success')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: kuna-fallback
+          path: dist
+
       - name: Publish the release
         working-directory: dist
         env:
@@ -274,9 +398,15 @@ jobs:
           TAG: ${{ needs.validate.outputs.tag }}
           VERSION: ${{ needs.validate.outputs.version }}
           PINNED: ${{ needs.validate.outputs.pinned }}
+          MIRRORED: ${{ needs.mirror.outputs.ok }}
         run: |
           set -eu
-          notes="$(printf 'Kuna %s built from the pinned submodule `subprojects/decx-kuna/source` at `%s`.\n\nEach archive ships `kuna` (the CLI), `decomp_dbg` (the decompiler console) and `slacomp` (the SLEIGH compiler). Extract `kuna-v%s-specs.tar.gz` and point `KUNA_SPECS` at the extracted `specs/` directory; `decx install kuna` does both.\n\nNo windows-arm64 asset: upstream Kuna does not build one, so the manager reports that platform as unsupported instead of substituting an emulation.' "$VERSION" "$PINNED" "$VERSION")"
+          if [ "$MIRRORED" = "true" ]; then
+            origin="a repack of upstream's own release assets (https://github.com/Noelo-Lab/kuna/releases/tag/v$VERSION), rezipped without modification to the payload"
+          else
+            origin="built from the pinned submodule \`subprojects/decx-kuna/source\` at \`$PINNED\` because upstream's release could not be fetched"
+          fi
+          notes="$(printf 'Kuna %s fallback release -- %s.\n\nEvery asset is a zip shipping \`kuna\` (the CLI), \`decomp_dbg\` (the decompiler console) and \`slacomp\` (the SLEIGH compiler); the specs zip holds the compiled SLEIGH tree. \`decx install kuna\` downloads and extracts both and points \`KUNA_SPECS\` at the result.\n\nNo windows-arm64 asset: upstream Kuna does not build one, so the manager reports that platform as unsupported instead of substituting an emulation.' "$VERSION" "$origin")"
           if gh release view "$TAG" > /dev/null 2>&1; then
             gh release upload "$TAG" --clobber ./*
           else

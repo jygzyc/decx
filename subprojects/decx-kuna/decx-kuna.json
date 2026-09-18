@@ -28,14 +28,14 @@
     "version": "1.515",
     "tag": "kuna-v1.515",
     "assets": {
-      "macos-arm64": "kuna-v{version}-macos-arm64.tar.gz",
-      "macos-x64": "kuna-v{version}-macos-x86_64.tar.gz",
-      "linux-x64": "kuna-v{version}-linux-x86_64.tar.gz",
-      "linux-arm64": "kuna-v{version}-linux-arm64.tar.gz",
+      "macos-arm64": "kuna-v{version}-macos-arm64.zip",
+      "macos-x64": "kuna-v{version}-macos-x86_64.zip",
+      "linux-x64": "kuna-v{version}-linux-x86_64.zip",
+      "linux-arm64": "kuna-v{version}-linux-arm64.zip",
       "windows-x64": "kuna-v{version}-windows-x86_64.zip"
     },
     "extraAssets": {
-      "specs": "kuna-v{version}-specs.tar.gz"
+      "specs": "kuna-v{version}-specs.zip"
     },
     "checksums": "kuna-SHA256SUMS.txt"
   },

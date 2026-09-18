@@ -108,8 +108,8 @@ deliberately exercise the real install paths, and the PR workflows never compile
 vendored upstream checkouts. Publishing is one workflow per piece: `release-cli.yml`
 (`decx-v*` → `decx-<version>.tar.gz` + `decx-SHA256SUMS.txt`), `release-afe.yml`
 (`tools-v*` → the six `afe-<version>-<platform>` archives + `afe-SHA256SUMS.txt`),
-`release-kuna.yml` (`kuna-v*` → builds the pinned checkout for upstream's five targets +
-compiled specs) and `release-droidasc.yml` (`droidasc-v*` → the pinned source tarball). The
+`release-kuna.yml` (`kuna-v*` → mirrors upstream's release assets repacked as zip, building
+the pinned checkout for upstream's five targets only when upstream cannot be fetched) and `release-droidasc.yml` (`droidasc-v*` → the pinned source tarball). The
 kuna and droidasc assets back the manifests' `fallbackRelease` blocks; upstream releases stay
 the primary install source.
 

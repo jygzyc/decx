@@ -130,9 +130,9 @@ match the pinned version: `release-cli.yml` (tag `decx-v*`, checked against
 and smokes the packed CLI on all three OSes before publishing), `release-afe.yml` (tag
 `tools-v*`, checked against `subprojects/decx-afe/Cargo.toml`; the six
 `afe-<version>-<platform>` archives plus `afe-SHA256SUMS.txt`), `release-kuna.yml` (tag
-`kuna-v*`, checked against the pinned gitlink's tag; builds the pinned checkout for
-upstream's five targets with `make specs` and publishes the fallback assets the kuna
-manifest names verbatim) and `release-droidasc.yml` (tag `droidasc-v*`; packages the pinned
+`kuna-v*`, checked against the pinned gitlink's tag; mirrors upstream's own release assets
+repacked uniformly as zip, falling back to building the pinned checkout for upstream's five
+targets with `make specs` only when the upstream release cannot be fetched) and `release-droidasc.yml` (tag `droidasc-v*`; packages the pinned
 source tree as `droidasc-<version>-source.tar.gz` plus `droidasc-SHA256SUMS.txt`). The kuna
 and droidasc assets are the repository fallback the manifests' `fallbackRelease` blocks point
 at; upstream releases stay the primary source.

@@ -79,7 +79,7 @@ cd decx && npm ci && npm test
 python3 skills/check-skills.py && node --test .pi/extensions/decx/lib.test.ts && node .pi/extensions/decx/cli.ts check
 ```
 
-各区域的完整门禁见 AGENTS.md §Validation；CI 按对象拆成 `.github/workflows/` 下的多个流程（`decx-cli.yml`、`decx-afe.yml`、`decx-droidasc.yml`、`decx-kuna.yml`），各自用 `paths` 限定触发范围。管理器与 crate 的门禁全部离线运行（fixture 压缩包、伪工具链与临时 prefix）；DroidASC 与 Kuna 两个流程会真实跑一遍安装路径，PR 流程不编译 vendored 的上游源码。发布按对象各有一个流程：`release-cli.yml`（`decx-v*` → `decx-<version>.tar.gz` + `decx-SHA256SUMS.txt`）、`release-afe.yml`（`tools-v*` → 六个平台的 `afe-<version>-<platform>` 包 + `afe-SHA256SUMS.txt`）、`release-kuna.yml`（`kuna-v*` → 从 pin 的源码构建上游五个目标 + 编译 specs）、`release-droidasc.yml`（`droidasc-v*` → pin 源码 tarball）。kuna 与 droidasc 的产物就是 manifest 里 `fallbackRelease` 指向的回退源；上游 release 始终是首选安装源。
+各区域的完整门禁见 AGENTS.md §Validation；CI 按对象拆成 `.github/workflows/` 下的多个流程（`decx-cli.yml`、`decx-afe.yml`、`decx-droidasc.yml`、`decx-kuna.yml`），各自用 `paths` 限定触发范围。管理器与 crate 的门禁全部离线运行（fixture 压缩包、伪工具链与临时 prefix）；DroidASC 与 Kuna 两个流程会真实跑一遍安装路径，PR 流程不编译 vendored 的上游源码。发布按对象各有一个流程：`release-cli.yml`（`decx-v*` → `decx-<version>.tar.gz` + `decx-SHA256SUMS.txt`）、`release-afe.yml`（`tools-v*` → 六个平台的 `afe-<version>-<platform>` 包 + `afe-SHA256SUMS.txt`）、`release-kuna.yml`（`kuna-v*` → 优先镜像上游 release 资产并统一重打包为 zip，仅在上游拉不到时才从 pin 的源码构建上游五个目标 + 编译 specs）、`release-droidasc.yml`（`droidasc-v*` → pin 源码 tarball）。kuna 与 droidasc 的产物就是 manifest 里 `fallbackRelease` 指向的回退源；上游 release 始终是首选安装源。
 
 ## 范围与非目标
 
