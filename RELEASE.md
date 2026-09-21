@@ -1,17 +1,56 @@
-# DECX v4.2.0
+# DECX v4.3.0
 
-DECX v4.2.0 bounds the analysis server's memory usage, makes `--force` session replacement leak-proof, and replaces smali-text scans with fast metadata hierarchy checks.
+> [!IMPORTANT]
+> **This is the last major release on the JADX-based line.**
+>
+> DECX is built on top of JADX, and that foundation has become the bottleneck:
+>
+> - JADX's decompilation pipeline holds large in-memory caches — v4.2.0 already had to bolt a bounded LRU on top of it.
+> - Its memory footprint makes long analysis sessions expensive.
+> - Its JVM-first design is a poor fit for AI-agent workflows that need fast, incremental, scriptable access to code.
+>
+> Rather than continue patching around it, **no further major version updates will be shipped on this line** — only critical fixes and small maintenance releases.
+> **The next major version of DECX is already in development**, rebuilt on a new analysis stack designed for AI agents from the ground up.
 
-### Features
+v4.3.0 focuses on the CLI: automatic framework vendor detection, a much smaller installer that no longer packages `debugfs`, and verified jar versions on install/update.
 
-- **Bounded decompiler memory (headless server)**: `decx-server` now installs a byte-bounded LRU code cache in place of JADX's unbounded in-memory cache (default `min(4GB, heap/2)`, override with `-Ddecx.decompile.codeCacheMaxBytes`) and unloads evicted classes on a daemon worker — releasing method bodies / CFG / cached smali that previously stayed resident forever. The unload queue is bounded and backpressured: when full, decompilation waits for the worker, so evicted-but-unloaded state is hard-bounded. Large APKs can no longer grow the heap until the free-heap guard starts refusing all decompiles. `/health` reports code-cache entries/bytes/evictions and pending unloads.
-- **Verified session kill**: `killProcessGroup` now verifies actual process death and reports `killed` / `already-dead` / `failed`. `--force` refuses to spawn a duplicate server and `process close` keeps the session record when the old JVM survives, so failed kills can no longer silently orphan memory-eating JVMs.
-- **`process open` heartbeat and `--timeout`**: while waiting for the server to become healthy, progress heartbeats (elapsed time + last log line) go to stderr roughly every 15s, and `--timeout <seconds>` (default 300) bounds the wait; on timeout with the JVM still alive the session is kept and the error suggests `decx process check` / `decx process close`.
+## Features
 
-### Fixes
+### Framework vendor auto-detection
 
-- **Interface and subclass scans**: `get_implementations` previously always returned empty — the smali scan searched for `.implement` while baksmali emits `.implements` — and inner classes were matched with `.` instead of `$`. All hierarchy scans (`get_implementations`, `get_subclasses`, `get_aidl_interfaces`, `get_system_service_impl`, `get_dynamic_receivers`) now read dex metadata (`ClassNode` superclass / interfaces) directly: correct, much faster, and no longer caching full disassembly text for every scanned class. Declarations made by nested (inner / inlined) classes are attributed to the outer class, so "which Activity handles onClick" still resolves to the outer class name.
+`decx framework process/open/run` now resolve the artifact vendor (device model) the same way OEM is resolved:
 
-### Changes
+- A persisted `.artifact.json` wins; otherwise a single connected adb device is auto-selected and its `ro.product.model` is read.
+- Several devices without `--serial` fail fast with `ADB_DEVICE_AMBIGUOUS`.
+- No device at all keeps the offline `unknown` default, so processing stays usable without a phone attached.
+- The detected vendor is persisted to the artifact, so later pack/open commands reuse it without re-querying.
 
-- Dependency bumps applied from pending Dependabot PRs (Kotlin 2.4.10, Gson 2.14.0, JUnit 6.1.3, Logback 1.6.2, kotlin-logging 8.0.4, Gradle actions, npm globals).
+### Verified jar version on install/update
+
+- The skip-if-current check no longer trusts the config record — it parses `version.properties` straight from the installed jar's zip central directory (no new dependency).
+- A missing, stale or manually replaced record no longer triggers a needless re-download of the ~50MB server jar.
+- `self update` now reports the jar's actual version.
+
+## Changes
+
+### Dropped packaged `debugfs`
+
+- APEX payload extraction now runs entirely through the native pure-TypeScript ext4 reader (superblock → extents → dirents).
+- Validated on a live Android 16 device: all 33 collected system APEX payloads extracted with zero external tool invocations.
+- The system fallback (`e2fsprogs` on PATH, WSL `debugfs`) is still honored when genuinely needed, with a clear install-hint error otherwise.
+- EROFS extractors stay packaged.
+- Packaged tools shrink 6.0MB → 3.9MB (tarball 3.8MB → 1.7MB).
+
+### Faster framework collection
+
+- `/apex`-first tiered collection skips already-covered modules.
+- Image tools are resolved lazily, so adb-only flows no longer require them.
+
+### Dependency bumps
+
+Applied from pending Dependabot PRs: logback 1.6.3, ktor 3.5.2, `actions/setup-java` v6.
+
+### Build
+
+- Replaced deprecated Kotlin DSL `by registering` delegates.
+- Updated the `com.github.ben-manes.versions` plugin id to its new `io.github.ben-manes.versions` home.

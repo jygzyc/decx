@@ -200,6 +200,63 @@ describe("framework processor zip extraction", () => {
   });
 });
 
+describe("native erofs apex payload processing", () => {
+  function makeLayout(rootDir: string): FrameworkPathLayout {
+    return {
+      rootDir,
+      sourceDir: path.join(rootDir, "source"),
+      outDir: rootDir,
+      outTmpDir: path.join(rootDir, "out_tmp"),
+      apexTmpDir: path.join(rootDir, "apex_tmp"),
+      artifactPath: path.join(rootDir, ".artifact.json"),
+      jarPath: path.join(rootDir, "framework_test.jar"),
+    };
+  }
+
+  it.each([
+    ["compact lz4 with compressed packed fragment", "apex_payload_erofs.img", "test-erofs.apex"],
+    ["ztailpacking inline tail", "apex_payload_erofs_ztp.img", "test-erofs-ztp.apex"],
+    ["deflate compression", "apex_payload_erofs_deflate.img", "test-erofs-deflate.apex"],
+  ])("extracts erofs payloads (%s) natively without resolving any image tools", async (_label, fixture, apexName) => {
+    const rootDir = resetTestDir("tmp", "framework-apex-erofs");
+    const layout = makeLayout(rootDir);
+    mkdirSync(path.join(layout.sourceDir, "system", "apex"), { recursive: true });
+
+    copyFileSync(path.join(__dirname, "fixtures", fixture), path.join(rootDir, "apex_payload.img"));
+    createZipArchive(
+      path.join(layout.sourceDir, "system", "apex", apexName),
+      ["apex_payload.img"],
+      rootDir,
+    );
+
+    let toolResolutions = 0;
+    try {
+      const result = await processFrameworkFiles(layout, async () => {
+        toolResolutions += 1;
+        return {
+          adb: "adb",
+          debugfs: { argv: ["debugfs"] },
+          erofsExtractor: { argv: ["extract.erofs"] },
+        };
+      });
+      expect(result.failed).toBe(0);
+      expect(result.processed).toBe(1);
+      expect(result.failures).toEqual([]);
+      // Native extraction ran (payload/ populated with jar/apk content)...
+      expect(
+        existsSync(path.join(layout.apexTmpDir, apexName.replace(/\.apex$/, ""), "payload")),
+      ).toBe(true);
+      // ...produced namespaced dex outputs...
+      expect(result.outputs.length).toBeGreaterThan(0);
+      for (const output of result.outputs) expect(existsSync(output)).toBe(true);
+      // ...and no external image tools were ever resolved (no WSL needed).
+      expect(toolResolutions).toBe(0);
+    } finally {
+      rmSync(rootDir, { recursive: true, force: true });
+    }
+  });
+});
+
 describe("native ext4 apex payload processing", () => {
   function makeLayout(rootDir: string): FrameworkPathLayout {
     return {

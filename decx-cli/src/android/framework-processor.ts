@@ -4,7 +4,8 @@ import * as path from "path";
 import { spawnSync } from "child_process";
 import { FileError } from "../utils/errors.js";
 import { extractZipEntry, listZipEntries } from "./zip-utils.js";
-import { Ext4Image, NotExt4ImageError, UnsupportedImageFeatureError } from "./ext4-reader.js";
+import { Ext4Image, NotExt4ImageError, UnsupportedImageFeatureError as Ext4Unsupported } from "./ext4-reader.js";
+import { ErofsImage, NotErofsImageError, UnsupportedImageFeatureError as ErofsUnsupported } from "./erofs-reader.js";
 import { translateWslArgs } from "./framework-tools.js";
 import type {
   FrameworkPathLayout,
@@ -93,18 +94,39 @@ function extractApexPayload(apexFile: string, targetDir: string): string {
 }
 
 /**
- * Extract jar/apk/dex files from an ext4 payload image natively (no external
- * tools). Returns false when the image is not parseable natively (EROFS
- * payload, or an unsupported ext4 feature) so callers can fall back to the
+ * Extract jar/apk/dex files from an ext4 or EROFS payload image natively (no
+ * external tools). Returns false when the image is not parseable natively
+ * (unsupported ext4/EROFS feature) so callers can fall back to the
  * external-tool pipeline.
  */
 function extractPayloadNatively(payloadPath: string, payloadDir: string): boolean {
-  if (detectFilesystemType(payloadPath) !== "ext4") return false;
+  const fsType = detectFilesystemType(payloadPath);
+  if (fsType === "erofs") {
+    let image: ErofsImage;
+    try {
+      image = ErofsImage.open(payloadPath);
+    } catch (error) {
+      if (error instanceof NotErofsImageError || error instanceof ErofsUnsupported) return false;
+      throw error;
+    }
+    try {
+      image.extractTo(payloadDir, (relative) =>
+        APEX_PAYLOAD_EXTENSIONS.has(path.extname(relative).toLowerCase()),
+      );
+    } catch (error) {
+      if (error instanceof ErofsUnsupported) return false; // retry with extract.erofs
+      throw error;
+    } finally {
+      image.close();
+    }
+    return true;
+  }
+  if (fsType !== "ext4") return false;
   let image: Ext4Image;
   try {
     image = Ext4Image.open(payloadPath);
   } catch (error) {
-    if (error instanceof NotExt4ImageError || error instanceof UnsupportedImageFeatureError) return false;
+    if (error instanceof NotExt4ImageError || error instanceof Ext4Unsupported) return false;
     throw error;
   }
   try {
@@ -112,7 +134,7 @@ function extractPayloadNatively(payloadPath: string, payloadDir: string): boolea
       APEX_PAYLOAD_EXTENSIONS.has(path.extname(relative).toLowerCase()),
     );
   } catch (error) {
-    if (error instanceof UnsupportedImageFeatureError) return false; // retry with debugfs
+    if (error instanceof Ext4Unsupported) return false; // retry with debugfs
     throw error;
   } finally {
     image.close();
@@ -150,7 +172,7 @@ async function processApex(
   const payloadPath = extractApexPayload(inputFile, apexTmpDir);
 
   if (!extractPayloadNatively(payloadPath, payloadDir)) {
-    // EROFS payload or unsupported ext4 feature: extract via external tools
+    // Unsupported ext4/EROFS feature: extract via external tools
     // (WSL-backed debugfs / extract.erofs on Windows).
     const tools = await resolveTools();
     extractFilesystemImage(payloadPath, payloadDir, tools);
@@ -237,13 +259,12 @@ export async function runTasksWithConcurrency<T>(
   let nextIndex = 0;
 
   async function worker(): Promise<void> {
-    while (true) {
-      const currentIndex = nextIndex;
-      nextIndex += 1;
-      if (currentIndex >= tasks.length) {
-        return;
-      }
+    let currentIndex = nextIndex;
+    nextIndex += 1;
+    while (currentIndex < tasks.length) {
       results[currentIndex] = await tasks[currentIndex]();
+      currentIndex = nextIndex;
+      nextIndex += 1;
     }
   }
 
