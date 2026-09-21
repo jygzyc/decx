@@ -1,8 +1,6 @@
-import { createHash } from "crypto";
-import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "fs";
+import { mkdirSync } from "fs";
 import * as path from "path";
-import { fileURLToPath } from "url";
-import { execFileSync, spawnSync } from "child_process";
+import { spawnSync } from "child_process";
 import { FileError } from "../utils/errors.js";
 import { decxPath } from "../core/paths.js";
 import type { FrameworkTool, FrameworkToolPaths } from "./types.js";
@@ -11,13 +9,6 @@ function commandExists(command: string): boolean {
   const probe = process.platform === "win32" ? "where" : "which";
   const result = spawnSync(probe, [command], { encoding: "utf-8" });
   return result.status === 0;
-}
-
-function currentArchDir(): string {
-  if (process.arch === "arm64") return "arm64";
-  if (process.arch === "x64") return "x86_64";
-  if (process.arch === "arm") return "aarch64";
-  return process.arch;
 }
 
 // ── WSL helpers ────────────────────────────────────────────────────────────
@@ -65,105 +56,6 @@ export function translateWslArgs(args: string[]): string[] {
   return args.map((arg) => arg.replace(/[A-Za-z]:[\\/][^\s"'`]+/g, windowsPathToWsl));
 }
 
-// ── Packaged native binaries ───────────────────────────────────────────────
-
-function packagedBinPath(...parts: string[]): string {
-  const entryDir = path.dirname(fileURLToPath(import.meta.url));
-  const candidates = [
-    path.join(entryDir, "bin", ...parts),
-    path.join(path.resolve(entryDir, ".."), "bin", ...parts),
-  ];
-
-  for (const rawPath of candidates) {
-    if (existsSync(rawPath)) return rawPath;
-  }
-
-  const extracted = extractPackagedBinArchive(parts);
-  return extracted ?? candidates[0];
-}
-
-function extractPackagedBinArchive(parts: string[]): string | null {
-  const entryDir = path.dirname(fileURLToPath(import.meta.url));
-  const archiveCandidates = [
-    path.join(entryDir, "bin.tar.gz"),
-    path.join(path.resolve(entryDir, ".."), "bin.tar.gz"),
-  ];
-  const archive = archiveCandidates.find((candidate) => existsSync(candidate));
-  if (!archive) return null;
-
-  const target = extractPackagedBinArchiveTo(archive, decxPath("bin"), path.join(...parts));
-  return existsSync(target) ? target : null;
-}
-
-// Native tools from bin.tar.gz are extracted into DECX_HOME/bin (next to
-// decx-server.jar). A marker file holding the archive content hash gates
-// re-extraction: on CLI upgrades the hash changes, the archive's previous
-// top-level dirs are removed, and the new archive is extracted — no stale
-// binaries survive from older versions.
-const NATIVE_TOOLS_MARKER = ".native-tools.sha256";
-
-// Prefer bsdtar on Windows (GNU tar from Git Bash misparses drive-letter paths).
-function resolveTarBin(): string {
-  const windowsTar = "C:\\Windows\\System32\\tar.exe";
-  return process.platform === "win32" && existsSync(windowsTar) ? windowsTar : "tar";
-}
-
-/** Top-level directory names inside the archive (the platform dirs). */
-function archiveTopLevelDirs(archive: string, tarBin: string): string[] {
-  const result = spawnSync(tarBin, ["-tf", archive], { encoding: "utf-8" });
-  const names = new Set(
-    (result.stdout ?? "")
-      .split("\n")
-      .map((line) => line.trim().split("/")[0])
-      .filter((name) => name.length > 0 && !name.startsWith(".")),
-  );
-  return [...names];
-}
-
-/**
- * Extract `archive` into `binDir` and return `binDir/relativePath`.
- * Extraction is skipped while the marker matches the archive hash and the
- * target already exists; otherwise the archive's previous top-level dirs are
- * removed first so upgrades never leave stale binaries behind.
- */
-export function extractPackagedBinArchiveTo(archive: string, binDir: string, relativePath: string): string {
-  const archiveKey = archiveHash(archive);
-  const markerPath = path.join(binDir, NATIVE_TOOLS_MARKER);
-  const targetPath = path.join(binDir, relativePath);
-  const markerUpToDate =
-    existsSync(markerPath) && readFileSync(markerPath, "utf-8").trim() === archiveKey;
-
-  if (!markerUpToDate || !existsSync(targetPath)) {
-    mkdirSync(binDir, { recursive: true });
-    const tarBin = resolveTarBin();
-    try {
-      for (const topDir of archiveTopLevelDirs(archive, tarBin)) {
-        rmSync(path.join(binDir, topDir), { recursive: true, force: true });
-      }
-      execFileSync(tarBin, ["-xzf", archive, "-C", binDir], { stdio: "ignore" });
-    } catch {
-      throw new FileError(`Failed to extract packaged binaries from ${archive}`);
-    }
-    writeFileSync(markerPath, archiveKey, "utf-8");
-  }
-  return targetPath;
-}
-
-function archiveHash(archive: string): string {
-  return createHash("sha256").update(readFileSync(archive)).digest("hex").slice(0, 16);
-}
-
-function resolvePackagedErofsExtractor(platformDir: string): string | null {
-  const candidate = packagedBinPath(platformDir, currentArchDir(), "extract.erofs");
-  if (!existsSync(candidate)) return null;
-  try {
-    chmodSync(candidate, 0o755);
-  } catch {
-    // Best effort.
-  }
-  return candidate;
-}
-
 // ── Tool resolution ────────────────────────────────────────────────────────
 
 function resolveDebugfs(wslOk: boolean): FrameworkTool {
@@ -180,16 +72,6 @@ function resolveDebugfs(wslOk: boolean): FrameworkTool {
       "debugfs not found. On Windows, 'decx android framework' runs its Linux-only tools in WSL: " +
         "install WSL and make sure debugfs is available there (e.g. 'sudo apt install e2fsprogs').",
     );
-  }
-
-  const packaged = packagedBinPath("linux", currentArchDir(), "debugfs");
-  if (existsSync(packaged)) {
-    try {
-      chmodSync(packaged, 0o755);
-    } catch {
-      // Best effort.
-    }
-    return { argv: [packaged] };
   }
 
   throw new FileError(
@@ -220,25 +102,14 @@ function resolveErofsExtractor(wslOk: boolean): FrameworkTool {
     if (extract) {
       return { argv: ["wsl.exe", "-e", extract], translatePaths: true };
     }
-    // Fall back to the packaged Linux x86_64 extract.erofs, run through WSL.
-    const packaged = packagedBinPath("linux", "x86_64", "extract.erofs");
-    if (existsSync(packaged)) {
-      return { argv: ["wsl.exe", windowsPathToWsl(packaged)], translatePaths: true };
-    }
     throw new FileError(
       "No EROFS extractor found. On Windows, install erofs-utils in WSL " +
         "(e.g. 'sudo apt install erofs-utils') or run this command on Linux/macOS.",
     );
   }
 
-  const platformDir = process.platform === "darwin" ? "darwin" : "linux";
-  const packaged = resolvePackagedErofsExtractor(platformDir);
-  if (packaged) {
-    return { argv: [packaged] };
-  }
-
   throw new FileError(
-    "No EROFS extractor found. Install fsck.erofs/extract.erofs (erofs-utils) or use the packaged binary.",
+    "No EROFS extractor found. Install fsck.erofs/extract.erofs (erofs-utils).",
   );
 }
 

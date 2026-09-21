@@ -5,11 +5,10 @@
  *
  * 1. tsc — type-check only (no JS, declarations, or source maps)
  * 2. esbuild — bundle CLI and SDK into two partially obfuscated index files
- * 3. Pack native binaries into one compressed archive
  */
 
 import { build } from "esbuild";
-import { rmSync, readdirSync, statSync, existsSync, readFileSync, writeFileSync, mkdirSync } from "fs";
+import { rmSync, existsSync, readFileSync, writeFileSync } from "fs";
 import { join, dirname } from "path";
 import { execSync } from "child_process";
 
@@ -19,7 +18,6 @@ const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 const REPO_ROOT = join(ROOT, "..");
 const DIST = join(ROOT, "dist");
 const SRC = join(ROOT, "src");
-const BIN = join(SRC, "bin");
 const projectVersion = readVersionFile();
 const npmPackageVersion = projectVersion.replace(/^v/, "");
 
@@ -104,42 +102,6 @@ const prodPkg = {
   homepage: pkgJson.homepage,
 };
 writeFileSync(join(DIST, "package.json"), JSON.stringify(prodPkg, null, 2) + "\n");
-
-// ── Step 5: Pack native binaries ──────────────────────────────────────────
-if (existsSync(BIN)) {
-  console.log("▸ Packing native binaries...");
-  mkdirSync(DIST, { recursive: true });
-
-  function dirSize(dir) {
-    let total = 0;
-    for (const entry of readdirSync(dir)) {
-      const full = join(dir, entry);
-      const stat = statSync(full);
-      if (stat.isDirectory()) {
-        total += dirSize(full);
-      } else {
-        total += stat.size;
-      }
-    }
-    return total;
-  }
-
-  const archive = join(DIST, "bin.tar.gz");
-  // On Windows, GNU tar (e.g. Git Bash's) misparses `E:\...` paths as a remote
-  // host. Prefer the system bsdtar shim that understands native paths.
-  const tarBin =
-    process.platform === "win32" && existsSync("C:\\Windows\\System32\\tar.exe")
-      ? "C:\\Windows\\System32\\tar.exe"
-      : "tar";
-  execSync(`${tarBin} -czf ${JSON.stringify(archive)} -C ${JSON.stringify(BIN)} .`, {
-    cwd: ROOT,
-    stdio: "pipe",
-  });
-
-  const totalBefore = dirSize(BIN);
-  const totalAfter = statSync(archive).size;
-  console.log(`▸ Packed binaries: ${(totalBefore / 1024 / 1024).toFixed(1)}MB → ${(totalAfter / 1024 / 1024).toFixed(1)}MB (${Math.round((1 - totalAfter / totalBefore) * 100)}% reduction)`);
-}
 
 // ── Done ───────────────────────────────────────────────────────────────────
 console.log("✓ Build complete");

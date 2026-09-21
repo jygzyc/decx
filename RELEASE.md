@@ -12,7 +12,7 @@
 > Rather than continue patching around it, **no further major version updates will be shipped on this line** — only critical fixes and small maintenance releases.
 > **The next major version of DECX is already in development**, rebuilt on a new analysis stack designed for AI agents from the ground up.
 
-v4.3.0 focuses on the CLI: automatic framework vendor detection, a much smaller installer that no longer packages `debugfs`, and verified jar versions on install/update.
+v4.3.0 focuses on the CLI: automatic framework vendor detection, APEX payloads (ext4 **and** EROFS) now parsed natively in pure TypeScript, and an installer that no longer ships any native binaries.
 
 ## Features
 
@@ -33,13 +33,19 @@ v4.3.0 focuses on the CLI: automatic framework vendor detection, a much smaller 
 
 ## Changes
 
-### Dropped packaged `debugfs`
+### Native EROFS payload reader
 
-- APEX payload extraction now runs entirely through the native pure-TypeScript ext4 reader (superblock → extents → dirents).
+- EROFS `apex_payload.img` images are now parsed natively in pure TypeScript (`decx-cli/src/android/erofs-reader.ts`) — same approach as the ext4 reader: no external tool, no WSL, works on every platform.
+- Covers the layouts real devices produce: compact indexes, LZ4 and DEFLATE clusters (including compressed fragment tails and `ztailpacking` inline tails), PLAIN incompressible files, symlinks, and multi-lcluster extents.
+- Byte-exact against `fsck.erofs --extract` on a matrix of fixtures (LZ4, DEFLATE, ztailpacking, fragments, PLAIN, empty files, symlinks).
+- LZMA/ZSTD and other exotic features fall back to a system-installed `extract.erofs` (PATH or WSL on Windows).
+
+### Dropped all packaged native binaries
+
+- APEX payload extraction now runs entirely through the native pure-TypeScript ext4 and EROFS readers (superblock → extents → dirents; compact indexes, fragments, ztailpacking).
 - Validated on a live Android 16 device: all 33 collected system APEX payloads extracted with zero external tool invocations.
-- The system fallback (`e2fsprogs` on PATH, WSL `debugfs`) is still honored when genuinely needed, with a clear install-hint error otherwise.
-- EROFS extractors stay packaged.
-- Packaged tools shrink 6.0MB → 3.9MB (tarball 3.8MB → 1.7MB).
+- The remaining `extract.erofs` binaries (~3.9MB across four platforms) and the `debugfs` fallback are gone; exotic features resolve tools from PATH/WSL with a clear install-hint error otherwise.
+- No more `bin.tar.gz` packaging, extraction to `DECX_HOME/bin`, or `.native-tools.sha256` marker bookkeeping — installer shrinks by ~1.7MB (tarball).
 
 ### Faster framework collection
 
