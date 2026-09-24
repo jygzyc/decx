@@ -12,42 +12,19 @@ Guidance for DECX skills.
 - Put critical constraints near the top or in a dedicated `Rules` / `Constraints` section.
 - Prefer routing matrices, artifact contracts, command contracts, and banned patterns over broad best-practice prose.
 
-## Cross-Skill Contract
-
-- The finding writeup field contract lives in `decx-vulnhunt` `SKILL.md` (`## Finding Writeup`) and is the single source of truth. `decx-report` and `decx-poc` consume it by reference; do not redefine field names downstream.
-
 ## Reference Architecture
 
-Every skill keeps its knowledge in `references/`; nothing in a skill body may depend
-on the repository layout.
+A skill is self-contained: `SKILL.md` plus, when it carries reference knowledge, a
+`references/` directory; nothing in a skill body may depend on the repository layout.
+The pattern catalog lives in `wiki/` only — no skill mirrors pattern cards.
 
-### Layers
-
-| Layer | Purpose | Load when |
-|---|---|---|
-| `<track>-chains.md` | Routing matrix: composite chains, single-pattern routing | Track chosen, always first |
-| `references/patterns/<track>-<summary>.md` | Pattern cards (runtime tripwire copy; the wiki page is the maintenance record) | Specific signal matched |
-| `<platform>-poc-*.md` (`decx-poc`) | PoC harness set for one target: spec, base contract, one file per surface | After the PoC spec is complete |
-| `risk-rating.md` | Exploitability gate, severity levels, adjustment factors | Before promoting a candidate |
-
-### Reference naming
-
-- A reference that only makes sense for one target carries the target prefix:
-  `android-app-chains.md`, `android-framework-chains.md`, `native-chains.md`,
-  `android-poc-base.md`, `android-poc-activity.md`. A second target adds its own
-  `<track>-*.md` beside them (plus its own section in `index.md`), never a rewrite.
-- A reference that applies to every target stays unprefixed: `risk-rating.md`,
-  `poc-spec.md`, `index.md`, `finding-intake.md`, `report-format.md`.
-- Pattern-card mirrors always live in `references/patterns/<track>-<summary>.md`: the file
-  name equals the card slug, so the track prefix is already in it.
-- A skill mirrors only the cards of the tracks it hunts: `decx-vulnhunt` mirrors
-  `android-app-*`, `android-framework-*` and `native-*` (27 cards).
-
-### Single Source of Truth
-
-- **Chain pivot routing**: `<track>-chains.md` only. Do not duplicate in pattern cards.
-- **Rating authority**: `risk-rating.md` only. Pattern cards convey impact scope in their content; they have no rating sections.
-- **False-positive and sibling-card loading rules**: `decx-vulnhunt` `SKILL.md` only. Do not repeat in pattern files.
+- A reference that belongs to one tool is named after the tool id
+  (`decx-tool/references/droidasc.md`, `afe.md`, `kuna.md`) and carries that tool's
+  whole contract; `SKILL.md` keeps only the routing between tools.
+- A reference that only makes sense for one target carries the target prefix
+  (`android-framework-*.md`); a second target adds its own `<track>-*.md` beside them,
+  never a rewrite.
+- A reference that applies to every target stays unprefixed (`index.md`).
 
 ### Pattern Card Format
 
@@ -85,7 +62,7 @@ without a rewrite.
 - A card must add at least one of: a routing signal, a non-obvious quirk or version default, or a closed-form constraint that prevents false positives. If it only repeats generic Android security knowledge, cut it.
 - Knowledge shared across cards lives in the card it belongs to most; other cards use a single-line `See [[<card>]]` cross-reference.
 - No `## Rating` section — rating authority is `risk-rating.md` only.
-- No `## Trace Commands` section — native tool command lines belong in the parent SKILL.md or the tool's own skill (`decx-droidasc`, `decx-kuna`, `decx-afe`), not in pattern cards.
+- No `## Trace Commands` section — native tool command lines belong in `decx-tool/references/<tool>.md`, not in pattern cards.
 
 ## Knowledge Layers (decx)
 
@@ -108,15 +85,16 @@ the inference agent reads only `SKILL.md` and its `references/`.
   chronological maintainer log and the proposal ledger. Pattern pages and the index are
   the working set; both auxiliary files stay at their seeded state by default — a
   maintenance pass writes patterns and the index only (a log entry needs `log: true`),
-  and the ledger is written only by `decx_propose`. The wiki is never rolled back,
+  and the ledger is written only by `decx_propose` and `decx_gate`. The wiki is never rolled back,
   even when a skill proposal is.
 - `track:` is the catalog's cross-project axis and names the *target*, not the analyzer.
-  The four tracks are `android-app` / `android-framework` (decx-vulnhunt, over
-  DroidASC/AFE), `android-poc` (the Android PoC harness set) and `native` (a native
-  binary, Kuna). DECX's own machinery — the manager, report generation, PoC specification
-  and the analysis process — is never a track: it lives in the skill that owns it.
-  Wiring another analyzer into DECX adds cards under an existing track (or a new
-  `<platform>[-<component>]` track) — never a second catalog.
+  The four tracks are `android-app` / `android-framework` (over DroidASC/AFE),
+  `android-poc` (the Android PoC harness set) and `native` (a native binary, Kuna).
+  DECX's own machinery — the manager and the tools' command contracts — is never a
+  track: it lives in `decx-tool`'s references, and the manager's own usage in
+  `decx/README.md`. Wiring another analyzer into DECX
+  adds cards under an existing track (or a new `<platform>[-<component>]` track) —
+  never a second catalog.
 
 ### Bootstrap is not evidence
 
@@ -129,13 +107,14 @@ not reproduced in this repository, so no page may claim a score it does not have
 no change may be called an improvement without a measured baseline/candidate
 comparison on the same split.
 
-### Skill card vs wiki page: deliberate duplication
+### Wiki pages are the single copy
 
-The wiki page is the maintenance record (evidence, history, proposals); the skill
-card under `skills/<skill>/references/patterns/` is the runtime tripwire the agent
-loads. The duplication is deliberate: removing one is the trigger to regenerate the
-other, and a card edit is mirrored on its page (and vice versa). `PURPOSE.md` next
-to each `SKILL.md` is maintenance metadata for `decx_maintain` / `decx_propose` — never read
+The wiki page (evidence, history, proposals) is the only artifact per pattern: no
+skill mirrors pattern cards. If a skill grows a runtime mirror again
+(`references/patterns/`), the duplication rules return — removing one copy becomes
+the trigger to regenerate the other, and a card edit is mirrored on its page (and
+vice versa). `PURPOSE.md` next to each `SKILL.md` is maintenance metadata for
+`decx_maintain` / `decx_propose` — never read
 during execution. It carries only the motivating pattern slugs (paths are workspace-root
 relative, e.g. `wiki/patterns/<slug>.md`), the skill's must-keeps and a one-line bootstrap
 state; no header boilerplate and no change history.
@@ -149,36 +128,32 @@ facts, steps, next — so the goal survives compaction and drift is visible. The
 ledger is agent state under the pi agent directory, never committed. Execution
 produces traces; the maintainer consolidates them into pattern pages and the index
 (the log and the ledger stay seeded unless an entry is explicitly recorded); the
-proposer turns them into one atomic `SKILL.md` change; the gate accepts or rolls back
-the skill while the wiki persists. Gate before committing a knowledge change:
+proposer applies one existing skill-file candidate with `decx_propose`;
+`decx_gate` accepts only a strictly better measured score on the same validation
+split, otherwise restoring the skill while the wiki persists. Inference, maintenance
+and proposal tool access is enforced by phase; see `.pi/extensions/decx/README.md`. Gate before committing a knowledge change:
 `node .pi/extensions/decx/cli.ts check` (exit 1 on errors; it verifies
 frontmatter, section skeleton, index sync and every markdown/wikilink target).
 
 ## Skill Inventory
 
-One skill per tool and per analysis surface; session procedure and maintenance are tools,
-not skills. The split is deliberate: process skills are target-neutral, analyzer skills are
-per tool, so a new target adds rows instead of rewriting either group. Every skill lives
-in the repository's `skills/` directory, one directory per skill (`skills/<name>/SKILL.md`).
+Two skills. Session procedure and maintenance are tools, not skills, and the
+manager's own usage is `decx/README.md`, not a skill. The skills live in the
+repository's `skills/` directory. `decx-tool` drives the installed tools;
+`antifrida-bypass` owns a process, not a tool — it is tool-agnostic (plain
+`adb`, `frida`, DroidASC, Kuna or `objdump` all serve it) and installs nothing.
 
 | Skill | Track / target | Scope |
 |---|---|---|
-| `decx-init` | any | Initializing DECX: the manager's usage (commands, options, exit codes, environment variables), install/run, DECX_HOME layout, PROVENANCE records, pinned releases, missing runtimes, and the `skills/` + `wiki/` + `raw/` workspace the extension materializes. Never an analysis interface. |
-| `decx-vulnhunt` | `android-app`, `android-framework`, `native` | Vulnerability hunting method over every target: surface collection, target routing, evidence gates, risk rating, finding writeup contract. |
-| `decx-report` | any | Report generation from finalized finding writeups. |
-| `decx-poc` | `android-app`, `android-framework` (harness set) | PoC construction from one finalized finding writeup; a target with no harness reference stops at the PoC spec. |
-| `decx-droidasc` | `android-app`, `android-framework` | DroidASC (upstream ASC): DEX analysis and cross-references on APK/JAR containers — identifiers, output and error contracts, the GUI path. |
-| `decx-afe` | `android-framework` | AFE: framework collection and preprocessing into the packed jar, plus live device reads. Produces files, never analysis. |
-| `decx-kuna` | `native` | Kuna: native binaries and ET_REL objects — functions, decompilation, cross-references, strings, unpacking. |
+| `decx-tool` | `android-app`, `android-framework`, `native` | Every installed tool in one skill: DroidASC (DEX decompiling and cross-references on APK/JAR containers), AFE (framework collection and preprocessing, live device reads) and Kuna (native binaries and ET_REL objects). `SKILL.md` holds the routing gate and the install/launch contract; each tool's commands, identifier, output and error contracts live in `references/<tool>.md`. The Kuna reference is upstream's own skill file, re-copied when the pin moves. |
+| `antifrida-bypass` | `native` (Android) | The locate → trace → bypass loop for native anti-Frida / anti-debug in a shipped or pulled `.so`: detection vectors (`/proc` and maps reads, linker `solist` and `dl_iterate_phdr` module walks, thread-name and port probes, signal self-checks, CRC self-verification), the `.init`-anchored patch window that precedes `.init_array` detection, and the build-your-own `frida-server` ladder. Every hook is preceded by evidence; `.text` patches carry the Rule 4 evidence chain and Rule 5 version-pinning. Tool-agnostic by design: the loop runs on whatever `adb`/`frida`/DroidASC/Kuna the analyst already has, so this skill installs nothing. |
 
 ### Adding a target or analyzer
 
-A new analyzer is one inventory row plus its skill; a new target is a track.
+A new analyzer is one section in `decx-tool` plus its subproject; a new target is a
+track.
 
-1. Add the tool as a subproject `subprojects/decx-<tool>/`: the checkout it installs (`source/` for a vendored tool, the crate itself when DECX owns it), `decx-<tool>.json` (how the manager installs and verifies it) and a `README.md` (install, verify, upstream pin). Then add its skill at `skills/decx-<tool>/{SKILL.md,PURPOSE.md}` (commands, artifact contract, error contract). Never a wrapper around another skill; the tool id is the directory name without the `decx-` prefix.
-2. Add one row to the `decx-vulnhunt` Targets table (`android-app` / `android-framework` / `native` style): track, artifact, tool entry, surface.
-3. Add `wiki/patterns/<track>-<name>.md` pages for the non-obvious behavior using the card skeleton, and mirror them into `skills/decx-vulnhunt/references/patterns/`.
-4. Add `skills/decx-vulnhunt/references/<track>-chains.md` (routing matrix built from the cards that exist — mark it bootstrap while it is thin) and list it under `## References`.
-5. Add the evidence kinds the target needs; the core stays `entrypoint`, `reachability`, `control`, `guard`, `sink`, `impact`.
-6. If the target is reproducible, add `skills/decx-poc/references/<platform>-poc-base.md`, one `<platform>-poc-<surface>.md` per surface, and a section in `decx-poc/references/index.md`.
-7. `python3 skills/check-skills.py` and `node .pi/extensions/decx/cli.ts check` must both pass.
+1. Add the tool as a subproject `subprojects/decx-<tool>/`: the checkout it installs (`source/` for a vendored tool, the crate itself when DECX owns it), `decx-<tool>.json` (how the manager installs and verifies it) and a `README.md` (install, verify, upstream pin). The tool id is the directory name without the `decx-` prefix.
+2. Add the tool to `skills/decx-tool/`: a row in `SKILL.md`'s routing gate plus `references/<tool>.md` carrying the commands, artifact contract, error contract and install. When the tool ships its own agent skill (as Kuna does), that reference is the upstream skill file copied verbatim with only its frontmatter dropped; re-copy it when the pin moves, never edit it, and keep the DECX install contract in `SKILL.md`. A drift check belongs in the tool's workflow (`decx-kuna.yml`).
+3. Add `wiki/patterns/<track>-<name>.md` pages for the non-obvious behavior using the card skeleton, through `decx_maintain`.
+4. `python3 skills/check-skills.py` and `node .pi/extensions/decx/cli.ts check` must both pass.

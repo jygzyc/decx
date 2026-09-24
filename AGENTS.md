@@ -10,13 +10,16 @@ It is not a decompiler, unified analysis CLI, plugin runtime, or analysis server
 - Native binary analysis uses upstream [Kuna](https://github.com/Noelo-Lab/kuna) directly.
 - `subprojects/` holds every subproject: its own `README.md`, the toolkit manifest
   `decx-<id>.json` the manager reads, and for a vendored tool its pinned `source/`
-  checkout. The agent skill that drives it lives in `skills/decx-<id>/`. DECX's own
+  checkout. The agent skill that drives a tool lives in `skills/decx-tool/` — one
+  skill for every tool, each tool's contract in `references/<id>.md`; Kuna's reference
+  is upstream's own skill file copied verbatim (frontmatter dropped) and is re-copied,
+  never edited, when the pin moves. DECX's own
   `decx-afe/` sits beside the vendored upstream checkouts `decx-droidasc/source` and
   `decx-kuna/source`, which are git submodules pinned by `.gitmodules` and the
   superproject gitlinks.
 - Android framework collection and preprocessing lives in `subprojects/decx-afe/`.
-- Agent workflows (the process skills plus one skill per tool) live in `skills/`; read
-  `skills/AGENTS.md` before editing them.
+- The agent skill (one skill for every tool) lives in `skills/`; read
+  `skills/AGENTS.md` before editing it.
 - `decx/` is the toolkit installer and manager: a Node CLI that discovers the tools in
   `subprojects/decx-<id>/decx-<id>.json`, installs, locates and runs them, and reports what is
   installed and what this host supports. Development runs TypeScript directly on
@@ -33,19 +36,21 @@ help and output. A thin executable launcher selecting an installed interpreter o
 resource directory is acceptable; an analysis-command translation layer is not.
 
 AFE is a native Rust program, not a JavaScript extension. Keep Android collection,
-APEX handling, ext4/EROFS parsing and archive processing there. Preserve system-tool
-fallbacks and actionable errors for unsupported image features. AFE produces files;
+APEX handling, ext4/EROFS parsing and archive processing there. Payload extraction is
+native only: an unsupported ext4/EROFS feature fails the input with an actionable error
+instead of falling back to external tools. AFE produces files;
 it does not start an analyzer or own analysis sessions.
 
 The manager must not silently modify shell startup files, overwrite unrelated tools, or
 install agent plugins. Use explicit prefixes, staged installs and clear requirements, and
 never run an install against the user's real home directory during tests. Upstream source
 builds execute third-party code: record what was fetched, built and verified in
-`share/<id>/PROVENANCE`. Installs follow each tool's manifest — kuna a pinned release
-archive plus its compiled SLEIGH specs, droidasc a private venv over the pinned submodule,
+`share/<id>/PROVENANCE`. Installs follow each tool's manifest — kuna this repository's
+`kuna-v*` release (a zip mirror of upstream's, checksummed) plus its compiled SLEIGH specs,
+droidasc a private venv over the pinned submodule,
 afe a prebuilt `tools-v*` archive when one carries an AFE build for the platform and
-otherwise a cargo build. The rules behind them (the `env` launcher contract, `release.version`
-pins, `--version <tag>`, when `--from-source` is offered) are documented in `decx/README.md`.
+otherwise a cargo build. The rules behind them (the `env` launcher contract, `release.tagPrefix`
+resolution, `--version <tag>`, when `--from-source` is offered) are documented in `decx/README.md`.
 CI builds and packages the pinned upstream checkouts without modifying their source.
 Installation prefers upstream distribution; repository release assets are fallback sources.
 Integrity failures must stop installation, not silently switch sources.
@@ -60,13 +65,13 @@ assumptions in shipped code).
 The manager in `decx/` manages tools, not runtimes: it probes for Node, Python, Rust and
 Git and reports the exact shortfall instead of installing them (agents run on Node
 already; `mise`/`nvm`/`rustup` remain the user's choice). It also does not translate
-analysis commands — `decx run` reaches a tool's own help and output unchanged. Keep it
+analysis commands — `decx -m <tool>` reaches a tool's own help and output unchanged. Keep it
 manifest-driven: a new tool is a new `subprojects/decx-<id>/decx-<id>.json` (with its own
 `README.md` and `skills/<id>/`), never new
 special-cased code. Installs keep every executable in `$DECX_HOME/bin` and each payload
 in `$DECX_HOME/share/<id>/PROVENANCE`, and link the executables into `~/.local/bin`
 (`--links`, `$DECX_LINKS_DIR`; `.cmd` shims on Windows). Keep that layout and those
-PROVENANCE keys stable so `decx run` and any reader of `share/<id>/PROVENANCE` keep
+PROVENANCE keys stable so `decx -m <tool>` and any reader of `share/<id>/PROVENANCE` keep
 working on existing installs; the legacy `$DECX_HOME/tools/<id>` shape is not detected or
 migrated.
 
@@ -104,37 +109,43 @@ ledger lives under the pi agent directory, outside the three knowledge layers.
   migrations may edit files directly and must regenerate/check the index. The checkpoint hook is covered by the same tests: it counts rounds and turns,
   keeps the last ten checkpoints per session and repeats the request until the pending
   round is covered.
-- Analysis procedure: `decx-vulnhunt` owns the hunting method under the anti-drift
-  checkpoint loop; the other skills own per-tool syntax, reports and PoCs. Session
-  bookkeeping and the trace → pattern → proposal loop are `decx_*` tools, not skills.
+- Analysis procedure: `decx-tool` owns per-tool syntax and the routing between tools.
+  Session bookkeeping and the trace → pattern → proposal loop are `decx_*` tools, not
+  skills.
 
 Agent plugins and extension manifests (Codex, Claude) are out of scope: the integration
 contract is `skills/` plus the one pi extension that owns the Decx layer
 (`.pi/extensions/decx/`); nothing else may register into an agent harness. GitHub runs
 workflows only from the repository root, so each subproject and area has its own file
 there, scoped to its own `paths:` — keep them in sync when the crate, manifests, skills,
-wiki or managed paths change: `decx-cli.yml` (`cd decx && npm ci && npm run typecheck &&
+wiki or managed paths change. Each file carries both that area's checks and its release
+publishing: branch pushes, pull requests and schedules run the checks, while a matching
+tag push (or a `workflow_dispatch` with the `tag` input) runs the release jobs instead,
+each refusing to build when its tag does not match the pinned version. `decx-cli.yml`
+(`cd decx && npm ci && npm run typecheck &&
 npm test`, plus the JSON-envelope and usage-error smoke runs, on Linux, macOS and Windows
-across Node 22.18 and 24), `decx-afe.yml` (crate fmt/clippy on Linux; test, release build and
+across Node 22.18 and 24; tag `decx-v*`, checked against `decx/package.json`, builds
+`dist/`, packs `decx-<version>.tar.gz` plus `decx-SHA256SUMS.txt` and smokes the packed
+CLI on all three OSes before publishing), `decx-afe.yml` (crate fmt/clippy on Linux; test,
+release build and
 a `--help` smoke on Linux, macOS and Windows;
-Windows arm64 cross check), `decx-droidasc.yml` (the manager's private-venv install over the
-pinned checkout, then upstream `main.py --help`) and `decx-kuna.yml` (pin and manifest
-contract on every change; release install on Linux, macOS and Windows weekly and on demand).
+Windows arm64 cross check; tag `tools-v*`, checked against
+`subprojects/decx-afe/Cargo.toml`, builds the six `afe-<version>-<platform>` archives plus
+`afe-SHA256SUMS.txt`), `decx-droidasc.yml` (the manager's private-venv install over the
+pinned checkout, then upstream `main.py --help`; tag `droidasc-v*` packages the pinned
+source tree as `droidasc-<version>-source.tar.gz` plus `droidasc-SHA256SUMS.txt`) and
+`decx-kuna.yml` (pin, manifest and
+upstream-skill-copy contract on every change; release install on Linux, macOS and Windows
+weekly and on demand; every 12 hours a scheduled job compares the pinned tag with upstream's
+latest release and pushes nothing when there is nothing newer — a new release moves the
+submodule gitlink, re-copies the skill reference and pushes the commit together with its
+`kuna-v<version>` tag; that tag, checked against the pinned gitlink's tag, mirrors
+upstream's own release assets repacked uniformly as zip, never built locally).
 The manager and crate jobs are offline — the manager's install tests use fixture
 archives, fake toolchains and temporary prefixes — while the two tool workflows
 deliberately exercise the real install paths (`pip install` into the tool's venv, the Kuna
-release and specs archives); the PR workflows never compile the vendored upstream checkouts.
-Publishing has one workflow per released piece, each refusing to build when its tag does not
-match the pinned version: `release-cli.yml` (tag `decx-v*`, checked against
-`decx/package.json`; builds `dist/`, packs `decx-<version>.tar.gz` plus `decx-SHA256SUMS.txt`
-and smokes the packed CLI on all three OSes before publishing), `release-afe.yml` (tag
-`tools-v*`, checked against `subprojects/decx-afe/Cargo.toml`; the six
-`afe-<version>-<platform>` archives plus `afe-SHA256SUMS.txt`), `release-kuna.yml` (tag
-`kuna-v*`, checked against the pinned gitlink's tag; mirrors upstream's own release assets
-repacked uniformly as zip, falling back to building the pinned checkout for upstream's five
-targets with `make specs` only when the upstream release cannot be fetched) and `release-droidasc.yml` (tag `droidasc-v*`; packages the pinned
-source tree as `droidasc-<version>-source.tar.gz` plus `droidasc-SHA256SUMS.txt`). The kuna
-and droidasc assets are the repository fallback the manifests' `fallbackRelease` blocks point
-at; upstream releases stay the primary source.
+release and specs archives); no workflow compiles the vendored upstream checkouts.
+The kuna manifest installs from these repository releases directly — manifest 2 resolves
+the newest `kuna-v*` tag, and the mirror adds the checksum file upstream does not publish.
 Keep README.md and README_zh.md aligned with the actual standalone
 tools; do not document removed `decx` commands as current functionality.

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import { afterEach, before, describe, it } from 'node:test';
 import {
   applyMaintain,
@@ -310,6 +310,18 @@ describe('lint and status', () => {
     assert.match(findings.map((finding) => finding.message).join('\n'), /row for alpha no longer matches its page/);
   });
 
+  it('flags duplicate index rows and dead links inside the index', async () => {
+    const workspace = await fixture();
+    await applyMaintain(workspace, { summary: 'seed', resync_index: true }, fs);
+    const path = join(workspace.wiki, 'index.md');
+    const index = await readFile(path, 'utf8');
+    await writeFile(path, `${index}\n- \`alpha\` — duplicated row\n\n[ghost](./patterns/ghost.md)\n`);
+    const findings = await lintWorkspace(workspace, fs);
+    const messages = findings.map((finding) => finding.message).join('\n');
+    assert.match(messages, /row for alpha is listed more than once/);
+    assert.match(messages, /link target does not exist: \.\/patterns\/ghost\.md/);
+  });
+
   it('flags a ledger whose table no longer matches the schema', async () => {
     const workspace = await fixture();
     await recordProposal(workspace, { target: 'skills/demo/SKILL.md', change: 'add a gate' }, fs);
@@ -448,5 +460,193 @@ describe('session checkpoints', () => {
     assert.match(block, /# checkpoint #1/);
     assert.match(block, /- facts: fact for goal one/);
     assert.match(block, /- next: next after goal one/);
+  });
+});
+
+// Behavioral regressions for the knowledge-layer API and evolution loop.
+import { symlink } from 'node:fs/promises';
+import { toolBlock } from './policy.ts';
+import { candidatePath, gateCandidate, proposeCandidate } from './evolution.ts';
+
+describe('knowledge access boundaries', () => {
+  it('refuses arbitrary workspace files and update path traversal', async () => {
+    const ws = await fixture();
+    await writeFile(join(ws.root, '.env'), 'SECRET');
+    await assert.rejects(readPage(ws, '.env', fs), throwsCode('BAD_PATH'));
+    await assert.rejects(applyMaintain(ws, { update_patterns: [{ name: '../../raw/escape', edits: [] }], resync_index: true }, fs), throwsCode('BAD_PATTERN_NAME'));
+  });
+
+  it('rejects links out of managed layers', async () => {
+    const ws = await fixture();
+    await symlink(join(ws.root, 'skills/demo/SKILL.md'), join(ws.wiki, 'patterns/linked.md'));
+    await assert.rejects(readPage(ws, 'patterns/linked.md', fs), throwsCode('UNSAFE_PATH'));
+  });
+
+  it('writes simultaneous traces without replacing evidence or seeding the wiki', async () => {
+    const ws = await fixture();
+    const traces = await Promise.all(Array.from({ length: 8 }, (_, n) => writeTrace(ws, { summary: 'same', body: `evidence ${n}` }, fs, new Date('2026-09-21T00:00:00Z'))));
+    assert.equal(new Set(traces.map(t => t.id)).size, 8);
+    for (const [n, trace] of traces.entries()) {
+      const text = await fs.readFile(join(ws.root, trace.path));
+      assert.ok(text.includes(`id: ${trace.id}\n`));
+      assert.ok(text.includes(`evidence ${n}`));
+    }
+    assert.equal(await fs.exists(join(ws.wiki, 'skill-impact.md')), false);
+  });
+
+  it('leaves all pages unchanged when a later patch or index fails', async () => {
+    const ws = await fixture();
+    await ensureWorkspace(ws, fs);
+    const before = await fs.readFile(join(ws.wiki, 'patterns/alpha.md'));
+    await assert.rejects(applyMaintain(ws, {
+      create_patterns: [{ name: 'android-app-new', content: page('new', 'android-app', 'New trigger.') }],
+      update_patterns: [{ name: 'alpha', edits: [{ op: 'replace', target: 'missing substring', content: 'bad' }] }], resync_index: true,
+    }, fs));
+    assert.equal(await fs.exists(join(ws.wiki, 'patterns/android-app-new.md')), false);
+    assert.equal(await fs.readFile(join(ws.wiki, 'patterns/alpha.md')), before);
+    await assert.rejects(applyMaintain(ws, { update_index: '- `alpha` — a\n- `alpha` — a\n' }, fs), throwsCode('INDEX_MISMATCH'));
+  });
+
+  it('enforces phase tools and path boundaries, including aliases and recursive reads', async () => {
+    const ws = await fixture();
+    const blocked = (phase: 'inference' | 'maintain' | 'propose', name: string, input: Record<string, unknown>) => toolBlock(phase, name, input, ws.root, [ws]);
+    assert.ok(await blocked('inference', 'decx_read', { path: 'index.md' }));
+    assert.ok(await blocked('inference', 'read', { path: 'wiki/index.md' }));
+    assert.ok(await blocked('inference', 'grep', { path: '.' }));
+    assert.ok(await blocked('inference', 'grep', { path: 'skills/demo' }));
+    assert.ok(await blocked('inference', 'write', { path: 'raw/traces/new.md' }));
+    assert.ok(await blocked('inference', 'write', { path: 'skills/demo/SKILL.md' }));
+    assert.equal(await blocked('inference', 'read', { path: 'skills/demo/SKILL.md' }), undefined);
+    assert.equal(await blocked('inference', 'decx_trace', {}), undefined);
+    assert.ok(await blocked('maintain', 'bash', { command: 'echo hi' }));
+    assert.ok(await blocked('maintain', 'write', { path: 'wiki/index.md' }));
+    assert.equal(await blocked('maintain', 'decx_maintain', {}), undefined);
+    assert.ok(await blocked('propose', 'decx_maintain', {}));
+    await symlink(ws.wiki, join(ws.root, 'alias'), 'junction');
+    assert.ok(await blocked('inference', 'read', { path: 'alias/index.md' }));
+  });
+});
+
+describe('candidate validation and rollback', () => {
+  async function candidate() {
+    const ws = await fixture();
+    const baseline = await writeTrace(ws, { summary: 'baseline', body: 'validation tasks a,b: score 0.5' }, fs);
+    const state = join(ws.root, '.agent-state');
+    const target = 'skills/demo/SKILL.md';
+    const before = await fs.readFile(join(ws.root, target));
+    const input = { target, content: `${before}\nCandidate instruction.\n`, change: 'test candidate', pattern: 'wiki/patterns/alpha.md', split: 'validation-v1:a,b', baseline: 0.5, baselineTrace: baseline.path };
+    const proposal = await proposeCandidate(ws, input, fs, state);
+    return { ws, state, before, input, proposal };
+  }
+
+  it('requires same-split evidence and accepts strict improvement', async () => {
+    const { ws, state, input, proposal } = await candidate();
+    await assert.rejects(proposeCandidate(ws, input, fs, state), throwsCode('PENDING_CANDIDATE'));
+    const trace = await writeTrace(ws, { summary: 'candidate', body: 'same tasks a,b: score 1' }, fs);
+    await assert.rejects(gateCandidate(ws, { split: 'different', candidate: 1, candidateTrace: trace.path, outcome: 'test' }, fs, state), throwsCode('SPLIT_MISMATCH'));
+    await assert.rejects(gateCandidate(ws, { split: input.split, candidate: 1, candidateTrace: input.baselineTrace, outcome: 'test' }, fs, state), throwsCode('BAD_EVIDENCE'));
+    const result = await gateCandidate(ws, { split: input.split, candidate: 1, candidateTrace: trace.path, outcome: 'measured' }, fs, state);
+    assert.equal(result.status, 'accepted');
+    assert.equal(await fs.readFile(join(ws.root, input.target)), input.content);
+    assert.ok(await fs.exists(`${candidatePath(ws, state)}.${proposal.id}.json`));
+    await assert.rejects(gateCandidate(ws, { reject: true, outcome: 'again' }, fs, state), throwsCode('NO_CANDIDATE'));
+  });
+
+  it('rolls back ties and keeps evidence and the wiki', async () => {
+    const { ws, state, before, input } = await candidate();
+    const trace = await writeTrace(ws, { summary: 'tie', body: 'candidate evaluation score 0.5' }, fs);
+    const pattern = await fs.readFile(join(ws.wiki, 'patterns/alpha.md'));
+    assert.equal((await gateCandidate(ws, { split: input.split, candidate: 0.5, candidateTrace: trace.path, outcome: 'tie' }, fs, state)).status, 'rejected');
+    assert.equal(await fs.readFile(join(ws.root, input.target)), before);
+    assert.equal(await fs.readFile(join(ws.wiki, 'patterns/alpha.md')), pattern);
+    assert.ok(await fs.exists(join(ws.root, trace.path)));
+    assert.match(await fs.readFile(join(ws.wiki, 'skill-impact.md')), /rejected/);
+  });
+
+  it('supports unmeasured rejection but refuses to overwrite external edits', async () => {
+    const { ws, state, before, input } = await candidate();
+    await fs.writeFile(join(ws.root, input.target), 'external edit');
+    await assert.rejects(gateCandidate(ws, { reject: true, outcome: 'cancel' }, fs, state), throwsCode('CANDIDATE_CONFLICT'));
+    await fs.writeFile(join(ws.root, input.target), input.content);
+    assert.equal((await gateCandidate(ws, { reject: true, outcome: 'cancel' }, fs, state)).status, 'rejected');
+    assert.equal(await fs.readFile(join(ws.root, input.target)), before);
+  });
+
+  it('rejects a tampered state file before it can write outside the workspace', async () => {
+    const { ws, state } = await candidate();
+    const path = candidatePath(ws, state);
+    const pending = JSON.parse(await fs.readFile(path)) as Record<string, unknown>;
+    const escaped = join(ws.root, '..', 'escaped.md');
+    await rm(escaped, { force: true });
+    await fs.writeFile(path, JSON.stringify({ ...pending, target: '../escaped.md' }));
+    await assert.rejects(gateCandidate(ws, { reject: true, outcome: 'tampered' }, fs, state), throwsCode('BAD_CANDIDATE'));
+    assert.equal(await fs.exists(escaped), false);
+    await fs.writeFile(path, 'not json');
+    await assert.rejects(gateCandidate(ws, { reject: true, outcome: 'broken' }, fs, state), throwsCode('BAD_STATE'));
+  });
+});
+
+import { withWorkspaceLock } from './node-fs.ts';
+describe('write ownership and recovery', () => {
+  it('never permits a raw overwrite through the filesystem adapter', async () => {
+    const ws = await fixture();
+    const trace = await writeTrace(ws, { summary: 'original', body: 'evidence' }, fs);
+    await assert.rejects(fs.writeFile(join(ws.root, trace.path), 'replacement'), throwsCode('IMMUTABLE_RAW'));
+  });
+
+  it('rejects overlapping workspace writers and releases locks after failures', async () => {
+    const ws = await fixture();
+    await withWorkspaceLock(ws.root, async () => {
+      await assert.rejects(withWorkspaceLock(ws.root, async () => {}), throwsCode('WORKSPACE_BUSY'));
+    });
+    await assert.rejects(withWorkspaceLock(ws.root, async () => { throw new Error('failed operation'); }), /failed operation/);
+    await withWorkspaceLock(ws.root, async () => {});
+  });
+
+  it('finishes a durable gate decision after interruption without changing its outcome', async () => {
+    const ws = await fixture();
+    const baseline = await writeTrace(ws, { summary: 'baseline', body: 'baseline score 0.5' }, fs);
+    const measured = await writeTrace(ws, { summary: 'validation', body: 'candidate score 1' }, fs);
+    const state = join(ws.root, '.agent-state');
+    const target = 'skills/demo/SKILL.md';
+    const content = '# accepted candidate\n';
+    await proposeCandidate(ws, { target, content, change: 'candidate', pattern: 'wiki/patterns/alpha.md', split: 'v1', baseline: 0.5, baselineTrace: baseline.path }, fs, state);
+    const interrupted = { ...fs, async writeFile(path: string, text: string) {
+      if (resolve(path) === resolve(ws.wiki, 'skill-impact.md')) throw new Error('simulated disk failure');
+      return fs.writeFile(path, text);
+    } };
+    await assert.rejects(gateCandidate(ws, { split: 'v1', candidate: 1, candidateTrace: measured.path, outcome: 'measured' }, interrupted, state), /simulated disk failure/);
+    assert.equal((await gateCandidate(ws, { reject: true, outcome: 'retry' }, fs, state)).status, 'accepted');
+    assert.equal(await fs.readFile(join(ws.root, target)), content);
+  });
+});
+
+import { wikiRefreshTask } from './wiki-command.ts';
+describe('one-command wiki refresh', () => {
+  it('discovers disk evidence and builds a complete maintenance-only task without writes', async () => {
+    const ws = await fixture();
+    const trace = await writeTrace(ws, { summary: 'evidence', body: 'UNTRUSTED TRACE BODY' }, fs);
+    const text = await wikiRefreshTask([ws], '', fs);
+    assert.ok(text.includes(trace.path));
+    assert.ok(text.includes('patterns/alpha.md'));
+    assert.ok(text.includes('decx_check'));
+    assert.ok(text.includes('decx_maintain'));
+    assert.ok(text.includes('resync_index: true'));
+    assert.ok(text.includes('do not start skill proposals or evaluations'));
+    assert.ok(!text.includes('UNTRUSTED TRACE BODY'));
+    assert.equal(await fs.exists(join(ws.wiki, 'index.md')), false);
+  });
+
+  it('supports workspace selection and explicitly handles no evidence', async () => {
+    const first = await fixture();
+    const second = { ...await fixture(), name: 'second' };
+    const text = await wikiRefreshTask([first, second], 'second', fs);
+    assert.ok(text.includes('"workspace": "second"'));
+    assert.ok(!text.includes('"workspace": "demo"'));
+    assert.ok(text.includes('no traces or no new findings'));
+    const all = await wikiRefreshTask([first, second], '', fs);
+    assert.ok(all.includes('"workspace": "second"') && all.includes('"workspace": "demo"'));
+    await assert.rejects(wikiRefreshTask([], '', fs), /No Decx workspace found/);
+    await assert.rejects(wikiRefreshTask([first], 'missing', fs));
   });
 });

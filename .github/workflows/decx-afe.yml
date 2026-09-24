@@ -4,21 +4,41 @@ name: AFE
 # ext4/EROFS parsing and archive packing that the framework skills drive -- and
 # the only Rust in this repository. `subprojects/decx-droidasc/source` and
 # `subprojects/decx-kuna/source` are vendored upstream checkouts with CI of their
-# own; the vendored trees are only compiled by the release workflows, never here.
+# own; the vendored trees are only compiled by the release jobs, never here.
+#
+# The same workflow publishes the prebuilt release assets `decx install afe`
+# prefers (it only falls back to `cargo build` when no asset matches the
+# platform, so these jobs are what makes a toolchain-free install possible): a
+# `tools-v*` tag push (or a dispatch with the `tag` input set) runs the
+# validate/build/publish jobs instead of the checks. The names are part of that
+# contract: the manifest (subprojects/decx-afe/decx-afe.json) looks for
+# `afe-{version}-<platform>.tar.gz|zip` plus `afe-SHA256SUMS.txt` under a
+# `tools-v*` tag, where `{version}` is the tag without its prefix. Rename an
+# asset here and installs silently degrade to a local Rust build (or fail on a
+# machine without Rust), which is why the tag and the crate version have to
+# agree before anything is built. `paths` filters tag pushes as well -- the tag
+# commit is diffed against its parent -- so tag the version-bump commit, or
+# dispatch with `tag` manually.
 on:
   push:
     branches: ['**']
+    tags: ['tools-v*']
     paths: ['subprojects/decx-afe/**', '.github/workflows/decx-afe.yml']
   pull_request:
     paths: ['subprojects/decx-afe/**', '.github/workflows/decx-afe.yml']
   workflow_dispatch:
+    inputs:
+      tag:
+        description: Publish a release for this tag (e.g. tools-v0.1.0); leave empty to run the checks only
+        required: false
 
 permissions:
   contents: read
 
 concurrency:
   group: afe-${{ github.ref }}
-  cancel-in-progress: true
+  # Never cancel a running release publish; branch checks are superseded freely.
+  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
 
 env:
   CARGO_TERM_COLOR: always
@@ -26,6 +46,9 @@ env:
 jobs:
   hygiene:
     name: Format and lints
+    # Checks run on branch pushes, pull requests and check-only dispatches;
+    # a release event (tag push, or dispatch with `tag`) skips them.
+    if: ${{ !(github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')) && (github.event_name != 'workflow_dispatch' || !inputs.tag) }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
     defaults:
@@ -51,6 +74,7 @@ jobs:
 
   test:
     name: Build and test (${{ matrix.os }})
+    if: ${{ !(github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')) && (github.event_name != 'workflow_dispatch' || !inputs.tag) }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 45
     strategy:
@@ -82,8 +106,9 @@ jobs:
       - name: Smoke the release binary
         run: cargo run --release -- --help
 
-  windows-arm64:
+  win-arm64:
     name: Windows arm64 cross check
+    if: ${{ !(github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')) && (github.event_name != 'workflow_dispatch' || !inputs.tag) }}
     runs-on: windows-latest
     timeout-minutes: 30
     defaults:
@@ -101,7 +126,158 @@ jobs:
         with:
           workspaces: subprojects/decx-afe
 
-      # `decx install afe` ships a native windows-11-arm build from release-afe;
-      # keep the cheap type-check here so MSVC-specific breakage surfaces on
-      # every change instead of at release time.
+      # `decx install afe` ships a native windows-11-arm build from the release
+      # jobs below; keep the cheap type-check here so MSVC-specific breakage
+      # surfaces on every change instead of at release time.
       - run: cargo check --target aarch64-pc-windows-msvc
+
+  validate:
+    name: Validate the tag
+    if: ${{ (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')) || (github.event_name == 'workflow_dispatch' && inputs.tag != '') }}
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.tag.outputs.tag }}
+      version: ${{ steps.tag.outputs.version }}
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - id: tag
+        run: |
+          set -eu
+          tag="${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}"
+          case "$tag" in
+            tools-v*) version="${tag#tools-v}" ;;
+            *) echo "::error::tag '$tag' must look like tools-v<version>"; exit 1 ;;
+          esac
+          # No empty or v-prefixed version: the asset names embed it verbatim.
+          case "$version" in
+            ''|v*|*[!0-9.]*)
+              echo "::error::tag version '$version' must be numeric like 0.1.0"
+              exit 1 ;;
+          esac
+          crate="$(sed -n 's/^version = "\(.*\)"/\1/p' subprojects/decx-afe/Cargo.toml | head -1)"
+          if [ "$crate" != "$version" ]; then
+            echo "::error::tag version '$version' does not match the afe crate version '$crate'"
+            exit 1
+          fi
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+  build:
+    name: ${{ matrix.platform }}
+    if: ${{ (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')) || (github.event_name == 'workflow_dispatch' && inputs.tag != '') }}
+    needs: validate
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Every platform the afe manifest declares. macOS builds both slices
+          # on the arm64 image instead of trusting a second runner label, and
+          # Windows on ARM builds natively on windows-11-arm.
+          - platform: linux-amd64
+            os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            archive: tar.gz
+          - platform: linux-arm64
+            os: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-gnu
+            archive: tar.gz
+          - platform: darwin-arm64
+            os: macos-latest
+            target: aarch64-apple-darwin
+            archive: tar.gz
+          - platform: darwin-amd64
+            os: macos-latest
+            target: x86_64-apple-darwin
+            archive: tar.gz
+          - platform: win-amd64
+            os: windows-latest
+            target: x86_64-pc-windows-msvc
+            archive: zip
+          - platform: win-arm64
+            os: windows-11-arm
+            target: aarch64-pc-windows-msvc
+            archive: zip
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: subprojects/decx-afe
+          key: ${{ matrix.target }}
+      - name: Build ${{ matrix.target }}
+        run: cargo build --release --locked --target ${{ matrix.target }} --manifest-path subprojects/decx-afe/Cargo.toml
+      # Cross-compiled slices (darwin-amd64 on the arm64 runner) cannot execute;
+      # only smoke the binary the runner can natively run.
+      - name: Smoke the release binary
+        if: matrix.platform != 'darwin-amd64'
+        shell: bash
+        run: |
+          ext=""
+          if [ "${{ runner.os }}" = "Windows" ]; then ext=".exe"; fi
+          "subprojects/decx-afe/target/${{ matrix.target }}/release/afe$ext" --version
+      - name: Package (Unix)
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          set -eu
+          name="afe-${{ needs.validate.outputs.version }}-${{ matrix.platform }}"
+          mkdir -p dist
+          cp "subprojects/decx-afe/target/${{ matrix.target }}/release/afe" dist/afe
+          tar -czf "$name.tar.gz" -C dist afe
+          ls -l "$name.tar.gz"
+      - name: Package (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $name = "afe-${{ needs.validate.outputs.version }}-${{ matrix.platform }}"
+          New-Item -ItemType Directory -Force dist | Out-Null
+          Copy-Item "subprojects/decx-afe/target/${{ matrix.target }}/release/afe.exe" dist/afe.exe
+          Compress-Archive -Path dist/afe.exe -DestinationPath "$name.zip" -Force
+          Get-Item "$name.zip" | Format-List Name, Length
+      - uses: actions/upload-artifact@v7
+        with:
+          name: afe-${{ matrix.platform }}
+          path: afe-${{ needs.validate.outputs.version }}-${{ matrix.platform }}.*
+          if-no-files-found: error
+
+  publish:
+    name: Publish ${{ needs.validate.outputs.tag }}
+    if: ${{ (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')) || (github.event_name == 'workflow_dispatch' && inputs.tag != '') }}
+    needs: [validate, build]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Verify the asset set and write checksums
+        working-directory: dist
+        run: |
+          set -eu
+          version="${{ needs.validate.outputs.version }}"
+          for platform in linux-amd64 linux-arm64 darwin-amd64 darwin-arm64 win-amd64 win-arm64; do
+            ls "afe-$version-$platform".* > /dev/null
+          done
+          : > afe-SHA256SUMS.txt
+          for asset in afe-*.tar.gz afe-*.zip; do
+            sha256sum "$asset" >> afe-SHA256SUMS.txt
+          done
+          cat afe-SHA256SUMS.txt
+      - name: Publish the release
+        working-directory: dist
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ needs.validate.outputs.tag }}
+        run: |
+          set -eu
+          if gh release view "$TAG" > /dev/null 2>&1; then
+            gh release upload "$TAG" --clobber ./*
+          else
+            gh release create "$TAG" --title "$TAG" --notes "AFE ${{ needs.validate.outputs.version }}: Android framework extraction binaries for the six platforms the afe manifest declares." ./*
+          fi

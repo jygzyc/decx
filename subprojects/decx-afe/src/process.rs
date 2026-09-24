@@ -1,7 +1,6 @@
 //! Shared child-process helper: spawn with piped stdio and a wall-clock
-//! timeout. Adb invocations and the external framework tools (debugfs,
-//! fsck.erofs, extract.erofs) both need this; the TypeScript code used
-//! `spawnSync` with a `timeout` option for the same effect.
+//! timeout. Adb invocations need this; the TypeScript code used `spawnSync`
+//! with a `timeout` option for the same effect.
 
 use std::io::Write;
 use std::process::{Child, Command, Stdio};
@@ -20,6 +19,11 @@ pub struct ProcessOutput {
     /// Set when the timeout elapsed and the process was killed.
     pub timed_out: bool,
 }
+
+/// How long to wait for the readers after the child exited: long enough for
+/// any buffered tail, short enough that a leaked grandchild cannot stall the
+/// caller.
+const TAIL_WAIT: Duration = Duration::from_secs(2);
 
 /// Spawn `command` with piped stdio, drain both pipes on helper threads, and
 /// kill the process when `timeout` elapses. Spawn failures are reported in
@@ -59,10 +63,19 @@ pub fn spawn_capture(
         }
     }
 
+    // The readers run on detached threads and hand their buffers over a
+    // channel: joining them would block forever when a grandchild keeps the
+    // pipe open (`adb shell cmd &`), which made the timeout meaningless.
     let mut stdout_pipe = child.stdout.take();
     let mut stderr_pipe = child.stderr.take();
-    let stdout_reader = std::thread::spawn(move || read_all(&mut stdout_pipe));
-    let stderr_reader = std::thread::spawn(move || read_all(&mut stderr_pipe));
+    let (stdout_tx, stdout_rx) = std::sync::mpsc::channel::<Vec<u8>>();
+    let (stderr_tx, stderr_rx) = std::sync::mpsc::channel::<Vec<u8>>();
+    std::thread::spawn(move || {
+        let _ = stdout_tx.send(read_all(&mut stdout_pipe));
+    });
+    std::thread::spawn(move || {
+        let _ = stderr_tx.send(read_all(&mut stderr_pipe));
+    });
 
     let deadline = Instant::now() + timeout;
     let mut timed_out = false;
@@ -82,8 +95,8 @@ pub fn spawn_capture(
         }
     };
 
-    let stdout = stdout_reader.join().unwrap_or_default();
-    let stderr = stderr_reader.join().unwrap_or_default();
+    let stdout = stdout_rx.recv_timeout(TAIL_WAIT).unwrap_or_default();
+    let stderr = stderr_rx.recv_timeout(TAIL_WAIT).unwrap_or_default();
     ProcessOutput {
         stdout: String::from_utf8_lossy(&stdout).to_string(),
         stderr: String::from_utf8_lossy(&stderr).to_string(),
@@ -156,5 +169,24 @@ mod tests {
         assert!(result.timed_out);
         assert!(result.status.is_none());
         assert!(started.elapsed() < Duration::from_secs(10));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn capture_returns_when_a_grandchild_holds_the_pipe() {
+        // The shell exits immediately but leaves a background child holding
+        // stdout; the capture must not wait for it.
+        let started = Instant::now();
+        let result = spawn_capture(
+            shell_command("sleep 30 & true"),
+            Duration::from_millis(500),
+            None,
+        );
+        assert!(!result.timed_out);
+        assert_eq!(result.status, Some(0));
+        assert!(
+            started.elapsed() < Duration::from_secs(10),
+            "capture waited for the grandchild"
+        );
     }
 }

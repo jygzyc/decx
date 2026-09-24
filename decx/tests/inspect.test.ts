@@ -18,7 +18,14 @@ function tempDir(): string {
 }
 
 function demoManifest(): ToolManifest {
-  return { manifest: 1, id: 'demo', kind: 'binary', summary: 'demo tool', bins: ['demo'] };
+  return {
+    manifest: 2,
+    id: 'demo',
+    kind: 'binary',
+    summary: 'demo tool',
+    bins: ['demo'],
+    release: { repository: 'acme/demo', tagPrefix: 'v', checksums: 'SHA256SUMS', assets: { 'linux-amd64': 'demo-{version}.tgz' } },
+  };
 }
 
 test('parseProvenance reads pairs and folds indented continuations', () => {

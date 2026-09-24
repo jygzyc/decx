@@ -247,3 +247,35 @@ fn writes_and_reads_archives_on_disk() {
 
     std::fs::remove_dir_all(&dir).ok();
 }
+
+#[test]
+fn create_zip_archive_deflates_files_and_stores_directories() {
+    let dir = temp_dir("methods");
+    std::fs::create_dir_all(dir.join("META-INF")).unwrap();
+    std::fs::write(dir.join("META-INF/MANIFEST.MF"), b"Manifest-Version: 1.0\n").unwrap();
+    std::fs::write(dir.join("classes.dex"), dynamic_plaintext()).unwrap();
+    let archive_path = dir.join("methods.jar").to_str().unwrap().to_string();
+    create_zip_archive(
+        &archive_path,
+        &["META-INF".to_string(), "classes.dex".to_string()],
+        &dir,
+    )
+    .unwrap();
+
+    let archive = ZipArchive::open(&archive_path).unwrap();
+    let entries = archive.entries().unwrap();
+    let entry_of = |name: &str| {
+        entries
+            .iter()
+            .find(|entry| entry.name == name)
+            .unwrap_or_else(|| panic!("missing entry {name}"))
+    };
+    // 0 = stored, 8 = deflated: packed archives must stay compressed.
+    assert_eq!(entry_of("META-INF/").method, 0, "directories stay stored");
+    assert_eq!(entry_of("META-INF/MANIFEST.MF").method, 8, "files deflated");
+    let dex = entry_of("classes.dex");
+    assert_eq!(dex.method, 8, "files deflated");
+    assert!(dex.compressed_size < dex.uncompressed_size);
+
+    std::fs::remove_dir_all(&dir).ok();
+}

@@ -10,7 +10,7 @@ use clap::{Args, Parser, Subcommand};
 use serde_json::Value;
 
 use afe::device::{permission_info, system_services, DeviceOptions};
-use afe::error::Result;
+use afe::error::{Error, Result};
 use afe::flows::{collect, pack, process, FrameworkOptions};
 use afe::{afe_home, default_adb_path};
 
@@ -31,10 +31,12 @@ struct FrameworkArgs {
     /// OEM segment of the artifact name.
     #[arg(long, value_name = "OEM")]
     oem: Option<String>,
-    /// Directory holding the collected files (default: <out>/source).
+    /// Directory holding the collected files (default: $AFE_HOME/source, else
+    /// $DECX_HOME/afe/source, else ~/.decx/afe/source).
     #[arg(long, visible_aliases = ["source-dir", "input"], value_name = "DIR")]
     source: Option<PathBuf>,
-    /// Output directory of the artifact (default: <home>/output/framework/<oem>).
+    /// Output directory of the artifact (default: $AFE_HOME/out, else
+    /// $DECX_HOME/afe/out, else ~/.decx/afe/out).
     #[arg(
         long,
         short = 'o',
@@ -180,7 +182,19 @@ fn run(cli: Cli) -> Result<Value> {
 
 fn main() {
     let cli = Cli::parse();
-    match run(cli) {
+    // A crafted image must never take the process down with a panic: the
+    // contract is one JSON envelope on stdout, so an unexpected panic still
+    // becomes a structured error.
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| run(cli)))
+        .unwrap_or_else(|payload| {
+            let detail = payload
+                .downcast_ref::<&str>()
+                .map(|text| (*text).to_string())
+                .or_else(|| payload.downcast_ref::<String>().cloned())
+                .unwrap_or_else(|| "unknown panic".to_string());
+            Err(Error::internal(format!("unexpected panic: {detail}")))
+        });
+    match result {
         Ok(value) => {
             println!(
                 "{}",

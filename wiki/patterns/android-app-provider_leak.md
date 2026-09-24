@@ -10,7 +10,7 @@ Exported or grant-reachable ContentProvider exposes data, handles, MIME, or writ
 
 Two primitive shapes:
 - **Read/call leak**: `query`/`call`/`getType` returns protected data — the `call`/`applyBatch` guard skew is its own card: See [[android-framework-permission_missing]]
-- **SQL injection**: `sortOrder` appended as-is (ORDER BY injection even with parameterized selection); `limit` from URI query param concatenated into SQL fragment; `applyBatch` `ContentValues` keyed by attacker-controlled columns
+- **Provider SQL inputs**: `sortOrder` appended as-is (ORDER BY injection even with parameterized selection); `limit` from URI query param concatenated into SQL fragment; `applyBatch` `ContentValues` keyed by attacker-controlled columns
 - **Path traversal**: `getLastPathSegment()` auto-decodes `%2F`/`%2E%2E%2F` — `..%2Fsecret.db` becomes `../secret.db` before concatenation; custom `FileProvider` must decode→normalize→confine (3 steps)
 
 ## Non-obvious

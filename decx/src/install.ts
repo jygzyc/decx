@@ -1,13 +1,12 @@
 /**
- * Tool installation.  This is the Node replacement for the earlier bash installers
- * (`scripts/install-*.sh`, since removed): resolve the release or source build for
- * the host platform, download and verify, stage inside the tool prefix, then commit
- * `bin/`, `share/<id>/` and (for Kuna) `specs/` plus a PROVENANCE record whose layout
- * and keys match the ones those scripts wrote.
+ * Tool installation.  Every install is a release download: resolve the tag,
+ * pick the asset of the host platform, verify and unpack it, stage inside the
+ * tool prefix, then commit `bin/`, `share/<id>/` and (for Kuna) `specs/` plus a
+ * PROVENANCE record.
  *
  * Nothing here installs a language runtime: missing tools are reported with
- * the command that installs them.  External programs (cargo, python, git) run
- * through a `CommandRunner` so the whole flow is testable offline.
+ * the command that installs them.  External programs (python) run through a
+ * `CommandRunner` so the whole flow is testable offline.
  */
 
 import { spawn } from 'node:child_process';
@@ -28,11 +27,11 @@ import {
   releaseDownloadUrl,
   resolveRelease,
 } from './gh.ts';
-import type { ReleaseSpec, ToolManifest } from './manifest.ts';
+import { isSafeRelativePath, type PythonSpec, type ReleaseSpec, type ToolManifest } from './manifest.ts';
 import { readProvenance } from './inspect.ts';
 import { currentPlatformKey, isWindows, type PlatformKey } from './platform.ts';
 
-export type InstallMethod = 'release download' | 'source build' | 'python venv';
+export type InstallMethod = 'release download' | 'python venv';
 
 export interface CommandSpec {
   command: string;
@@ -68,11 +67,8 @@ export interface InstallContext {
 }
 
 export interface InstallOptions {
-  /** Explicit release tag; `1.508` and `tools-v0.1.0` are normalised. */
+  /** Explicit release tag or version; `1.544` and `kuna-v1.544` are normalised. */
   version?: string;
-  fromSource?: boolean;
-  /** Checkout to build instead of the manifest's default path (implies --from-source). */
-  source?: string;
   /** Link directory for the PATH entries; `--links`/`$DECX_LINKS_DIR`, else ~/.local/bin. */
   links?: string;
   /** Skip creating PATH links entirely. */
@@ -129,6 +125,8 @@ interface ResolvedContext {
 }
 
 interface StagedOutcome {
+  /** Runs after the payload reaches its permanent path, while backups still exist. */
+  initialize?: () => Promise<Record<string, string>>;
   provenance: Record<string, string>;
   binaries: string[];
   launcherName: string;
@@ -188,30 +186,6 @@ async function runCommand(
   return await ctx.run({ command, args, mode, env: extraEnv === undefined ? ctx.env : { ...ctx.env, ...extraEnv } });
 }
 
-async function gitOutput(ctx: ResolvedContext, args: string[]): Promise<string | undefined> {
-  const result = await runCommand(ctx, 'git', args);
-  if (result.error !== undefined || result.status !== 0) {
-    return undefined;
-  }
-  const value = result.stdout.trim();
-  return value === '' ? undefined : value;
-}
-
-/**
- * The gitlink a submodule path records in the superproject.  HEAD is what a
- * committed tree carries; before the submodule move is committed the gitlink
- * only exists in the index, so that is the fallback.
- */
-async function gitlinkRevision(ctx: ResolvedContext, sourcePath: string): Promise<string> {
-  for (const ref of [`HEAD:${sourcePath}`, `:${sourcePath}`]) {
-    const value = await gitOutput(ctx, ['-C', ctx.repoRoot, 'rev-parse', '--verify', '--quiet', ref]);
-    if (value !== undefined) {
-      return value;
-    }
-  }
-  return 'unknown';
-}
-
 function assertInstallRoot(home: string): string {
   const resolved = path.resolve(home);
   if (resolved === path.parse(resolved).root) {
@@ -249,10 +223,25 @@ export function releaseVersionFromTag(tag: string, tagPrefix?: string): string {
   return value.startsWith('v') ? value.slice(1) : value;
 }
 
-/** The asset for one platform with `{version}` substituted, or null. */
+/** The asset for one platform with `{version}`/`{os}`/`{arch}` substituted, or null. */
 export function releaseAssetName(release: ReleaseSpec, platform: PlatformKey | null, version: string): string | null {
-  const template = (platform === null ? undefined : release.assets[platform]) ?? release.assets.any;
+  if (release.asset !== undefined) {
+    if (platform === null) {
+      return null;
+    }
+    const [os, arch] = platform.split('-');
+    return release.asset.replaceAll('{version}', version).replaceAll('{os}', os ?? '').replaceAll('{arch}', arch ?? '');
+  }
+  const template = (platform === null ? undefined : release.assets?.[platform]) ?? release.assets?.any;
   return template === undefined ? null : template.replaceAll('{version}', version);
+}
+
+/** The `verify` command split into arguments, e.g. `--version --json`. */
+export function verifyArgs(manifest: ToolManifest): string[] {
+  return (manifest.verify ?? '')
+    .trim()
+    .split(/\s+/)
+    .filter((part) => part !== '');
 }
 
 /** `key: value` lines with indented continuations for multi-line values. */
@@ -277,6 +266,8 @@ export interface VenvLauncherInput {
   id: string;
   /** `macos`, `linux` or `windows`, for the informative comment only. */
   platformOs: string;
+  /** Environment directory inside the payload, e.g. `.venv`. */
+  venvDir: string;
   venvBin: string;
   venvPython: string;
   entry: string;
@@ -288,7 +279,7 @@ export function venvLauncherText(input: VenvLauncherInput): string {
     '#!/bin/sh',
     `# Generated by decx install -- exec the dedicated venv on upstream ${input.entry}.`,
     '# Arguments are passed through untouched; this is not a DECX command wrapper.',
-    `# Platform: ${input.platformOs} (interpreter: venv/${input.venvBin}/${input.venvPython})`,
+    `# Platform: ${input.platformOs} (interpreter: ${input.venvDir}/${input.venvBin}/${input.venvPython})`,
     '# The launcher is reached through a PATH symlink, so follow it to find the payload.',
     'self=$0',
     'while [ -L "$self" ]; do',
@@ -296,20 +287,27 @@ export function venvLauncherText(input: VenvLauncherInput): string {
     '  case $link in /*) self=$link ;; *) self=$(dirname -- "$self")/$link ;; esac',
     'done',
     'root=$(CDPATH= cd -- "$(dirname -- "$self")/.." && pwd)',
-    `exec "$root/share/${input.id}/venv/${input.venvBin}/${input.venvPython}" "$root/share/${input.id}/${input.entry}" "$@"`,
+    `export VIRTUAL_ENV="$root/share/${input.id}/${input.venvDir}"`,
+    `export PATH="$VIRTUAL_ENV/${input.venvBin}:$PATH"`,
+    `export PYTHONPATH="$root/share/${input.id}\${PYTHONPATH:+:$PYTHONPATH}"`,
+    `exec "$root/share/${input.id}/${input.venvDir}/${input.venvBin}/${input.venvPython}" "$root/share/${input.id}/${input.entry}" "$@"`,
     '',
   ].join('\n');
 }
 
 /** The cmd.exe/PowerShell sibling launcher; `%*` forwards arguments untouched. */
-export function venvCmdLauncherText(input: { id: string; entry: string }): string {
+export function venvCmdLauncherText(input: { id: string; venvDir: string; entry: string }): string {
   return [
     '@echo off',
     'rem Generated by decx install -- Windows cmd/PowerShell launcher.',
     'rem Arguments are passed through untouched; this is not a DECX command wrapper.',
-    'setlocal',
+    'setlocal DisableDelayedExpansion',
     'set "root=%~dp0.."',
-    `"%root%\\share\\${input.id}\\venv\\Scripts\\python.exe" "%root%\\share\\${input.id}\\${input.entry}" %*`,
+    `set "VIRTUAL_ENV=%root%\\share\\${input.id}\\${input.venvDir}"`,
+    'set "PATH=%VIRTUAL_ENV%\\Scripts;%PATH%"',
+    `if defined PYTHONPATH (set "PYTHONPATH=%root%\\share\\${input.id};%PYTHONPATH%") else (set "PYTHONPATH=%root%\\share\\${input.id}")`,
+    `"%root%\\share\\${input.id}\\${input.venvDir}\\Scripts\\python.exe" "%root%\\share\\${input.id}\\${input.entry}" %*`,
+    'exit /b %errorlevel%',
     '',
   ].join('\r\n');
 }
@@ -345,19 +343,6 @@ export function formatEnv(env: Record<string, string>): string {
   return Object.entries(env)
     .map(([name, value]) => `${name}=${shellQuote(value)}`)
     .join(' ');
-}
-
-/**
- * `--from-source` is only a way out for tools whose manifest ships a buildable
- * checkout; a release-only tool gets no such hint. The clause and the hint entry
- * are two shapes because one lands inside a sentence, the other replaces an entry.
- */
-function fromSourceClause(manifest: ToolManifest, text: string): string {
-  return manifest.source?.build === undefined ? '' : text;
-}
-
-function fromSourceHint(manifest: ToolManifest, text: string): { hint?: string } {
-  return manifest.source?.build === undefined ? {} : { hint: text };
 }
 
 /** Store name of a wrapped binary: the archive's `kuna.exe` is exposed as `kuna.cmd`. */
@@ -413,42 +398,6 @@ function fromEntries(entries: ReadonlyArray<readonly [string, string]>): Record<
 function firstLine(result: CommandResult): string {
   const text = `${result.stdout}\n${result.stderr}`.trim();
   return text.split(/\r?\n/)[0] ?? '';
-}
-
-function readFirstLine(file: string): string | undefined {
-  try {
-    const line = fs.readFileSync(file, 'utf8').split(/\r?\n/)[0]?.trim();
-    return line === undefined || line === '' ? undefined : line;
-  } catch {
-    return undefined;
-  }
-}
-
-/** First `version = "..."` in the `[package]` section; workspace inherits are `unknown`. */
-export function readPackageVersion(manifestFile: string): string {
-  let text: string;
-  try {
-    text = fs.readFileSync(manifestFile, 'utf8');
-  } catch {
-    return 'unknown';
-  }
-  let inPackage = false;
-  for (const line of text.split(/\r?\n/)) {
-    const section = /^\s*\[([^\]]+)\]/.exec(line);
-    if (section !== null) {
-      inPackage = (section[1] as string).trim() === 'package';
-      continue;
-    }
-    if (!inPackage) {
-      continue;
-    }
-    const match = /^\s*version\s*=\s*"([^"]*)"/.exec(line);
-    if (match !== null) {
-      const value = (match[1] as string).trim();
-      return value === '' || value.includes('workspace') ? 'unknown' : value;
-    }
-  }
-  return 'unknown';
 }
 
 function listDirEntries(dir: string): fs.Dirent[] {
@@ -515,11 +464,7 @@ function applyExecutableMode(file: string): void {
   if (process.platform === 'win32') {
     return;
   }
-  try {
-    fs.chmodSync(file, 0o755);
-  } catch {
-    // filesystems without POSIX modes; the file content is what matters
-  }
+  fs.chmodSync(file, 0o755);
 }
 
 function copyExecutable(source: string, dest: string): void {
@@ -538,7 +483,7 @@ function isExecutable(file: string): boolean {
 }
 
 function pickLauncher(manifest: ToolManifest, binaries: readonly string[]): string {
-  const wanted = manifest.launch?.bin ?? manifest.id;
+  const wanted = manifest.launch ?? manifest.bins?.[0] ?? manifest.id;
   const found = binaries.find((name) => path.parse(name).name === wanted);
   if (found !== undefined) {
     return found;
@@ -581,51 +526,6 @@ function meetsRequirement(version: string, requirement: string): boolean {
   return comparator === '=' ? difference === 0 : difference >= 0;
 }
 
-async function requireRust(
-  ctx: ResolvedContext,
-  id: string,
-  requirement: string | undefined,
-): Promise<{ version: string; rustc: string; cargo: string }> {
-  const cargoProbe = await runCommand(ctx, 'cargo', ['--version']);
-  if (cargoProbe.error !== undefined || cargoProbe.status !== 0) {
-    throw new InstallError(
-      'CARGO_NOT_FOUND',
-      "cargo not found in PATH. Install the Rust toolchain (https://rustup.rs, or 'apt install cargo rustc') and re-run; decx does not install it for you.",
-    );
-  }
-  const rustcProbe = await runCommand(ctx, 'rustc', ['--version']);
-  if (rustcProbe.error !== undefined || rustcProbe.status !== 0) {
-    throw new InstallError(
-      'RUSTC_NOT_FOUND',
-      'rustc not found in PATH. Install the Rust toolchain (https://rustup.rs) and re-run; decx does not install it for you.',
-    );
-  }
-  const output = firstLine(rustcProbe);
-  const version = firstVersion(output);
-  if (version === undefined) {
-    throw new InstallError('RUSTC_UNKNOWN', `could not parse 'rustc --version' output: ${output}`);
-  }
-  if (requirement !== undefined && !meetsRequirement(version, requirement)) {
-    throw new InstallError(
-      'RUSTC_TOO_OLD',
-      `rustc ${version} is too old: ${id} requires rust ${requirement}. Update the toolchain ('rustup update stable') and re-run; decx does not install it for you.`,
-    );
-  }
-  return { version, rustc: output, cargo: firstLine(cargoProbe) };
-}
-
-async function optionalRust(ctx: ResolvedContext): Promise<{ rustc: string; cargo: string } | null> {
-  const rustc = await runCommand(ctx, 'rustc', ['--version']);
-  if (rustc.error !== undefined || rustc.status !== 0) {
-    return null;
-  }
-  const cargo = await runCommand(ctx, 'cargo', ['--version']);
-  if (cargo.error !== undefined || cargo.status !== 0) {
-    return null;
-  }
-  return { rustc: firstLine(rustc), cargo: firstLine(cargo) };
-}
-
 interface PythonCandidate {
   /** Interpreter command name, e.g. `python3.12`. */
   command: string;
@@ -636,9 +536,9 @@ interface PythonCandidate {
 }
 
 /** Interpreter names to probe for a venv install, PATH defaults first. */
-function pythonCandidates(): PythonCandidate[] {
+function pythonCandidates(ctx: ResolvedContext): PythonCandidate[] {
   // An explicit `DECX_PYTHON` is used as given: the caller knows the machine.
-  const override = (process.env.DECX_PYTHON ?? '').trim();
+  const override = (ctx.env.DECX_PYTHON ?? '').trim();
   if (override !== '') {
     return [{ command: override, args: [], label: override }];
   }
@@ -672,9 +572,9 @@ async function findPython(
   requirement: string | undefined,
 ): Promise<PythonCandidate & { output: string }> {
   let fallback: (PythonCandidate & { output: string }) | null = null;
-  for (const candidate of pythonCandidates()) {
+  for (const candidate of pythonCandidates(ctx)) {
     const probe = await runCommand(ctx, candidate.command, [...candidate.args, '--version']);
-    if (probe.error !== undefined) {
+    if (probe.error !== undefined || probe.status !== 0) {
       continue;
     }
     const output = firstLine(probe);
@@ -700,66 +600,55 @@ async function findPython(
   );
 }
 
-function validateInstallOptions(manifest: ToolManifest, options: InstallOptions): void {
-  const wantsSource = options.fromSource === true || (options.source !== undefined && options.source !== '');
-  if (manifest.kind === 'python-venv') {
-    if (wantsSource) {
-      throw new InstallError('USAGE', `${manifest.id} installs from its Python checkout; --from-source and --source do not apply`, {
-        exitCode: 2,
-      });
-    }
-    if (options.version !== undefined) {
-      throw new InstallError('USAGE', `--version applies to release downloads; ${manifest.id} has no release to download`, {
-        exitCode: 2,
-      });
-    }
-    return;
-  }
-  if (wantsSource && options.version !== undefined) {
-    throw new InstallError(
-      'USAGE',
-      "--version only applies to the release download path; --from-source builds the checkout's current revision",
-      { exitCode: 2 },
-    );
-  }
+/** A uv invocation that can install requirements, when one is on PATH. */
+interface UvCandidate {
+  command: string;
+  args: string[];
+  /** Human-readable form for messages and PROVENANCE, e.g. `uv` or `pipx run uv`. */
+  label: string;
 }
 
-function initialMethod(manifest: ToolManifest, options: InstallOptions): InstallMethod {
-  if (manifest.kind === 'python-venv') {
-    return 'python venv';
-  }
-  if (options.fromSource === true || (options.source !== undefined && options.source !== '')) {
-    return 'source build';
-  }
-  return manifest.release !== undefined ? 'release download' : 'source build';
+/** `uv` itself first, then the same tool through pipx (a common install without a PATH entry). */
+function uvCandidates(): UvCandidate[] {
+  return [
+    { command: 'uv', args: [], label: 'uv' },
+    { command: 'pipx', args: ['run', 'uv'], label: 'pipx run uv' },
+  ];
 }
 
-async function resolveInstallTag(
-  ctx: ResolvedContext,
-  manifest: ToolManifest,
-  release: ReleaseSpec,
-  options: InstallOptions,
-): Promise<string> {
+/**
+ * Finds a uv to install requirements with.  uv is the preferred manager and does
+ * not need the venv's own pip bootstrapped; when no uv is on PATH the install
+ * falls back to the interpreter's pip, so a machine without uv still works.
+ */
+async function findUv(ctx: ResolvedContext): Promise<(UvCandidate & { output: string }) | null> {
+  for (const candidate of uvCandidates()) {
+    const probe = await runCommand(ctx, candidate.command, [...candidate.args, '--version']);
+    if (probe.error !== undefined || probe.status !== 0) {
+      continue;
+    }
+    const output = firstLine(probe);
+    if (!/^uv \d/.test(output)) {
+      continue;
+    }
+    return { ...candidate, output };
+  }
+  return null;
+}
+
+function initialMethod(manifest: ToolManifest): InstallMethod {
+  return manifest.kind === 'python-venv' ? 'python venv' : 'release download';
+}
+
+async function resolveInstallTag(ctx: ResolvedContext, release: ReleaseSpec, options: InstallOptions): Promise<string> {
   if (options.version !== undefined && options.version.trim() !== '') {
-    return options.version === release.tag ? release.tag : normalizeReleaseTag(options.version, release.tagPrefix);
-  }
-  if (release.tag !== undefined) {
-    return release.tag;
-  }
-  const pinned =
-    release.version !== undefined && release.version.trim() !== ''
-      ? normalizeReleaseTag(release.version, release.tagPrefix)
-      : undefined;
-  // A pinned manifest is the version whose asset names were verified, so it is
-  // what `decx install <id>` reproduces.
-  if (pinned !== undefined) {
-    return pinned;
+    return normalizeReleaseTag(options.version, release.tagPrefix);
   }
   try {
     const token = githubToken(ctx.env);
     const resolved = await resolveRelease({
       repository: release.repository,
-      ...(release.tagPrefix !== undefined ? { tagPrefix: release.tagPrefix } : {}),
+      tagPrefix: release.tagPrefix,
       ...(token !== undefined ? { token } : {}),
       apiBase: ctx.apiBase,
       userAgent: DEFAULT_USER_AGENT,
@@ -767,14 +656,9 @@ async function resolveInstallTag(
     return resolved.tag;
   } catch (error) {
     throw new InstallError('RELEASE_RESOLVE_FAILED', `could not resolve a release of ${release.repository}: ${(error as Error).message}`, {
-      hint: `pass --version <tag> to pick a release explicitly${fromSourceClause(manifest, ', or use --from-source')}`,
+      hint: 'pass --version <tag> to pick a release explicitly',
     });
   }
-}
-
-/** Only transport/availability errors may select another source. All checks fail closed. */
-function sourceUnavailable(error: unknown): error is InstallError {
-  return error instanceof InstallError && ['DOWNLOAD_FAILED', 'RELEASE_RESOLVE_FAILED', 'UNSUPPORTED_PLATFORM', 'SOURCE_MISSING'].includes(error.code);
 }
 
 async function downloadRequired(ctx: ResolvedContext, url: string, dest: string) {
@@ -803,13 +687,6 @@ function checkDigest(asset: string, expected: string, actual: string): void {
   }
 }
 
-/** An exact bundle tag can carry a differently versioned upstream tool. */
-function releaseToolVersion(release: ReleaseSpec, tag: string): string {
-  return tag === release.tag && release.version !== undefined
-    ? release.version
-    : releaseVersionFromTag(tag, release.tagPrefix);
-}
-
 async function verifyChecksum(
   ctx: ResolvedContext,
   release: ReleaseSpec,
@@ -819,7 +696,7 @@ async function verifyChecksum(
   downloads: string,
   token: string | undefined,
 ): Promise<string> {
-  const checksumsName = release.checksums?.replaceAll('{version}', releaseToolVersion(release, tag));
+  const checksumsName = release.checksums?.replaceAll('{version}', releaseVersionFromTag(tag, release.tagPrefix));
   if (checksumsName === undefined || checksumsName === '') {
     return 'not published by the release source';
   }
@@ -833,13 +710,15 @@ async function verifyChecksum(
     if (!(error instanceof GithubError) || error.code !== 'DOWNLOAD_FAILED') {
       throw error;
     }
-    ctx.log(`warning: ${checksumsName} not found in release ${tag}; relying on the functional check`);
-    return `not verified (${checksumsName} not found)`;
+    throw new InstallError('CHECKSUM_DOWNLOAD_FAILED', `could not download required ${checksumsName} for ${tag}: ${error.message}. Refusing to install an unverified asset.`);
   }
   const expected = parseChecksums(fs.readFileSync(path.join(downloads, checksumsName), 'utf8')).get(asset);
   if (expected === undefined) {
-    ctx.log(`warning: no ${asset} entry in ${checksumsName}; relying on the functional check`);
-    return `not verified (no entry in ${checksumsName})`;
+    throw new InstallError(
+      'CHECKSUM_MISSING',
+      `${checksumsName} in release ${tag} has no entry for ${asset}. Refusing to install an unverified asset.`,
+      { hint: 'the release and the manifest disagree; pass --version <tag> or report the release' },
+    );
   }
   checkDigest(asset, expected, actualSha);
   ctx.log(`checksum verified: ${actualSha}`);
@@ -856,19 +735,18 @@ interface ReleaseArchive {
   extraProvenance: Record<string, string>;
 }
 
-/** The same checked release transport serves binaries and Python source payloads. */
+/** The release transport: one platform asset plus the extra assets every install needs. */
 async function downloadRelease(
   ctx: ResolvedContext,
-  manifest: ToolManifest,
   release: ReleaseSpec,
   stage: string,
   tag: string,
 ): Promise<ReleaseArchive> {
-  const version = releaseToolVersion(release, tag);
+  const version = releaseVersionFromTag(tag, release.tagPrefix);
   const asset = releaseAssetName(release, ctx.platform, version);
   if (asset === null) {
     throw new InstallError('UNSUPPORTED_PLATFORM', `no archive is defined for this platform (${ctx.platform ?? `${process.platform}-${process.arch}`})`, {
-      ...fromSourceHint(manifest, 'use --from-source to build from a checkout'),
+      hint: 'the release does not publish an asset for this platform',
     });
   }
   const token = githubToken(ctx.env);
@@ -906,7 +784,7 @@ async function stageRelease(
   stage: string,
   tag: string,
 ): Promise<StagedOutcome> {
-  const { extract, version, asset, sha256, checksum, specsAsset, extraProvenance } = await downloadRelease(ctx, manifest, release, stage, tag);
+  const { extract, version, asset, sha256, checksum, specsAsset, extraProvenance } = await downloadRelease(ctx, release, stage, tag);
   const wantedBins = manifest.bins ?? [];
   const binaries: string[] = [];
   for (const name of wantedBins) {
@@ -914,7 +792,7 @@ async function stageRelease(
     if (found === null) {
       throw new InstallError(
         'ASSET_LAYOUT',
-        `'${asset}' does not contain '${name}' (or '${name}.exe'). The release layout may have changed; try another --version${fromSourceClause(manifest, ', or use --from-source')}.`,
+        `'${asset}' does not contain '${name}' (or '${name}.exe'). The release layout may have changed; try another --version.`,
       );
     }
     const installed = path.basename(found);
@@ -931,7 +809,7 @@ async function stageRelease(
     if (specsSource === null) {
       throw new InstallError(
         'SPECS_MISSING',
-        `the downloaded archives do not contain a specs/ tree with compiled .sla files. Try another --version${fromSourceClause(manifest, ', or use --from-source if you need to compile the specs yourself')}.`,
+        `the downloaded archives do not contain a specs/ tree with compiled .sla files. Try another --version.`,
       );
     }
     copyTree(specsSource, path.join(stage, 'specs'));
@@ -943,8 +821,8 @@ async function stageRelease(
   }
   const launcherPath = path.join(stage, 'bin', launcherName);
   let reported = '';
-  if (ctx.verify && manifest.verify !== undefined && manifest.verify.args.length > 0) {
-    const args = manifest.verify.args;
+  const args = verifyArgs(manifest);
+  if (ctx.verify && args.length > 0) {
     // The payload is still the stage here, so `{prefix}` has to resolve to the
     // staged tree -- that is the copy the probe is about to exercise.
     const result = await runCommand(ctx, launcherPath, args, 'capture', launcherEnv(manifest, stage, version));
@@ -952,15 +830,17 @@ async function stageRelease(
     if (result.error !== undefined || result.status !== 0) {
       throw new InstallError(
         'VERIFY_FAILED',
-        `could not run '${launcherName} ${args.join(' ')}' (captured output: ${output || result.error || 'none'}). The downloaded binary cannot execute on this host${fromSourceClause(manifest, '; use --from-source to build the checkout instead')}.`,
+        `could not run '${launcherName} ${args.join(' ')}' (captured output: ${output || result.error || 'none'}). The downloaded binary cannot execute on this host.`,
       );
     }
-    if (release.tagPrefix === undefined && options.version !== undefined) {
+    // A tag can carry an upstream version that is not the tag itself; when the
+    // user pinned one, the tool has to report it back.
+    if (options.version !== undefined && args.includes('--version')) {
       const pattern = new RegExp(`(^|[^0-9.])${version.replaceAll('.', '\\.')}([^0-9.]|$)`);
       if (!pattern.test(output)) {
         throw new InstallError(
           'VERSION_MISMATCH',
-          `version check failed: '${launcherName} ${args.join(' ')}' printed '${output}' but the requested release is ${options.version} (expected ${version}). The archive may not match the tag; try another --version${fromSourceClause(manifest, ', or use --from-source')}.`,
+          `version check failed: '${launcherName} ${args.join(' ')}' printed '${output}' but the requested release is ${options.version} (expected ${version}). The archive does not match the tag; try another --version.`,
         );
       }
     }
@@ -985,12 +865,6 @@ async function stageRelease(
   if (reported !== '') {
     entries.push(['reported_version', reported]);
   }
-  const rust = await optionalRust(ctx);
-  if (rust !== null) {
-    entries.push(['rustc', rust.rustc], ['cargo', rust.cargo]);
-  } else {
-    entries.push(['build', `prebuilt archive ${tag}`]);
-  }
   entries.push(['specs_installed', String(specsInstalled)]);
   entries.push(
     ['binary', path.join(binRoot(ctx.home), launcherName)],
@@ -1013,183 +887,12 @@ async function stageRelease(
   };
 }
 
-/**
- * Build-time environment from the manifest.  Upstream release CI bakes the
- * version into its binaries (Kuna: `KUNA_VERSION`), so a source build has to
- * set the same variables or the tool reports its Cargo workspace version.
- */
-function resolveBuildEnv(
-  spec: Record<string, string> | undefined,
-  manifest: ToolManifest,
-  taggedVersion: string | undefined,
-): NodeJS.ProcessEnv | undefined {
-  if (spec === undefined) {
-    return undefined;
-  }
-  const version = manifest.release?.version ?? taggedVersion;
-  const env: NodeJS.ProcessEnv = {};
-  for (const [name, template] of Object.entries(spec)) {
-    const value = template.replaceAll('{version}', version ?? '');
-    if (value !== '') {
-      env[name] = value;
-    }
-  }
-  return Object.keys(env).length > 0 ? env : undefined;
-}
-
-async function stageSource(
-  ctx: ResolvedContext,
-  manifest: ToolManifest,
-  options: InstallOptions,
-  prefix: string,
-  stage: string,
-): Promise<StagedOutcome> {
-  const source = manifest.source;
-  if (source === undefined || source.build === undefined) {
-    throw new InstallError('NO_SOURCE_BUILD', `${manifest.id} has no source build information`, {
-      hint: 'install it from a release instead',
-    });
-  }
-  const toolchain = await requireRust(ctx, manifest.id, manifest.requires?.rust);
-  const sourceDir =
-    options.source !== undefined && options.source !== ''
-      ? path.resolve(options.source)
-      : path.join(ctx.repoRoot, source.path);
-  if (!fs.existsSync(sourceDir) || !fs.statSync(sourceDir).isDirectory()) {
-    throw new InstallError(
-      'SOURCE_MISSING',
-      `${manifest.id} source directory not found: ${sourceDir}. The checkout lives at ${path.join(ctx.repoRoot, source.path)}; run 'git submodule update --init ${source.path}' or pass --source DIR.`,
-    );
-  }
-  const buildManifest = path.join(sourceDir, source.build.manifest);
-  if (!fs.existsSync(buildManifest)) {
-    throw new InstallError('SOURCE_MISSING', `${sourceDir} exists but has no ${source.build.manifest}, so there is nothing Rust to build.`);
-  }
-  // A tagged checkout names the released version; manifests can turn it into a
-  // build-time version variable the tool reports at runtime.
-  const sourceTag = await gitOutput(ctx, ['-C', sourceDir, 'describe', '--tags', '--exact-match', 'HEAD']);
-  const taggedVersion =
-    sourceTag !== undefined && /^v?\d/.test(sourceTag) ? releaseVersionFromTag(sourceTag) : undefined;
-  const buildEnv = resolveBuildEnv(source.build.env, manifest, taggedVersion);
-  fs.mkdirSync(path.join(stage, 'bin'), { recursive: true });
-  const args = [
-    'build',
-    '--release',
-    ...source.build.packages.flatMap((name) => ['-p', name]),
-    '--target-dir',
-    path.join(stage, 'target'),
-    '--manifest-path',
-    buildManifest,
-  ];
-  const envHint =
-    buildEnv === undefined ? '' : ` with ${Object.entries(buildEnv).map(([name, value]) => `${name}=${value}`).join(' ')}`;
-  ctx.log(`building ${manifest.id} (cargo ${args.join(' ')})${envHint}`);
-  const build = await runCommand(ctx, 'cargo', args, 'stream', buildEnv);
-  if (build.error !== undefined || build.status !== 0) {
-    throw new InstallError(
-      'BUILD_FAILED',
-      `cargo build failed. Check the build output above and the toolchain requirement in ${buildManifest}.`,
-    );
-  }
-  const binDir = path.join(stage, 'target', 'release');
-  const binaries: string[] = [];
-  for (const name of manifest.bins ?? []) {
-    const found = findFile(binDir, [name, `${name}.exe`]);
-    if (found === null) {
-      throw new InstallError(
-        'BUILD_LAYOUT',
-        `cargo build succeeded but neither ${name} nor ${name}.exe was produced at ${binDir}. The upstream [[bin]] name may have changed.`,
-      );
-    }
-    copyExecutable(found, path.join(stage, 'bin', path.basename(found)));
-    binaries.push(path.basename(found));
-  }
-  if (binaries.length === 0) {
-    throw new InstallError('INSTALL_EMPTY', `${manifest.id} produced no binaries`);
-  }
-  const launcherName = pickLauncher(manifest, binaries);
-  let specsInstalled = 0;
-  if (source.specs !== undefined) {
-    const specsDir = path.join(sourceDir, source.specs.path);
-    if (!fs.existsSync(specsDir)) {
-      throw new InstallError(
-        'SPECS_MISSING',
-        `SLEIGH specs not found: ${specsDir}. Run 'git submodule update --init --recursive ${source.path}'.`,
-      );
-    }
-    copyTree(specsDir, path.join(stage, 'specs'));
-    const compiler = findFile(path.join(stage, 'bin'), [source.specs.compiler, `${source.specs.compiler}.exe`]);
-    if (compiler === null) {
-      throw new InstallError(
-        'BUILD_LAYOUT',
-        `internal error: ${source.specs.compiler} is not among the built binaries, so the SLEIGH specs cannot be compiled.`,
-      );
-    }
-    ctx.log(`compiling SLEIGH specs with ${path.basename(compiler)} -a (this can take a while)`);
-    const compiled = await runCommand(ctx, compiler, ['-a', path.join(stage, 'specs')], 'stream');
-    if (compiled.error !== undefined || compiled.status !== 0) {
-      throw new InstallError(
-        'SPECS_COMPILE_FAILED',
-        `the SLEIGH compiler failed while compiling ${specsDir}; the vendored specs were rejected. Re-run 'make specs' in the checkout to see the full log.`,
-      );
-    }
-    specsInstalled = countBySuffix(path.join(stage, 'specs'), '.sla');
-    if (specsInstalled === 0) {
-      throw new InstallError('SPECS_MISSING', 'the SLEIGH compiler produced no .sla files; refusing to install an uncompiled specs tree.');
-    }
-    ctx.log(`compiled ${specsInstalled} .sla files`);
-  }
-  const crateVersion = readPackageVersion(buildManifest);
-  const repositoryRevision = (await gitOutput(ctx, ['-C', ctx.repoRoot, 'rev-parse', 'HEAD'])) ?? 'unknown';
-  const repositoryBranch = (await gitOutput(ctx, ['-C', ctx.repoRoot, 'rev-parse', '--abbrev-ref', 'HEAD'])) ?? 'unknown';
-  const upstreamRevision = (await gitOutput(ctx, ['-C', sourceDir, 'rev-parse', 'HEAD'])) ?? 'unknown (not a git checkout)';
-  const gitlink = await gitlinkRevision(ctx, source.path);
-  const versionFile = readFirstLine(path.join(sourceDir, 'VERSION'));
-  const entries: Array<[string, string]> = [
-    ['tool', manifest.id],
-    ['installer', 'decx install'],
-    ['install_method', 'source build'],
-    ['installed', isoTimestamp()],
-    ['source', sourceDir],
-    ['crate_version', crateVersion],
-    ['repository_revision', repositoryRevision],
-    ['repository_branch', repositoryBranch],
-    ['upstream_revision', upstreamRevision],
-    ['superproject_gitlink', gitlink],
-  ];
-  if (versionFile !== undefined) {
-    entries.push(['upstream_version_file', versionFile]);
-  }
-  if (sourceTag !== undefined && taggedVersion !== undefined) {
-    entries.push(['upstream_tag', sourceTag]);
-  }
-  entries.push(['rustc', toolchain.rustc], ['cargo', toolchain.cargo]);
-  entries.push(['specs_installed', String(specsInstalled)]);
-  entries.push(
-    ['binary', path.join(binRoot(ctx.home), launcherName)],
-    ['binaries', binaries.join(' ')],
-    ['bin_dir', binRoot(ctx.home)],
-    ['prefix', prefix],
-  );
-  // The tag is the version upstream released; the Cargo version is the fallback
-  // for untagged checkouts, the VERSION file for workspaces that carry none.
-  const version = taggedVersion ?? (crateVersion !== 'unknown' ? crateVersion : versionFile);
-  return {
-    provenance: fromEntries(entries),
-    binaries,
-    launcherName,
-    method: 'source build',
-    ...(version !== undefined ? { version } : {}),
-    specsInstalled,
-  };
-}
-
 interface PythonSource extends Partial<Pick<StagedOutcome, 'version' | 'releaseTag' | 'releaseSource' | 'asset' | 'checksum'>> {
   directory: string;
   provenance: Record<string, string>;
 }
 
-/** GitHub source archives have one enclosing directory; mirrored payloads may be flat. */
+/** Release archives may wrap their payload in one enclosing directory. */
 function pythonArchiveRoot(extract: string, entry: string): string {
   if (fs.existsSync(path.join(extract, entry))) {
     return extract;
@@ -1204,87 +907,161 @@ function pythonArchiveRoot(extract: string, entry: string): string {
   throw new InstallError('ASSET_LAYOUT', `Python source archive must contain ${entry} at its root or in one enclosing directory`);
 }
 
-function resetStage(stage: string): void {
-  // No failed attempt's files may be combined with a different source.
-  fs.rmSync(stage, { recursive: true, force: true });
-  fs.mkdirSync(stage, { recursive: true });
+/** A pinned upstream checkout the superproject vendors for one tool. */
+interface LocalCheckout {
+  directory: string;
+  /** Path relative to the repository root, as PROVENANCE records it. */
+  relative: string;
+  commit?: string;
+  tag?: string;
+  dirty: boolean;
+  clean?: boolean;
 }
 
-function fallbackRecord(from: string, error: InstallError): Record<string, string> {
-  return { fallback_from: from, fallback_reason: `${error.code}: ${error.message}` };
+/**
+ * The checkout a python tool builds from, when the repository has one:
+ * `subprojects/decx-<id>/source` (or `subprojects/<id>/source`), tracked by the
+ * superproject as a gitlink.  A directory the submodule was never initialised
+ * into is not a checkout, so both files the payload is built from must be there.
+ */
+function localCheckout(ctx: ResolvedContext, manifest: ToolManifest, spec: PythonSpec): LocalCheckout | null {
+  for (const name of [`decx-${manifest.id}`, manifest.id]) {
+    const directory = path.join(ctx.repoRoot, 'subprojects', name, 'source');
+    if (!fs.existsSync(path.join(directory, spec.entry)) || !fs.existsSync(path.join(directory, spec.requirements))) {
+      continue;
+    }
+    let parent = ctx.repoRoot;
+    for (const component of ['subprojects', name, 'source']) {
+      parent = path.join(parent, component);
+      if (fs.lstatSync(parent).isSymbolicLink()) {
+        throw new InstallError('UNSAFE_PYTHON_PATH', `Python checkout must not traverse symlinks: ${parent}`);
+      }
+    }
+    return { directory, relative: path.join('subprojects', name, 'source'), dirty: false };
+  }
+  return null;
 }
 
-async function pythonSource(ctx: ResolvedContext, manifest: ToolManifest, stage: string): Promise<PythonSource> {
+/**
+ * Best-effort git facts about a checkout: a machine without git still installs,
+ * it just records less.  The commit is the revision the payload was actually
+ * built from -- which is what PROVENANCE must carry, not the gitlink.
+ */
+async function checkoutRevision(ctx: ResolvedContext, checkout: LocalCheckout): Promise<LocalCheckout> {
+  const git = async (args: string[]): Promise<string | null> => {
+    const result = await runCommand(ctx, 'git', ['-C', checkout.directory, ...args]);
+    if (result.error !== undefined || result.status !== 0) {
+      return null;
+    }
+    return result.stdout.trim();
+  };
+  const commit = await git(['rev-parse', 'HEAD']);
+  const tag = await git(['describe', '--tags', '--exact-match', 'HEAD']);
+  const status = await git(['status', '--porcelain']);
+  return {
+    ...checkout,
+    ...(commit !== null && commit !== '' ? { commit } : {}),
+    ...(tag !== null && tag !== '' ? { tag } : {}),
+    dirty: status !== null && status !== '',
+    clean: status === '',
+  };
+}
+
+/**
+ * The payload a venv install builds from: the pinned checkout the superproject
+ * vendors when it is there, otherwise the release's source archive.  The
+ * checkout is the revision the subproject's own workflow validates; the archive
+ * is the fallback for an install that has no repository at hand.
+ */
+async function pythonSource(
+  ctx: ResolvedContext,
+  manifest: ToolManifest,
+  release: ReleaseSpec,
+  stage: string,
+  options: InstallOptions,
+): Promise<PythonSource> {
   const spec = manifest.python;
   if (spec === undefined) {
     throw new InstallError('NO_PYTHON_PAYLOAD', `${manifest.id} has no python block describing its payload`);
   }
-  const archive = spec.archive;
-  const local = spec.path === undefined ? undefined : path.join(ctx.repoRoot, spec.path);
-  const localAvailable = local !== undefined && fs.existsSync(local) && fs.statSync(local).isDirectory();
-  const upstream = localAvailable
-    ? local
-    : archive === undefined
-      ? (local ?? '')
-      : `${ctx.downloadBase.replace(/\/+$/, '')}/${archive.repository}/archive/${encodeURIComponent(archive.ref)}.tar.gz`;
-  try {
-    if (localAvailable) {
-      return { directory: local, provenance: {} };
+  for (const item of [spec.entry, spec.requirements, ...spec.payload, spec.venv]) {
+    if (!isSafeRelativePath(item) || (item === spec.venv && item.includes('/'))) {
+      throw new InstallError('UNSAFE_PYTHON_PATH', `unsafe Python payload path: ${item}`);
     }
-    if (archive === undefined) {
-      throw new InstallError('SOURCE_MISSING', `${manifest.id} source directory not found: ${upstream}`);
+  }
+  const found = localCheckout(ctx, manifest, spec);
+  if (found !== null) {
+    const checkout = await checkoutRevision(ctx, found);
+    if (options.version !== undefined && (
+      checkout.commit === undefined || checkout.tag === undefined || checkout.clean !== true ||
+      ![options.version.trim(), normalizeReleaseTag(options.version), normalizeReleaseTag(options.version, release.tagPrefix)].includes(checkout.tag)
+    )) {
+      throw new InstallError('VERSION_MISMATCH', `--version ${options.version} does not identify the clean checkout at ${checkout.relative} (tag: ${checkout.tag ?? 'unknown'}). Use a checkout at the requested tag or install without the local checkout.`);
     }
-    const dest = path.join(stage, 'downloads', 'source.tar.gz');
-    const { sha256 } = await downloadRequired(ctx, upstream, dest);
-    if (archive.sha256 !== undefined) {
-      checkDigest('source.tar.gz', archive.sha256, sha256);
+    const version = checkout.tag !== undefined ? releaseVersionFromTag(checkout.tag, release.tagPrefix) : undefined;
+    ctx.log(`building ${manifest.id} from ${checkout.relative}${checkout.commit !== undefined ? ` (${checkout.commit.slice(0, 7)})` : ''}`);
+    if (checkout.dirty) {
+      ctx.log(`warning: ${checkout.relative} has uncommitted changes; the install records what is there, not the pinned revision`);
     }
-    const extract = path.join(stage, 'extract');
-    extractArchive(dest, extract);
-    const checksum = archive.sha256 === undefined ? 'not pinned by the manifest' : `verified (${sha256})`;
     return {
-      directory: pythonArchiveRoot(extract, spec.entry),
-      checksum,
+      directory: checkout.directory,
+      ...(version !== undefined ? { version } : {}),
+      ...(checkout.tag !== undefined ? { releaseTag: checkout.tag } : {}),
       provenance: {
-        source: upstream,
-        upstream_repository: `https://github.com/${archive.repository}`,
-        upstream_revision: archive.ref,
-        sha256,
-        checksum,
-      },
-    };
-  } catch (error) {
-    const release = manifest.fallbackRelease;
-    if (!sourceUnavailable(error) || release === undefined) {
-      throw error;
-    }
-    ctx.log(`warning: ${upstream} unavailable; trying the fallback release (${error.code})`);
-    resetStage(stage);
-    const tag = await resolveInstallTag(ctx, manifest, release, {});
-    const downloaded = await downloadRelease(ctx, manifest, release, stage, tag);
-    const releaseSource = `https://github.com/${release.repository}`;
-    return {
-      directory: pythonArchiveRoot(downloaded.extract, spec.entry),
-      version: downloaded.version,
-      releaseTag: tag,
-      releaseSource,
-      asset: downloaded.asset,
-      checksum: downloaded.checksum,
-      provenance: {
-        source: releaseDownloadUrl(ctx.downloadBase, release.repository, tag, downloaded.asset),
-        upstream_repository: archive === undefined ? 'unknown' : `https://github.com/${archive.repository}`,
-        upstream_revision: archive?.ref ?? 'unknown (release archive)',
-        release_source: releaseSource,
-        release_tag: tag,
-        release_asset: downloaded.asset,
-        version: downloaded.version,
-        sha256: downloaded.sha256,
-        checksum: downloaded.checksum,
-        ...downloaded.extraProvenance,
-        ...fallbackRecord(upstream, error),
+        source: checkout.relative,
+        ...(checkout.commit !== undefined ? { source_commit: checkout.commit } : {}),
+        ...(checkout.tag !== undefined ? { source_tag: checkout.tag } : {}),
+        ...(checkout.dirty ? { source_dirty: 'true' } : {}),
+        ...(version !== undefined ? { version } : {}),
       },
     };
   }
+  const tag = await resolveInstallTag(ctx, release, options);
+  const downloaded = await downloadRelease(ctx, release, stage, tag);
+  const releaseSource = `https://github.com/${release.repository}`;
+  return {
+    directory: pythonArchiveRoot(downloaded.extract, spec.entry),
+    version: downloaded.version,
+    releaseTag: tag,
+    releaseSource,
+    asset: downloaded.asset,
+    checksum: downloaded.checksum,
+    provenance: {
+      release_source: releaseSource,
+      release_tag: tag,
+      release_asset: downloaded.asset,
+      version: downloaded.version,
+      sha256: downloaded.sha256,
+      checksum: downloaded.checksum,
+      ...downloaded.extraProvenance,
+    },
+  };
+}
+
+/** Refuse links, including linked parent directories, before copying Python payloads. */
+function copyPythonPath(source: string, payload: string, item: string): void {
+  if (!isSafeRelativePath(item)) {
+    throw new InstallError('UNSAFE_PYTHON_PATH', `unsafe Python payload path: ${item}`);
+  }
+  let from = source;
+  for (const part of item.split('/')) {
+    from = path.join(from, part);
+    if (fs.lstatSync(from).isSymbolicLink()) {
+      throw new InstallError('UNSAFE_PYTHON_PATH', `Python payload must not contain symlinks: ${from}`);
+    }
+  }
+  const dest = path.join(payload, item);
+  fs.mkdirSync(path.dirname(dest), { recursive: true });
+  fs.cpSync(from, dest, {
+    recursive: true,
+    filter: (file) => {
+      const stat = fs.lstatSync(file);
+      if (!stat.isFile() && !stat.isDirectory()) {
+        throw new InstallError('UNSAFE_PYTHON_PATH', `Python payload must contain only regular files and directories: ${file}`);
+      }
+      return true;
+    },
+  });
 }
 
 async function stageVenv(
@@ -1301,15 +1078,15 @@ async function stageVenv(
   const { directory: sourceDir, provenance: sourceProvenance, ...sourceMetadata } = source;
   const entry = path.join(sourceDir, spec.entry);
   if (!fs.existsSync(entry)) {
-    throw new InstallError('SOURCE_MISSING', `${manifest.id} entry point not found: ${entry} -- not a ${manifest.id} checkout?`);
+    throw new InstallError('SOURCE_MISSING', `${manifest.id} entry point not found: ${entry} -- the release payload is not a ${manifest.id} source tree`);
   }
   const requirements = path.join(sourceDir, spec.requirements);
   if (!fs.existsSync(requirements)) {
-    throw new InstallError('SOURCE_MISSING', `${manifest.id} requirements not found: ${requirements} -- not a ${manifest.id} checkout?`);
+    throw new InstallError('SOURCE_MISSING', `${manifest.id} requirements not found: ${requirements} -- the release payload is not a ${manifest.id} source tree`);
   }
   const python = await findPython(ctx, manifest.id, manifest.requires?.python);
-  const windows = ctx.platform !== null ? ctx.platform.startsWith('windows') : isWindows();
-  const platformOs = ctx.platform !== null ? ctx.platform.split('-')[0] ?? 'unknown' : isWindows() ? 'windows' : process.platform;
+  const platformOs = ctx.platform !== null ? ctx.platform.split('-')[0] ?? 'unknown' : isWindows() ? 'win' : process.platform;
+  const windows = platformOs === 'win';
   const venvBin = windows ? 'Scripts' : 'bin';
   const venvPythonName = windows ? 'python.exe' : 'python';
   const payload = path.join(stage, 'share', manifest.id);
@@ -1317,79 +1094,104 @@ async function stageVenv(
   for (const item of spec.payload) {
     const from = path.join(sourceDir, item);
     if (!fs.existsSync(from)) {
-      throw new InstallError('SOURCE_MISSING', `${manifest.id} payload ${from} not found -- not a ${manifest.id} checkout?`);
+      throw new InstallError('SOURCE_MISSING', `${manifest.id} payload ${from} not found -- the release payload is not a ${manifest.id} source tree`);
     }
-    copyTree(from, path.join(payload, item));
+    copyPythonPath(sourceDir, payload, item);
   }
-  fs.copyFileSync(entry, path.join(payload, spec.entry));
+  copyPythonPath(sourceDir, payload, spec.entry);
   for (const optional of [spec.requirements, 'LICENSE', 'README.md']) {
     const from = path.join(sourceDir, optional);
     if (fs.existsSync(from) && !fs.existsSync(path.join(payload, optional))) {
-      fs.copyFileSync(from, path.join(payload, optional));
+      copyPythonPath(sourceDir, payload, optional);
     }
   }
-  const venvDir = path.join(payload, 'venv');
-  ctx.log(`creating virtualenv in ${venvDir} (${platformOs})`);
-  const venv = await runCommand(ctx, python.command, [...python.args, '-m', 'venv', venvDir], 'stream');
-  if (venv.error !== undefined || venv.status !== 0) {
+  const venvName = spec.venv;
+  const venvDir = path.join(prefix, venvName);
+  if (fs.existsSync(path.join(payload, venvName))) {
     throw new InstallError(
-      'VENV_FAILED',
-      `${python.label} -m venv failed. Make sure the venv module is available (Debian/Ubuntu: 'apt install python3-venv'; macOS: 'brew install python3'; Windows: the python.org build bundles it) and that ${prefix} is writable.`,
-    );
-  }
-  const venvPython = path.join(venvDir, venvBin, venvPythonName);
-  if (!isExecutable(venvPython)) {
-    throw new InstallError(
-      'VENV_LAYOUT',
-      `the virtualenv at ${venvDir} does not contain ${venvBin}/${venvPythonName}, which is what platform '${platformOs}' expects. Remove it and retry with a CPython 3 build from python.org or your distribution.`,
-    );
-  }
-  const pipArgs = ['-m', 'pip', 'install', '--disable-pip-version-check', '-r', path.join(payload, spec.requirements)];
-  ctx.log('installing upstream requirements into the venv');
-  const pip = await runCommand(ctx, venvPython, pipArgs, 'stream');
-  if (pip.error !== undefined || pip.status !== 0) {
-    throw new InstallError(
-      'PIP_FAILED',
-      `pip install failed. A network connection to PyPI is required; check the upstream pin in ${requirements}.`,
+      'VENV_EXISTS',
+      `refusing to reuse the environment shipped in the payload: ${manifest.id} installs into a fresh ${venvName} every time.`,
+      { hint: `remove ${venvName} from the source payload and run \`decx install ${manifest.id}\` again` },
     );
   }
   fs.mkdirSync(path.join(stage, 'bin'), { recursive: true });
-  fs.writeFileSync(path.join(stage, 'bin', manifest.id), venvLauncherText({ id: manifest.id, platformOs, venvBin, venvPython: venvPythonName, entry: spec.entry }));
+  fs.writeFileSync(path.join(stage, 'bin', manifest.id), venvLauncherText({ id: manifest.id, platformOs, venvDir: venvName, venvBin, venvPython: venvPythonName, entry: spec.entry }));
   applyExecutableMode(path.join(stage, 'bin', manifest.id));
-  const binaries = [manifest.id];
+  const binaries = windows ? [manifest.id, `${manifest.id}.cmd`] : [manifest.id];
   let launcherName = manifest.id;
   if (windows) {
     launcherName = `${manifest.id}.cmd`;
-    fs.writeFileSync(path.join(stage, 'bin', launcherName), venvCmdLauncherText({ id: manifest.id, entry: spec.entry }));
+    fs.writeFileSync(path.join(stage, 'bin', launcherName), venvCmdLauncherText({ id: manifest.id, venvDir: venvName, entry: spec.entry }));
   }
-  if (ctx.verify && manifest.verify !== undefined && manifest.verify.args.length > 0) {
-    const result = await runCommand(ctx, venvPython, [path.join(payload, spec.entry), ...manifest.verify.args]);
-    if (result.error !== undefined || result.status !== 0) {
-      throw new InstallError('VERIFY_FAILED', `${manifest.id} verification failed: ${firstLine(result) || result.error || 'no output'}`);
-    }
-  }
-  const upstreamRevision = sourceProvenance.upstream_revision ?? (await gitOutput(ctx, ['-C', sourceDir, 'rev-parse', 'HEAD'])) ?? 'unknown (not a git checkout)';
-  const gitlink = spec.path === undefined ? 'unknown' : await gitlinkRevision(ctx, spec.path);
-  const entries: Array<[string, string]> = [
-    ['tool', manifest.id],
-    ['installer', 'decx install'],
-    ['install_method', 'python venv'],
-    ['installed', isoTimestamp()],
-    ['source', sourceDir],
-    ['upstream_revision', upstreamRevision],
-    ['superproject_gitlink', gitlink],
-    ['requirements', fs.readFileSync(requirements, 'utf8').trim()],
-    ['platform', ctx.platform ?? platformOs],
-    ['python', `${python.output} (${python.label})`],
-    ['venv', path.join(prefix, 'venv', venvBin, venvPythonName)],
-    ['binaries', binaries.join(' ')],
-    ['bin_dir', binRoot(ctx.home)],
-    [
-      'launcher',
-      `${path.join(binRoot(ctx.home), manifest.id)} -> ${path.join(prefix, spec.entry)}`,
-    ],
-  ];
-  return { provenance: { ...fromEntries(entries), ...sourceProvenance }, binaries, launcherName, method: 'python venv', ...sourceMetadata };
+  return {
+    provenance: sourceProvenance,
+    binaries,
+    launcherName,
+    method: 'python venv',
+    ...sourceMetadata,
+    // Console scripts (including Windows .exe launchers) embed the interpreter
+    // path. Build the environment here, never in a staging path that will move.
+    initialize: async () => {
+      ctx.log(`creating virtualenv in ${venvDir} (${platformOs})`);
+      const venv = await runCommand(ctx, python.command, [...python.args, '-m', 'venv', venvDir], 'stream');
+      if (venv.error !== undefined || venv.status !== 0) {
+        throw new InstallError(
+          'VENV_FAILED',
+          `${python.label} -m venv failed. Make sure the venv module is available (Debian/Ubuntu: 'apt install python3-venv'; macOS: 'brew install python3'; Windows: the python.org build bundles it) and that ${prefix} is writable.`,
+        );
+      }
+      const venvPython = path.join(venvDir, venvBin, venvPythonName);
+      if (!isExecutable(venvPython)) {
+        throw new InstallError(
+          'VENV_LAYOUT',
+          `the virtualenv at ${venvDir} does not contain ${venvBin}/${venvPythonName}, which is what platform '${platformOs}' expects. Remove it and retry with a CPython 3 build from python.org or your distribution.`,
+        );
+      }
+      const requirementsPath = path.join(prefix, spec.requirements);
+      const uv = await findUv(ctx);
+      ctx.log(`installing upstream requirements into ${venvName}${uv !== null ? ` with ${uv.label}` : ' with pip'}`);
+      const install =
+        uv !== null
+          ? await runCommand(ctx, uv.command, [...uv.args, 'pip', 'install', '--python', venvPython, '-r', requirementsPath], 'stream')
+          : await runCommand(ctx, venvPython, ['-m', 'pip', 'install', '--disable-pip-version-check', '-r', requirementsPath], 'stream');
+      if (install.error !== undefined || install.status !== 0) {
+        throw new InstallError(
+          uv !== null ? 'UV_FAILED' : 'PIP_FAILED',
+          `${uv !== null ? `${uv.label} pip install` : 'pip install'} failed. A network connection to PyPI is required; check ${requirements}.`,
+        );
+      }
+      const args = verifyArgs(manifest);
+      if (ctx.verify && args.length > 0) {
+        const separator = windows ? ';' : ':';
+        const result = await runCommand(ctx, venvPython, [path.join(prefix, spec.entry), ...args], 'capture', {
+          VIRTUAL_ENV: venvDir,
+          PATH: `${path.join(venvDir, venvBin)}${separator}${ctx.env.PATH ?? ''}`,
+          PYTHONPATH: `${prefix}${ctx.env.PYTHONPATH ? `${separator}${ctx.env.PYTHONPATH}` : ''}`,
+        });
+        if (result.error !== undefined || result.status !== 0) {
+          throw new InstallError('VERIFY_FAILED', `${manifest.id} verification failed: ${firstLine(result) || result.error || 'no output'}`);
+        }
+      }
+      const entries: Array<[string, string]> = [
+        ['tool', manifest.id],
+        ['installer', 'decx install'],
+        ['install_method', 'python venv'],
+        ['installed', isoTimestamp()],
+        ['requirements', fs.readFileSync(requirementsPath, 'utf8').trim()],
+        ['platform', ctx.platform ?? platformOs],
+        ['python', `${python.output} (${python.label})`],
+        ['python_manager', uv !== null ? `${uv.label} ${firstVersion(uv.output) ?? ''}`.trim() : 'pip'],
+        ['venv', path.join(prefix, venvName, venvBin, venvPythonName)],
+        ['binaries', binaries.join(' ')],
+        ['bin_dir', binRoot(ctx.home)],
+        [
+          'launcher',
+          `${path.join(binRoot(ctx.home), launcherName)} -> ${path.join(prefix, spec.entry)}`,
+        ],
+      ];
+      return fromEntries(entries);
+    },
+  };
 }
 
 /** Binary file names the previous install recorded, for pruning the store. */
@@ -1414,6 +1216,12 @@ export interface LauncherWrap {
   launcher: string;
 }
 
+interface CommittedStage {
+  bins: string[];
+  removed: string[];
+  launcher?: string;
+}
+
 /**
  * Moves a validated staging tree into the install: executables (or their
  * launchers) into `<home>/bin` (the store every tool shares) and everything else
@@ -1422,18 +1230,21 @@ export interface LauncherWrap {
  * tool is refused unless `force` is set.  With `wrap` the packaged binaries stay
  * in the payload (`<payload>/bin`) and the store holds launcher scripts that
  * export the manifest environment first.
+ * Backups are retained until finalize has written the complete PROVENANCE.
  */
-function commitStage(
+async function commitStage(
   stage: string,
   home: string,
   id: string,
   force: boolean,
   log: (line: string) => void,
+  initialize: () => Promise<void>,
+  finalize: (committed: CommittedStage) => void,
   wrap?: LauncherWrap,
-): { bins: string[]; removed: string[]; launcher?: string } {
+): Promise<CommittedStage> {
   const binDir = binRoot(home);
   const payload = toolPrefix(home, id);
-  const previous = recordedBinaries(payload);
+  const previous = recordedBinaries(payload).filter((name) => isSafeRelativePath(name) && !name.includes('/'));
   const stagedBin = path.join(stage, 'bin');
   const names = listDirEntries(stagedBin)
     .filter((entry) => entry.isFile())
@@ -1441,7 +1252,7 @@ function commitStage(
   const storeNames = names.map((name) => (wrap === undefined ? name : launcherStoreName(name)));
   for (const name of storeNames) {
     const target = path.join(binDir, name);
-    if (fs.existsSync(target) && !previous.includes(name) && !force) {
+    if (fs.lstatSync(target, { throwIfNoEntry: false }) !== undefined && !previous.includes(name) && !force) {
       throw new InstallError(
         'BIN_CONFLICT',
         `${target} already exists and is not part of the current ${id} install; installing would shadow another tool`,
@@ -1454,71 +1265,101 @@ function commitStage(
   if (!fs.existsSync(stagedShare)) {
     throw new InstallError('STAGE_INCOMPLETE', `${stagedShare} is missing; nothing was committed`);
   }
-  const backup = `${payload}.decx-old-${process.pid}`;
-  fs.rmSync(backup, { recursive: true, force: true });
-  if (fs.existsSync(payload)) {
-    fs.renameSync(payload, backup);
-  }
+  const backupRoot = fs.mkdtempSync(path.join(home, '.decx-backup-'));
+  const backup = path.join(backupRoot, 'payload');
+  const savedBins: string[] = [];
+  const writtenBins: string[] = [];
+  let payloadSaved = false;
+  let payloadInstalled = false;
+  let committed: CommittedStage;
   try {
+    fs.mkdirSync(path.join(backupRoot, 'bin'));
+    if (fs.lstatSync(payload, { throwIfNoEntry: false }) !== undefined) {
+      fs.renameSync(payload, backup);
+      payloadSaved = true;
+    }
     fs.mkdirSync(path.dirname(payload), { recursive: true });
     fs.renameSync(stagedShare, payload);
+    payloadInstalled = true;
     const stagedSpecs = path.join(stage, 'specs');
     if (fs.existsSync(stagedSpecs)) {
       fs.renameSync(stagedSpecs, path.join(payload, 'specs'));
     }
+    await initialize();
+    // Save every overwritten or stale executable before modifying the store.
+    for (const name of new Set([...storeNames, ...previous])) {
+      const target = path.join(binDir, name);
+      if (fs.lstatSync(target, { throwIfNoEntry: false }) !== undefined) {
+        fs.renameSync(target, path.join(backupRoot, 'bin', name));
+        savedBins.push(name);
+      }
+    }
+    const packagedBin = path.join(payload, 'bin');
+    if (wrap !== undefined) {
+      fs.mkdirSync(packagedBin, { recursive: true });
+    }
+    const bins: string[] = [];
+    let launcher: string | undefined;
+    for (const [index, name] of names.entries()) {
+      const storeName = storeNames[index] ?? name;
+      const target = path.join(binDir, storeName);
+      writtenBins.push(storeName);
+      if (wrap === undefined) {
+        fs.copyFileSync(path.join(stagedBin, name), target);
+        applyExecutableMode(target);
+      } else {
+        const packaged = path.join(packagedBin, name);
+        fs.renameSync(path.join(stagedBin, name), packaged);
+        if (storeName.endsWith('.cmd')) {
+          fs.writeFileSync(target, envCmdLauncherText(packaged, wrap.env));
+        } else {
+          fs.writeFileSync(target, envLauncherText(packaged, wrap.env));
+          applyExecutableMode(target);
+        }
+        if (name === wrap.launcher) {
+          launcher = storeName;
+        }
+      }
+      bins.push(storeName);
+    }
+    const removed: string[] = [];
+    for (const name of previous) {
+      if (bins.includes(name)) {
+        continue;
+      }
+      const stale = path.join(binDir, name);
+      if (savedBins.includes(name)) {
+        removed.push(name);
+        log(`removed stale executable ${stale}`);
+      }
+    }
+    committed = { bins, removed, ...(launcher !== undefined ? { launcher } : {}) };
+    finalize(committed);
   } catch (error) {
-    fs.rmSync(payload, { recursive: true, force: true });
-    if (fs.existsSync(backup)) {
+    // Keep the backup outside the staging tree if rollback itself fails.
+    for (const name of writtenBins) {
+      fs.rmSync(path.join(binDir, name), { recursive: true, force: true });
+    }
+    for (const name of savedBins) {
+      fs.renameSync(path.join(backupRoot, 'bin', name), path.join(binDir, name));
+    }
+    if (payloadInstalled) {
+      fs.rmSync(payload, { recursive: true, force: true });
+    }
+    if (payloadSaved) {
       fs.renameSync(backup, payload);
     }
+    fs.rmSync(backupRoot, { recursive: true, force: true });
     throw error;
   }
-  fs.rmSync(backup, { recursive: true, force: true });
-  const packagedBin = path.join(payload, 'bin');
-  if (wrap !== undefined) {
-    fs.mkdirSync(packagedBin, { recursive: true });
-  }
-  const bins: string[] = [];
-  let launcher: string | undefined;
-  for (const [index, name] of names.entries()) {
-    const storeName = storeNames[index] ?? name;
-    const target = path.join(binDir, storeName);
-    if (wrap === undefined) {
-      fs.copyFileSync(path.join(stagedBin, name), target);
-      applyExecutableMode(target);
-    } else {
-      const packaged = path.join(packagedBin, name);
-      fs.renameSync(path.join(stagedBin, name), packaged);
-      if (storeName.endsWith('.cmd')) {
-        fs.writeFileSync(target, envCmdLauncherText(packaged, wrap.env));
-      } else {
-        fs.writeFileSync(target, envLauncherText(packaged, wrap.env));
-        applyExecutableMode(target);
-      }
-      if (name === wrap.launcher) {
-        launcher = storeName;
-      }
-    }
-    bins.push(storeName);
-  }
-  const removed: string[] = [];
-  for (const name of previous) {
-    if (bins.includes(name)) {
-      continue;
-    }
-    const stale = path.join(binDir, name);
-    if (fs.existsSync(stale)) {
-      fs.rmSync(stale, { force: true });
-      removed.push(name);
-      log(`removed stale executable ${stale}`);
-    }
-  }
-  return { bins, removed, ...(launcher !== undefined ? { launcher } : {}) };
+  fs.rmSync(backupRoot, { recursive: true, force: true });
+  return committed;
 }
 
 /**
  * Installs one tool into `<home>/share/<id>` and returns what landed where.
- * The prefix is never touched until staging and checks have succeeded.
+ * Source staging and preflight checks precede the swap. Python environment
+ * initialization runs at the final prefix, protected by the same rollback.
  */
 export async function installTool(
   manifest: ToolManifest,
@@ -1527,36 +1368,23 @@ export async function installTool(
 ): Promise<InstallResult> {
   const home = assertInstallRoot(context.home);
   const ctx = resolveContext({ ...context, home });
-  validateInstallOptions(manifest, options);
   const prefix = toolPrefix(home, manifest.id);
-  fs.mkdirSync(prefix, { recursive: true });
+  fs.mkdirSync(home, { recursive: true });
   // The stage sits in DECX_HOME rather than in the payload (which is swapped as
   // a whole), and the executables it holds are moved into <home>/bin, so every
   // step is a rename on one filesystem.
   const stage = fs.mkdtempSync(path.join(home, '.decx-stage-'));
   const binDir = binRoot(home);
   try {
-    let method = initialMethod(manifest, options);
+    const method = initialMethod(manifest);
+    const release = manifest.release;
     let outcome: StagedOutcome;
     if (method === 'python venv') {
-      outcome = await stageVenv(ctx, manifest, prefix, stage, await pythonSource(ctx, manifest, stage));
-    } else if (method === 'source build') {
-      outcome = await stageSource(ctx, manifest, options, prefix, stage);
+      // A venv install builds from the vendored checkout when there is one, so
+      // only the download fallback needs a release tag resolved.
+      outcome = await stageVenv(ctx, manifest, prefix, stage, await pythonSource(ctx, manifest, release, stage, options));
     } else {
-      const release = manifest.release;
-      if (release === undefined) {
-        throw new InstallError('NO_RELEASE', `${manifest.id} has no release to download`, {
-          ...fromSourceHint(manifest, 'use --from-source if a checkout is available'),
-        });
-      }
-      const tag = await resolveInstallTag(ctx, manifest, release, options);
-      if (tag === null) {
-        ctx.log(`warning: no release of ${release.repository} could be resolved; falling back to the source build`);
-        method = 'source build';
-        outcome = await stageSource(ctx, manifest, options, prefix, stage);
-      } else {
-        outcome = await stageRelease(ctx, manifest, release, options, prefix, stage, tag);
-      }
+      outcome = await stageRelease(ctx, manifest, release, options, prefix, stage, await resolveInstallTag(ctx, release, options));
     }
     const stageShare = path.join(stage, 'share', manifest.id);
     fs.mkdirSync(stageShare, { recursive: true });
@@ -1568,23 +1396,49 @@ export async function installTool(
     const launcherVariables = launcherEnv(manifest, prefix, outcome.version ?? '');
     const wrap =
       launcherVariables === undefined ? undefined : { env: launcherVariables, launcher: outcome.launcherName };
-    const committed = commitStage(stage, home, manifest.id, options.force === true, ctx.log, wrap);
     const linkDir = resolveLinkDir(options.links, ctx.env);
-    const links =
-      options.noLinks === true
-        ? []
-        : createLinks({ home, files: committed.bins, linkDir, force: options.force === true, log: ctx.log });
-    const storeLauncher = committed.launcher ?? outcome.launcherName;
-    const provenance: Record<string, string> = {
-      ...outcome.provenance,
-      binary: path.join(binDir, storeLauncher),
-      binaries: committed.bins.join(' '),
-      bin_dir: binDir,
-      ...(launcherVariables !== undefined ? { env: formatEnv(launcherVariables) } : {}),
-      ...(options.noLinks === true ? {} : { link_dir: linkDir }),
-      ...(links.length > 0 ? { links: links.map((link) => link.path).join(' ') } : {}),
-    };
-    fs.writeFileSync(path.join(prefix, 'PROVENANCE'), formatProvenance(provenance));
+    let links: LinkOutcome[] = [];
+    let storeLauncher = outcome.launcherName;
+    let provenance: Record<string, string> = {};
+    const committed = await commitStage(stage, home, manifest.id, options.force === true, ctx.log, async () => {
+      if (outcome.initialize !== undefined) {
+        outcome.provenance = { ...outcome.provenance, ...await outcome.initialize() };
+      }
+    }, (committed) => {
+      storeLauncher = committed.launcher ?? outcome.launcherName;
+      provenance = {
+        ...outcome.provenance,
+        binary: path.join(binDir, storeLauncher),
+        binaries: committed.bins.join(' '),
+        bin_dir: binDir,
+        ...(launcherVariables !== undefined ? { env: formatEnv(launcherVariables) } : {}),
+      };
+      fs.writeFileSync(path.join(prefix, 'PROVENANCE'), formatProvenance(provenance));
+    }, wrap);
+    // PATH integration is best effort, outside the payload/store transaction.
+    // Failure here must not turn a successfully committed install into a failure.
+    if (options.noLinks !== true) {
+      try {
+        links = createLinks({ home, files: committed.bins, linkDir, force: options.force === true, log: ctx.log });
+        const linked = links.filter((link) => link.status !== 'conflict');
+        const linkedProvenance = {
+          ...provenance,
+          link_dir: linkDir,
+          ...(linked.length > 0 ? { links: linked.map((link) => link.path).join(' ') } : {}),
+        };
+        // An atomic replacement leaves the core record valid if recording links fails.
+        const record = path.join(stage, 'PROVENANCE.links');
+        try {
+          fs.writeFileSync(record, formatProvenance(linkedProvenance));
+          fs.renameSync(record, path.join(prefix, 'PROVENANCE'));
+          provenance = linkedProvenance;
+        } finally {
+          fs.rmSync(record, { force: true });
+        }
+      } catch (error) {
+        ctx.log(`warning: installed ${manifest.id}, but PATH link setup/recording failed: ${(error as Error).message}`);
+      }
+    }
     for (const link of links) {
       if (link.status === 'conflict') {
         ctx.log(`warning: ${link.path}: ${link.reason ?? 'could not create the link'}`);

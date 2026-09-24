@@ -14,6 +14,7 @@ Framework service validates an Intent, URI or component at time T1, then execute
 - **`AccountManagerService.checkKeyIntent()`** is the canonical instance: validates authenticator-returned Intent is safe, returns Bundle to caller, caller does `startActivity` — but `getType()` changed between check and launch.
 - **`checkKeyIntentParcelledCorrectly()`** validates Bundle consistency before/after deserialization — but this does NOT cover state that changes between validation and use (only covers Bundle internal consistency).
 - **Generalized**: any framework API with pattern `validate(input) → return input to lower-privileged caller → caller executes input` where `input` contains references to mutable external state (provider, file, settings, time-dependent resolution).
+- If execution is deferred across a Binder/Handler boundary, bind owner identity at dispatch and recheck authorization against that identity; mutable callback/token ownership can go stale after the initial check.
 
 ## Reject
 Intent has explicit component (no resolution needed), no mutable external state referenced between validation and execution, or validation pins the component before returning.

@@ -3,24 +3,19 @@
 //! `framework-processor.ts`.
 //!
 //! APEX payload images are read natively ([`crate::ext4`], [`crate::erofs`]);
-//! the external-tool path (`debugfs`, erofs-utils) is only used for payloads
-//! the native readers reject, and it is resolved lazily so images handled
-//! natively work without those tools installed.
+//! there is no external extractor left, so an image the native readers reject
+//! fails its input with the reader's error.
 
 use std::path::{Path, PathBuf};
 
 use serde_json::{json, Value};
 
 use crate::collector::{extname_posix, remote_module};
-use crate::erofs::{ErofsError, ErofsImage};
+use crate::erofs::ErofsImage;
 use crate::error::{io_error, Error, Result};
-use crate::ext4::{Ext4Error, Ext4Image};
-use crate::framework_tools::{
-    is_fsck_erofs, resolve_debugfs_tool, resolve_erofs_tool, run_framework_tool, FrameworkTool,
-    ToolContext, ToolRunOptions, EXTRACT_TIMEOUT,
-};
+use crate::ext4::Ext4Image;
 use crate::hash::sha256_prefix8;
-use crate::layout::{mkdtemp, FrameworkLayout};
+use crate::layout::{is_drive_relative_name, mkdtemp, FrameworkLayout};
 use crate::zip::{extract_zip_entry, list_zip_entries};
 
 const MAX_EXPANDED_ENTRY_BYTES: u64 = 8 * 1024 * 1024 * 1024;
@@ -42,6 +37,8 @@ pub struct ProcessFailure {
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ProcessResult {
     pub processed: u64,
+    /// Output names produced by more than one input; the later input wins.
+    pub duplicates: u64,
     pub outputs: Vec<PathBuf>,
     pub failures: Vec<ProcessFailure>,
 }
@@ -50,6 +47,7 @@ impl ProcessResult {
     pub fn to_json(&self) -> Value {
         json!({
             "processed": self.processed,
+            "duplicates": self.duplicates,
             "outputs": self
                 .outputs
                 .iter()
@@ -146,10 +144,19 @@ pub fn extract_dex_from_zip(
         if !entry.to_ascii_lowercase().ends_with(".dex") {
             continue;
         }
-        let mut name = entry.rsplit('/').next().unwrap_or(&entry).to_string();
+        // Split on both separators: a backslash in an entry name is a path
+        // separator on Windows, where it would escape the target directory.
+        let mut name = entry
+            .rsplit(['/', '\\'])
+            .next()
+            .unwrap_or(&entry)
+            .to_string();
+        if name.is_empty() || name == "." || name == ".." || is_drive_relative_name(&name) {
+            name = sha256_prefix8(entry.as_bytes());
+        }
         // Include a path digest for non-root entries so two nested
         // classes.dex files cannot silently overwrite each other.
-        if entry.trim_matches('/').contains('/') {
+        if entry.trim_matches(['/', '\\']).contains(['/', '\\']) {
             name = format!("{}_{}", sha256_prefix8(entry.as_bytes()), name);
         }
         let target = target_dir.join(format!("{prefix}_{name}"));
@@ -203,9 +210,24 @@ fn read_image_header(image_path: &Path) -> Result<Vec<u8>> {
     Ok(header)
 }
 
+/// Nested `original_apex` containers are unwrapped at most this deep; a real
+/// device nests once, so anything deeper is a malformed or hostile container.
+const MAX_APEX_NESTING: u32 = 8;
+
 /// Writes `apex_payload.img` from an `.apex` container into `target_dir` and
 /// returns its path. Nested `original_apex` containers are unwrapped first.
 pub fn extract_apex_payload(apex_file: &Path, target_dir: &Path) -> Result<PathBuf> {
+    extract_apex_payload_at(apex_file, target_dir, 0)
+}
+
+fn extract_apex_payload_at(apex_file: &Path, target_dir: &Path, depth: u32) -> Result<PathBuf> {
+    if depth > MAX_APEX_NESTING {
+        let label = apex_file.to_string_lossy().to_string();
+        return Err(Error::file(
+            format!("apex container nested deeper than {MAX_APEX_NESTING} levels"),
+            Some(&label),
+        ));
+    }
     std::fs::create_dir_all(target_dir)
         .map_err(|err| io_error(&format!("create '{}'", target_dir.display()), err))?;
     let container = apex_file.to_string_lossy().to_string();
@@ -213,7 +235,7 @@ pub fn extract_apex_payload(apex_file: &Path, target_dir: &Path) -> Result<PathB
     if names.iter().any(|name| name == "original_apex") {
         let nested = target_dir.join("original.apex");
         extract_zip_entry(&container, "original_apex", &nested.to_string_lossy())?;
-        return extract_apex_payload(&nested, target_dir);
+        return extract_apex_payload_at(&nested, target_dir, depth + 1);
     }
     if !names.iter().any(|name| name == "apex_payload.img") {
         return Err(Error::file(
@@ -226,186 +248,61 @@ pub fn extract_apex_payload(apex_file: &Path, target_dir: &Path) -> Result<PathB
     Ok(payload)
 }
 
-/// External-tool extraction for payload images the native reader rejects.
-/// The EROFS extractor is called with the flag set matching its binary name;
-/// everything else goes through `debugfs rdump`.
-pub fn extract_filesystem_image(
-    image_path: &Path,
-    extract_dir: &Path,
-    tools: &ToolContext,
-) -> Result<()> {
-    std::fs::create_dir_all(extract_dir)
-        .map_err(|err| io_error(&format!("create '{}'", extract_dir.display()), err))?;
-    let image = image_path.to_string_lossy().to_string();
-    let directory = extract_dir.to_string_lossy().to_string();
-    if detect_filesystem_type(image_path)? == FILESYSTEM_EROFS {
-        let tool = resolve_erofs_tool(tools)?;
-        let args = if is_fsck_erofs(&tool) {
-            vec![
-                format!("--extract={directory}"),
-                "--overwrite".to_string(),
-                image,
-            ]
-        } else {
-            vec![
-                "-i".to_string(),
-                image,
-                "-x".to_string(),
-                "-f".to_string(),
-                "-o".to_string(),
-                directory,
-            ]
-        };
-        run_checked_framework_tool(&tool, &args, tools)?;
-        return Ok(());
-    }
-    let tool = resolve_debugfs_tool(tools)?;
-    let args = vec!["-R".to_string(), format!("rdump ./ {directory}"), image];
-    run_checked_framework_tool(&tool, &args, tools)
-}
-
-fn run_checked_framework_tool(
-    tool: &FrameworkTool,
-    args: &[String],
-    tools: &ToolContext,
-) -> Result<()> {
-    let options = ToolRunOptions {
-        timeout: Some(EXTRACT_TIMEOUT),
-        input: None,
-    };
-    let result = run_framework_tool(tool, args, &options, tools)?;
-    if result.status != Some(0) {
-        let detail = {
-            let stderr = result.stderr.trim();
-            if !stderr.is_empty() {
-                stderr.to_string()
-            } else {
-                let stdout = result.stdout.trim();
-                if !stdout.is_empty() {
-                    stdout.to_string()
-                } else {
-                    match result.status {
-                        Some(code) => format!("exit {code}"),
-                        None => "exit null".to_string(),
-                    }
-                }
-            }
-        };
-        return Err(Error::file(
-            format!("{}: {detail}", tool.argv.join(" ")),
-            None,
-        ));
-    }
-    Ok(())
-}
-
-fn can_fall_back_ext4(error: &Ext4Error) -> bool {
-    matches!(
-        error,
-        Ext4Error::NotExt4Image | Ext4Error::UnsupportedFeature(_)
-    )
-}
-
-fn can_fall_back_erofs(error: &ErofsError) -> bool {
-    matches!(
-        error,
-        ErofsError::NotErofsImage | ErofsError::Unsupported(_)
-    )
-}
-
-/// Native payload extraction. Returns `false` only when the payload is not an
-/// ext4/EROFS image or uses a feature the native readers reject, so the caller
-/// can fall back to the external tools; any other error is a hard failure.
-pub fn extract_payload_natively(
+/// Extracts one APEX payload image (ext4 or EROFS) into `extract_dir`.
+/// Extraction is native only: an image that is neither ext4 nor EROFS, or that
+/// uses a feature the native readers do not implement, fails the input instead
+/// of falling back to `debugfs` / `erofs-utils`.
+pub fn extract_payload_image(
     image_path: &Path,
     extract_dir: &Path,
     filter: &dyn Fn(&str) -> bool,
-) -> Result<bool> {
+) -> Result<()> {
     let image_path_string = image_path.to_string_lossy().to_string();
     let extract_dir_string = extract_dir.to_string_lossy().to_string();
     match detect_filesystem_type(image_path)? {
         FILESYSTEM_EXT4 => {
-            let image = match Ext4Image::open(&image_path_string) {
-                Ok(image) => image,
-                Err(err) => {
-                    return if can_fall_back_ext4(&err) {
-                        Ok(false)
-                    } else {
-                        Err(Error::file(err.to_string(), Some(&image_path_string)))
-                    }
-                }
-            };
-            let outcome = (|| -> Result<bool> {
+            let image = Ext4Image::open(&image_path_string)
+                .map_err(|err| Error::file(err.to_string(), Some(&image_path_string)))?;
+            let outcome = (|| -> Result<()> {
                 std::fs::create_dir_all(extract_dir)
                     .map_err(|err| io_error(&format!("create '{}'", extract_dir.display()), err))?;
-                match image.extract_to(&extract_dir_string, filter) {
-                    Ok(()) => Ok(true),
-                    Err(err) => {
-                        if can_fall_back_ext4(&err) {
-                            Ok(false)
-                        } else {
-                            Err(Error::file(err.to_string(), Some(&image_path_string)))
-                        }
-                    }
-                }
+                image
+                    .extract_to(&extract_dir_string, filter)
+                    .map_err(|err| Error::file(err.to_string(), Some(&image_path_string)))
             })();
             image.close();
             outcome
         }
         FILESYSTEM_EROFS => {
-            let image = match ErofsImage::open(&image_path_string) {
-                Ok(image) => image,
-                Err(err) => {
-                    return if can_fall_back_erofs(&err) {
-                        Ok(false)
-                    } else {
-                        Err(Error::file(err.to_string(), Some(&image_path_string)))
-                    }
-                }
-            };
-            let outcome = (|| -> Result<bool> {
+            let image = ErofsImage::open(&image_path_string)
+                .map_err(|err| Error::file(err.to_string(), Some(&image_path_string)))?;
+            let outcome = (|| -> Result<()> {
                 std::fs::create_dir_all(extract_dir)
                     .map_err(|err| io_error(&format!("create '{}'", extract_dir.display()), err))?;
-                match image.extract_to(&extract_dir_string, filter) {
-                    Ok(()) => Ok(true),
-                    Err(err) => {
-                        if can_fall_back_erofs(&err) {
-                            Ok(false)
-                        } else {
-                            Err(Error::file(err.to_string(), Some(&image_path_string)))
-                        }
-                    }
-                }
+                image
+                    .extract_to(&extract_dir_string, filter)
+                    .map_err(|err| Error::file(err.to_string(), Some(&image_path_string)))
             })();
             image.close();
             outcome
         }
-        // ext2 or unknown magic: leave the image to the external tools.
-        _ => Ok(false),
+        other => Err(Error::file(
+            format!("unsupported payload image: {other} is neither ext4 nor EROFS"),
+            Some(&image_path_string),
+        )),
     }
 }
 
 /// Expands one `.apex`/`.capex` input into dex outputs inside `work_dir`.
 /// Every output is namespaced with `prefix` so modules shipping same-named
 /// jars cannot overwrite each other.
-pub fn process_apex(
-    apex_file: &Path,
-    work_dir: &Path,
-    prefix: &str,
-    tools: &ToolContext,
-) -> Result<()> {
+pub fn process_apex(apex_file: &Path, work_dir: &Path, prefix: &str) -> Result<()> {
     let apex_dir = work_dir.join(format!("apex-{}", file_stem_name(apex_file)));
     let payload_dir = apex_dir.join("payload");
     let payload = extract_apex_payload(apex_file, &apex_dir)?;
     let nested_filter =
         |relative: &str| APEX_CONTENT_EXTENSIONS.contains(&extension_of_str(relative).as_str());
-    let extracted = extract_payload_natively(&payload, &payload_dir, &nested_filter)?;
-    if !extracted {
-        // Payload or feature the native readers reject: extract with the
-        // external tools (debugfs / erofs-utils from PATH; Linux/macOS only).
-        let _ = std::fs::remove_dir_all(&payload_dir);
-        extract_filesystem_image(&payload, &payload_dir, tools)?;
-    }
+    extract_payload_image(&payload, &payload_dir, &nested_filter)?;
     for nested in walk_framework_inputs(&payload_dir)? {
         let extension = extension_lower(&nested);
         if extension == ".jar" || extension == ".apk" {
@@ -429,7 +326,7 @@ pub fn process_apex(
 /// Expands every supported source file into a staging directory and swaps it
 /// in as the layout's `out_tmp_dir`. Nothing is replaced unless every input
 /// processed, so a failed run keeps the previous output.
-pub fn process_framework(layout: &FrameworkLayout, tools: &ToolContext) -> Result<ProcessResult> {
+pub fn process_framework(layout: &FrameworkLayout) -> Result<ProcessResult> {
     let mut result = ProcessResult::default();
     let files = walk_framework_inputs(&layout.source_dir)?;
     if files.is_empty() {
@@ -455,7 +352,7 @@ pub fn process_framework(layout: &FrameworkLayout, tools: &ToolContext) -> Resul
 
             let work = mkdtemp(&layout.out_dir, ".input-")
                 .map_err(|err| io_error(&format!("create '{}'", layout.out_dir.display()), err))?;
-            let step = (|| -> Result<()> {
+            let step = (|| -> Result<u64> {
                 match extension.as_str() {
                     ".dex" => {
                         let target = work.join(format!("{prefix}.dex"));
@@ -466,7 +363,7 @@ pub fn process_framework(layout: &FrameworkLayout, tools: &ToolContext) -> Resul
                     ".jar" | ".apk" => {
                         extract_dex_from_zip(file, &work, &prefix)?;
                     }
-                    _ => process_apex(file, &work, &prefix, tools)?,
+                    _ => process_apex(file, &work, &prefix)?,
                 }
                 let mut names: Vec<String> = std::fs::read_dir(&work)
                     .map_err(|err| io_error(&format!("read directory '{}'", work.display()), err))?
@@ -474,6 +371,7 @@ pub fn process_framework(layout: &FrameworkLayout, tools: &ToolContext) -> Resul
                     .map(|entry| entry.file_name().to_string_lossy().to_string())
                     .collect();
                 names.sort();
+                let mut duplicates = 0_u64;
                 for name in names {
                     let source = work.join(&name);
                     if !source.is_file() {
@@ -481,20 +379,25 @@ pub fn process_framework(layout: &FrameworkLayout, tools: &ToolContext) -> Resul
                     }
                     let destination = staging.join(&name);
                     if destination.exists() {
-                        return Err(Error::file(
-                            format!("duplicate output {name} from {}", file.display()),
-                            Some(&file.to_string_lossy()),
-                        ));
+                        // The TypeScript CLI let the later input win: the same
+                        // output name legitimately comes from two paths when a
+                        // module was captured more than once (a runtime
+                        // `/apex/<module>@<version>` tree and its image, say).
+                        // Overwrite and count it instead of failing the run.
+                        duplicates += 1;
                     }
                     std::fs::copy(&source, &destination).map_err(|err| {
                         io_error(&format!("copy '{}'", destination.display()), err)
                     })?;
                 }
-                Ok(())
+                Ok(duplicates)
             })();
             let _ = std::fs::remove_dir_all(&work);
             match step {
-                Ok(()) => result.processed += 1,
+                Ok(duplicates) => {
+                    result.processed += 1;
+                    result.duplicates += duplicates;
+                }
                 Err(err) => result.failures.push(ProcessFailure {
                     path: file.to_string_lossy().to_string(),
                     error: err.message,
@@ -802,7 +705,7 @@ mod tests {
         );
         let target = root.join("payload");
         let filter = |relative: &str| relative.ends_with(".dex");
-        assert!(extract_payload_natively(&image, &target, &filter).expect("extract"));
+        extract_payload_image(&image, &target, &filter).expect("extract");
         assert_eq!(
             std::fs::read(target.join("classes.dex")).unwrap(),
             b"payload dex"
@@ -810,13 +713,19 @@ mod tests {
     }
 
     #[test]
-    fn unsupported_erofs_feature_falls_back() {
-        let root = temp_dir("erofs-fallback");
+    fn unsupported_erofs_feature_is_a_hard_error() {
+        let root = temp_dir("erofs-unsupported");
         let image = root.join("apex_payload.img");
         write_file(&image, &synthesized_erofs(0x100));
         let target = root.join("payload");
         let filter = |relative: &str| relative.ends_with(".dex");
-        assert!(!extract_payload_natively(&image, &target, &filter).expect("no hard error"));
+        let error = extract_payload_image(&image, &target, &filter).unwrap_err();
+        assert_eq!(error.code, "FILE_ERROR");
+        assert!(
+            error.message.contains("unsupported image feature"),
+            "{}",
+            error.message
+        );
     }
 
     #[test]
@@ -826,7 +735,7 @@ mod tests {
         let root = temp_dir("erofs-fixture");
         let target = root.join("payload");
         let filter = |relative: &str| relative.ends_with(".jar") || relative.ends_with(".bin");
-        assert!(extract_payload_natively(&fixture, &target, &filter).expect("extract"));
+        extract_payload_image(&fixture, &target, &filter).expect("extract");
         let module = target.join("javalib/module.jar");
         assert_eq!(std::fs::metadata(&module).unwrap().len(), 171_000);
         let bytes = std::fs::read(&module).unwrap();
@@ -849,7 +758,7 @@ mod tests {
         let apex = layout.source_dir.join("apex/com.android.mod/classes.apex");
         zip_file(&apex, &[("apex_payload.img", payload.as_slice())]);
 
-        let result = process_framework(&layout, &ToolContext::from_process_env()).expect("process");
+        let result = process_framework(&layout).expect("process");
         assert_eq!(result.processed, 1);
         assert!(result.failures.is_empty());
         let names: Vec<String> = result
@@ -871,7 +780,7 @@ mod tests {
             &layout.source_dir.join("one.jar"),
             &[("classes.dex", b"one")],
         );
-        let first = match process_framework(&layout, &ToolContext::from_process_env()) {
+        let first = match process_framework(&layout) {
             Ok(value) => value,
             Err(err) => panic!("first failed: {} {:?}", err.message, err.details),
         };
@@ -879,66 +788,75 @@ mod tests {
         assert!(layout.out_tmp_dir.join("one_classes.dex").exists());
         assert!(!PathBuf::from(format!("{}.previous", layout.out_tmp_dir.display())).exists());
 
-        // Same prefix from two inputs: the second becomes a duplicate output
-        // and the run must fail without replacing the previous out_tmp.
-        zip_file(
-            &layout.source_dir.join("dup.jar"),
-            &[("classes.dex", b"dup-jar")],
-        );
-        zip_file(
-            &layout.source_dir.join("dup.apk"),
-            &[("classes.dex", b"dup-apk")],
-        );
-        let error = process_framework(&layout, &ToolContext::from_process_env()).unwrap_err();
+        // A broken input still fails the run and has to leave the previous
+        // out_tmp (and its `.previous` slot) untouched.
+        std::fs::write(layout.source_dir.join("broken.jar"), b"not a zip").unwrap();
+        let error = process_framework(&layout).unwrap_err();
         assert_eq!(error.code, "PROCESS_FAILED");
         assert!(
             error.message.contains("1 framework inputs failed"),
             "{}",
             error.message
         );
-        let failures = error
-            .details
-            .as_ref()
-            .expect("failure details")
-            .get("failures")
-            .expect("failure details");
-        assert!(failures
-            .to_string()
-            .contains("duplicate output dup_classes.dex"));
+        let details = error.details.as_ref().expect("failure details");
+        assert!(format!("{details:?}").contains("broken.jar"), "{details:?}");
         assert!(layout.out_tmp_dir.join("one_classes.dex").exists());
-        assert!(!layout.out_tmp_dir.join("dup_classes.dex").exists());
         assert!(!PathBuf::from(format!("{}.previous", layout.out_tmp_dir.display())).exists());
     }
 
     #[test]
-    fn missing_external_tools_fail_actionably() {
-        let (root, layout) = test_layout("missing-tools");
-        let payload = synthesized_erofs(0x100);
-        let apex = layout.source_dir.join("unsupported.apex");
-        zip_file(&apex, &[("apex_payload.img", payload.as_slice())]);
-        let mut tools = ToolContext::from_process_env();
-        tools
-            .env
-            .insert("AFE_FSCK_EROFS".to_string(), String::new());
-        tools
-            .env
-            .insert("AFE_EXTRACT_EROFS".to_string(), String::new());
-        tools.env.insert("AFE_DEBUGFS".to_string(), String::new());
-        tools.env.insert(
-            "PATH".to_string(),
-            root.join("empty").to_string_lossy().to_string(),
+    fn process_framework_tolerates_duplicate_outputs() {
+        // `dup.jar` and `dup.apk` both resolve to `dup_classes.dex`. The
+        // TypeScript CLI let the later input win, so the run succeeds, the
+        // collision is counted and the last writer's bytes are kept.
+        let (_root, layout) = test_layout("duplicate");
+        zip_file(
+            &layout.source_dir.join("dup.apk"),
+            &[("classes.dex", b"dup-apk")],
         );
-        let error = process_framework(&layout, &tools).unwrap_err();
+        zip_file(
+            &layout.source_dir.join("dup.jar"),
+            &[("classes.dex", b"dup-jar")],
+        );
+        let result = process_framework(&layout).expect("process");
+        assert_eq!(result.processed, 2);
+        assert_eq!(result.duplicates, 1);
+        assert!(result.failures.is_empty());
+        assert_eq!(
+            std::fs::read(layout.out_tmp_dir.join("dup_classes.dex")).unwrap(),
+            b"dup-jar"
+        );
+        assert_eq!(result.to_json()["duplicates"], 1);
+    }
+
+    #[test]
+    fn unsupported_payload_images_fail_without_fallbacks() {
+        let (_root, layout) = test_layout("no-fallback");
+        // An EROFS image using a feature the native reader does not implement
+        // and a blob that is not a filesystem image at all both fail the run:
+        // there is no external extractor left to hand them to.
+        let payload = synthesized_erofs(0x100);
+        zip_file(
+            &layout.source_dir.join("unsupported.apex"),
+            &[("apex_payload.img", payload.as_slice())],
+        );
+        zip_file(
+            &layout.source_dir.join("garbage.apex"),
+            &[("apex_payload.img", b"not an image".as_slice())],
+        );
+        let error = process_framework(&layout).unwrap_err();
         assert_eq!(error.code, "PROCESS_FAILED");
+        assert!(
+            error.message.contains("2 framework inputs failed"),
+            "{}",
+            error.message
+        );
         let details = format!("{:?}", error.details);
-        // The message is platform-specific: Windows reports that erofs-utils
-        // has no native binary instead of the install hint.
-        let expected = if tools.platform == "win32" {
-            crate::framework_tools::EROFS_MISSING_WIN32
-        } else {
-            crate::framework_tools::EROFS_MISSING
-        };
-        assert!(details.contains(expected), "{}", details);
+        assert!(details.contains("unsupported image feature"), "{details}");
+        assert!(
+            details.contains("unsupported payload image: ext2"),
+            "{details}"
+        );
         // Nothing was written: out_tmp is only swapped in after every input
         // has been processed, so a failed run must not create it at all.
         assert!(
@@ -954,7 +872,7 @@ mod tests {
             &layout.source_dir.join("one.jar"),
             &[("classes.dex", b"one")],
         );
-        process_framework(&layout, &ToolContext::from_process_env()).expect("process");
+        process_framework(&layout).expect("process");
         assert_eq!(count_framework_files(&layout.out_tmp_dir), 1);
         assert_eq!(count_framework_files(&layout.out_tmp_dir.join("nope")), 0);
         clean_framework_outputs(&layout, false).expect("clean");

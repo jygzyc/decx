@@ -18,7 +18,7 @@ the maintainer.
 
 ```console
 $ decx install kuna          # download the release and link the launcher
-$ decx run kuna --help       # exec the installed launcher, args untouched
+$ decx -m kuna --help        # exec the installed launcher, args untouched
 $ decx version               # CLI version
 $ decx help install          # help for the manager or one command
 ```
@@ -32,16 +32,29 @@ Failures use the DECX envelope:
 
 `decx install <tool>` resolves the host platform from the manifest and either
 installs the pinned release asset -- downloaded to a temp dir and
-sha256-verified against the release's `SHA256SUMS` asset when one is published,
+sha256-verified against the manifest-declared checksum asset (a missing or
+unreadable declared checksum aborts installation),
 with any release `extraAssets` (Kuna's compiled SLEIGH specs) downloaded
-alongside -- or, with `--from-source`, builds the checkout the manifest declares
-as buildable (AFE).  A manifest that pins `release.version` is what an install
+alongside.  A manifest that pins `release.version` is what an install
 reproduces: that is the tag whose asset names were verified against upstream,
 and upstream renames files between releases (Kuna's archives gained a `v` in the
 file name in v1.508); `--version <tag>` installs one specific tag instead.
 `decx install droidasc` needs no download: it builds a private venv over
 `subprojects/decx-droidasc/source` and installs a self-contained payload under
-`share/droidasc/`.  `decx install afe` uses a prebuilt `tools-v*` archive when one
+`share/droidasc/`.  The environment is created fresh in `share/droidasc/.venv`
+with the Python the manifest's `requires` selects -- an environment that is
+already there is refused, never reused -- and `requirements.txt` goes in with
+`uv pip install` when a `uv` is on `PATH` (or reachable as `pipx run uv`),
+otherwise with the interpreter's own `pip`.  When there is no checkout to build
+from -- a packaged CLI, or a clone that never initialised submodules -- the
+install falls back to the release's source archive, verifies its checksum and
+builds the same payload from it. Python environments are initialized at their
+final install path, so dependency console scripts never retain a temporary
+interpreter path. The previous payload and executables remain backed up until
+environment initialization, verification and PROVENANCE writing succeed;
+a failure restores them.
+
+`decx install afe` uses a prebuilt `tools-v*` archive when one
 carries an AFE build for the platform, and otherwise builds
 `subprojects/decx-afe` with cargo.
 
@@ -51,15 +64,21 @@ macOS and Linux, a generated `.cmd` shim on Windows.  A file that decx did not
 create is never replaced -- the install reports the conflict unless `--force`
 asks for it.  No command edits shell startup files, and the JSON result reports
 whether the link directory is on `PATH` together with the line to add when it is
-not.
-`decx run [options] <tool> [args...]` executes the installed launcher with every
-argument after the tool id passed through unchanged, inherits stdio and forwards
-the exit code; it never translates analysis commands.  Options before the tool
-id (`--home`, `--subprojects`, `--pretty`) belong to decx, so
-`decx run kuna --version` asks Kuna for its version.
+not. PATH links are set up after the core install commits; link conflicts or
+setup failures produce warnings without undoing the installed tool. The tool
+remains callable with `decx -m <tool>`.
+`decx -m <tool> [args...]` (or `--module <tool>`) executes the installed
+launcher with every argument after the tool id passed through unchanged,
+inherits stdio and forwards the exit code; it never translates analysis
+commands. The selected install root is passed as `DECX_HOME`. Python launchers
+initialize `VIRTUAL_ENV`, prepend the private interpreter directory to `PATH`,
+and expose the installed payload through `PYTHONPATH`, so child Python processes
+can import the tool from any working directory without activating a shell.
+These changes apply only to the launched process and its children.  Options before the module (`--home`, `--subprojects`, `--pretty`)
+belong to decx, so `decx -m kuna --version` asks Kuna for its version.
 
-The agent skills this repository ships (`skills/`: the process skills plus one skill per
-tool) are loaded by the agent harness directly from the checkout: point it at `skills/`,
+The agent skills this repository ships (`skills/`: one skill for every tool) are
+loaded by the agent harness directly from the checkout: point it at `skills/`,
 or at the repository root.  The manager has no skill commands, and no skill files are
 copied into `$DECX_HOME`.
 
@@ -69,7 +88,7 @@ copied into `$DECX_HOME`.
 decx/
 ├── src/
 │   ├── cli.ts          argument parsing, dispatch, output envelope
-│   ├── platform.ts     `macos-arm64` / `windows-x64` / ... keys
+│   ├── platform.ts     `win`/`darwin`/`linux` × `arm64`/`amd64` platform keys
 │   ├── config.ts       DECX_HOME resolution and paths
 │   ├── manifest.ts     tool manifest schema, loading and validation
 │   ├── gh.ts           GitHub release resolution and asset downloads
@@ -108,50 +127,77 @@ A manifest is data, never code; adding a tool means adding a JSON file.
 
 ```json
 {
-  "manifest": 1,
-  "id": "kuna",
-  "kind": "binary",
+  "manifest": 2,
   "summary": "Native decompiler for ELF/PE/Mach-O (upstream Kuna)",
   "env": { "KUNA_SPECS": "{prefix}/specs" },
   "release": {
     "repository": "Noelo-Lab/kuna",
-    "version": "1.515",
-    "assets": { "macos-arm64": "kuna-v{version}-macos-arm64.tar.gz" },
-    "extraAssets": { "specs": "kuna-v{version}-specs.tar.gz" }
+    "assets": { "darwin-arm64": "kuna-v{version}-macos-arm64.zip" },
+    "extraAssets": { "specs": "kuna-v{version}-specs.zip" }
   },
   "bins": ["kuna", "decomp_dbg", "slacomp"],
-  "launch": { "bin": "kuna" },
-  "verify": { "args": ["--version"] }
+  "verify": "--version"
 }
 ```
 
 | Field | Meaning |
 |---|---|
-| `kind` | `binary` (release artifact and/or source build) or `python-venv` (upstream Python payload plus a private virtualenv) |
-| `release` | `owner/repo` plus per-platform asset names; `{version}` is substituted, `checksums` names the `sha256  file` asset, `extraAssets` are downloaded for every platform (Kuna's compiled SLEIGH specs), `allowSourceFallback` builds from `source/` when no release can be resolved |
-| `source` | vendored checkout to build from (`subprojects/<dir>`), with the cargo manifest, packages and optional build `env` (`{version}` = the pinned version, for tools whose release CI bakes it into `--version`) |
-| `env` | environment the generated launchers export before running the packaged binary (`{prefix}` = the payload directory, `{version}` = the installed version); declaring it moves the binaries to `share/<id>/bin` and puts launchers in `bin/` |
-| `python` | `python-venv` payload: checkout path, entry point, requirements, payload directories |
-| `bins` | executables the install must produce; required for kind `binary`, taken from the release archive or from the cargo build |
-| `requires` | runtime floors checked by `install` (ASC Python >= 3.10; Rust for source builds) |
-| `launch`, `verify` | what to run afterwards and how to verify a fresh install |
+| `summary` | one line shown by `list` (required; everything else has a convention) |
+| `release` | the install source: `repository` (`owner/repo`, default `jygzyc/decx`), `tagPrefix` (default `<id>-v`), exactly one of `asset` (a single template) or `assets` (per-platform names); `{version}`, `{os}` and `{arch}` are substituted at install time. `checksums` names the `sha256  filename` asset (`<id>-SHA256SUMS.txt` by default), `extraAssets` are downloaded for every platform (Kuna's compiled SLEIGH specs) |
+| `python` | its presence makes the tool `python-venv`: the payload comes from the vendored checkout `subprojects/decx-<id>/source` when there is one, otherwise from the release's source archive. `install` creates the environment at `{ venv }` (`.venv` by default) inside the payload from `{ entry, requirements, payload }` and generates the launcher (`bins` is not used). The environment is always created fresh -- one that already exists is refused, never reused -- and `requirements` go in with `uv pip install` when a uv is on `PATH`, else with the venv's own pip |
+| `bins` | executables the release archive must contain (binary tools; the venv launcher is generated) |
+| `env` | environment the generated launchers export (`{prefix}` = the payload directory, `{version}` = the installed version); declaring it moves the binaries to `share/<id>/bin` and puts wrappers in `bin/` |
+| `launch` | launcher name inside `bin/`; the first `bins` entry by default |
+| `verify` | the probe command run through the launcher after install, e.g. `--version` |
+| `requires` | runtime floors `install` checks before staging anything (`{ "python": ">=3.10" }`) |
 
-Platform keys are `macos-{x64,arm64}`, `linux-{x64,arm64}`,
-`windows-{x64,arm64}` -- the same vocabulary the install scripts and upstream
-release assets use.
+The venv install records the interpreter it used in PROVENANCE (`python`), the
+manager that installed the requirements (`python_manager`) and the interpreter
+path it will run (`venv`).
+
+`kind`, `id`, `tagPrefix` and `checksums` are derived — a `python` block makes a
+tool `python-venv`, its absence `binary`; the tool id is the subproject
+directory name without the `decx-` prefix. Platforms are two axes joined as
+`<os>-<arch>`: `win`, `darwin`, `linux` × `arm64`, `amd64` (e.g. `darwin-arm64`,
+`win-amd64`); an `assets` map may additionally use `any` for a
+platform-independent payload. `--version <tag>` picks a release explicitly,
+otherwise `install` resolves the newest stable tag with the prefix. For a Python
+checkout install, an explicit `--version` must match the checkout's exact tag;
+a mismatch or an untagged checkout is rejected rather than silently ignoring
+the requested version.
 
 ## Development
 
 ```console
-$ npm ci                      # dev deps only (typescript, @types/node)
-$ npm test                    # node --test, no build step
+$ npm ci                      # dev deps only (esbuild, typescript, @types/node)
+$ npm test                    # offline tests, including isolated bundle smoke
 $ npm run typecheck           # tsc --noEmit
 $ node src/cli.ts version
 ```
 
-Adding a tool: create `subprojects/decx-<id>/` with its own `README.md`, a
-`skills/decx-<id>/` directory inside it holding the skill, and the `decx-<id>.json`
-manifest (the tool id is the subproject directory name without the `decx-` prefix),
-then run `npm test` — the manifest tests load every manifest under `subprojects/` and
-hold each shipped manifest to the platform, release-asset and launcher rules.  The
-skill is validated by `python3 skills/check-skills.py`, which walks every `skills/` root.
+## Single-file release
+
+`npm run build` produces **`dist/decx.mjs`**, a single Node 22.18+ executable
+with the package version and all tool manifests embedded by esbuild. Copy that
+file anywhere and run `node decx.mjs version` or `node decx.mjs help`: no adjacent
+package.json, manifests, node_modules or runtime temporary manifests are needed.
+Node itself and the tools being installed are not bundled.
+
+`npm run pack` archives that executable plus LICENSE and this README as
+`artifacts/decx-<version>.tar.gz`, with `decx-SHA256SUMS.txt` alongside it.
+After extracting, run `node decx-<version>/decx.mjs install <tool>`.
+`npm run build` also runs an offline smoke check by copying only the executable
+into a temporary empty directory and checking version, help, tool discovery and
+the `--subprojects` override.
+
+Direct source execution (`node src/cli.ts …`) still reads package.json and the
+repository's `subprojects/`. In either mode, `--subprojects <dir>` replaces the
+default manifest set with that directory's manifests; it does not merge them.
+
+Adding a tool: create `subprojects/decx-<id>/` with its own `README.md` and the
+`decx-<id>.json` manifest (the tool id is the subproject directory name without the
+`decx-` prefix), add its contract to `skills/decx-tool/` (a routing-gate row in
+`SKILL.md` plus `references/<id>.md`), then run `npm test` — the manifest tests load
+every manifest under `subprojects/` and hold each shipped manifest to the platform,
+release-asset and launcher rules.  The skill is validated by
+`python3 skills/check-skills.py`, which walks every `skills/` root.

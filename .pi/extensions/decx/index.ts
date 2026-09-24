@@ -32,7 +32,10 @@ import { CONFIG_DIR_NAME, DEFAULT_MAX_BYTES, DEFAULT_MAX_LINES, getAgentDir, tru
 import { Type } from 'typebox';
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { nodeFs } from './node-fs.ts';
+import { nodeFs, operationQueue, withWorkspaceLock } from './node-fs.ts';
+import { PHASES, toolBlock, type Phase } from './policy.ts';
+import { proposeCandidate, gateCandidate } from './evolution.ts';
+import { wikiRefreshTask } from './wiki-command.ts';
 import {
   applyMaintain,
   checkpointBlock,
@@ -49,7 +52,6 @@ import {
   readSessionState,
   recordCheckpoint,
   readWorkspaceConfig,
-  recordProposal,
   requireWorkspace,
   resyncIndex,
   skillDirs,
@@ -57,6 +59,7 @@ import {
   status,
   writeSessionState,
   writeTrace,
+  WikiError,
   type CheckpointUnit,
   type LintFinding,
   type SessionState,
@@ -118,16 +121,26 @@ interface WorkspaceConfig {
   cwd: string;
   workspaces: Workspace[];
   checkpoints: CheckpointSettings;
+  /** Parse failure of `decx.json`; reported once per session instead of silently ignored. */
+  error?: string;
 }
 
 const DEFAULT_CHECKPOINTS: CheckpointSettings = { every: 7, unit: 'round', inject: true };
 
+/** `decx.json` is optional: a missing file is fine, a broken one is reported. */
 async function readConfig(cwd: string): Promise<RawConfig | undefined> {
   const path = join(cwd, CONFIG_DIR_NAME, 'extensions', 'decx.json');
+  let raw: string;
   try {
-    return JSON.parse(await readFile(path, 'utf8')) as RawConfig;
-  } catch {
-    return undefined;
+    raw = await readFile(path, 'utf8');
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined;
+    throw new WikiError('BAD_CONFIG', `cannot read ${path}: ${String(error)}`);
+  }
+  try {
+    return JSON.parse(raw) as RawConfig;
+  } catch (error) {
+    throw new WikiError('BAD_CONFIG', `${path} is not valid JSON: ${String(error)}`, 'fix or delete the file; decx.json is optional');
   }
 }
 
@@ -144,7 +157,7 @@ function checkpointSettings(parsed: RawConfig | undefined): CheckpointSettings {
 /** The pi session a handler runs in; only the parts this extension touches. */
 interface SessionCtx {
   cwd: string;
-  sessionManager?: { getSessionId?: () => string };
+  sessionManager?: { getSessionId?: () => string; getEntries?: () => { type: string; customType?: string; data?: unknown }[] };
   hasUI?: boolean;
   ui?: { notify(message: string, level?: string): void };
 }
@@ -161,6 +174,9 @@ function sessionKey(ctx: SessionCtx): string {
 
 export default function decx(pi: ExtensionAPI): void {
   const base = nodeFs();
+  const serialize = operationQueue();
+  let phase: Phase = 'inference';
+  let maintenanceContext = false;
   const fs: WikiFs = {
     ...base,
     // Wiki writes are file mutations: keep them in pi's queue so the built-in
@@ -171,16 +187,25 @@ export default function decx(pi: ExtensionAPI): void {
       });
     },
   };
+  const mutate = <T>(ws: Workspace, run: () => Promise<T>): Promise<T> => serialize(() => withWorkspaceLock(ws.root, run));
   const stateDir = join(getAgentDir(), 'decx', 'sessions');
   let cache: WorkspaceConfig | undefined;
   let session: SessionState | undefined;
   let sessionFor = '';
 
+  let configNotified = '';
   const config = async (cwd: string): Promise<WorkspaceConfig> => {
     if (cache === undefined || cache.cwd !== cwd) {
-      const parsed = await readConfig(cwd);
       const configured = await readWorkspaceConfig(join(cwd, CONFIG_DIR_NAME, 'extensions', 'decx.json'), fs);
-      cache = { cwd, workspaces: await discoverWorkspaces(cwd, fs, configured), checkpoints: checkpointSettings(parsed) };
+      let parsed: RawConfig | undefined;
+      let error: string | undefined;
+      try {
+        parsed = await readConfig(cwd);
+      } catch (problem) {
+        // A broken config must not quietly disable checkpoints and workspaces.
+        error = failure(problem).message;
+      }
+      cache = { cwd, workspaces: await discoverWorkspaces(cwd, fs, configured), checkpoints: checkpointSettings(parsed), error };
     }
     return cache;
   };
@@ -254,7 +279,7 @@ export default function decx(pi: ExtensionAPI): void {
     ) {
       try {
         const [workspace] = await pick(ctx.cwd, params.workspace);
-        const trace = await writeTrace(workspace as Workspace, params, fs);
+        const trace = await mutate(workspace as Workspace, () => writeTrace(workspace as Workspace, params, fs));
         return { content: [{ type: 'text' as const, text: `recorded ${trace.path}` }], details: trace };
       } catch (error) {
         throw failure(error);
@@ -273,7 +298,7 @@ export default function decx(pi: ExtensionAPI): void {
       'Patterns and the index are the wiki working set: logs.md and skill-impact.md stay at their seeded state by default, so never invent a log entry or a ledger row.',
       'Write wiki/ only through these tools — never edit a page by hand.',
       'The wiki is shared by every skill in the workspace: keep the index listing every pattern exactly once, and never nest a wiki inside a skill.',
-      'A pattern page needs frontmatter (name, track) and the sections "## Match", "## Non-obvious", "## Reject"; Match is the trigger (keep its opener to one line — it becomes the index row), Non-obvious the mechanism-level insight, Reject when the finding is not reportable. track is one of android-app, android-framework, android-poc, native — a pattern is target knowledge, so DECX's own machinery (manager, report, PoC spec, analysis process) never gets a card.',
+      'A pattern page needs frontmatter (name, track) and the sections "## Match", "## Non-obvious", "## Reject"; Match is the trigger (keep its opener to one line — it becomes the index row), Non-obvious the mechanism-level insight, Reject when the finding is not reportable. track is one of android-app, android-framework, android-poc, native — a pattern is target knowledge, so DECX\'s own machinery (manager, report, PoC spec, analysis process) never gets a card.',
       'Mine the raw traces: state what the root cause was, the exact command sequence that proved it, and the workarounds you needed.',
     ],
     parameters: Type.Object({ workspace: WORKSPACE, patch: PATCH }),
@@ -286,7 +311,7 @@ export default function decx(pi: ExtensionAPI): void {
     ) {
       try {
         const [workspace] = await pick(ctx.cwd, params.workspace);
-        const result = await applyMaintain(workspace as Workspace, params.patch, fs);
+        const result = await mutate(workspace as Workspace, () => applyMaintain(workspace as Workspace, params.patch, fs));
         const parts = [
           result.created.length > 0 ? `created ${result.created.join(', ')}` : '',
           result.updated.length > 0 ? `updated ${result.updated.join(', ')}` : '',
@@ -300,38 +325,39 @@ export default function decx(pi: ExtensionAPI): void {
   });
 
   pi.registerTool({
-    name: 'decx_propose',
-    label: 'Decx Propose',
-    description:
-      'Record one atomic proposal to change a skill (SKILL.md, PURPOSE.md or a reference) in wiki/skill-impact.md, with the evidence that justifies it and, once gated, the validation score. Pass an existing id to mark a proposal accepted or rejected and record the outcome. A rejected proposal rolls the skill back; the wiki and this ledger stay. This tool only records: it never edits the skill, so apply the accepted change yourself and re-run decx_check.',
-    promptSnippet: 'Record a one-skill proposal in the ledger',
-    promptGuidelines: [
-      'One proposal changes exactly one file in one skill.',
-      'Cite the wiki evidence (pattern slug or raw trace id) that motivates the change.',
-      'The skill is distilled from the wiki, not the other way round — and it must stay complete for execution, so never replace an execution-critical rule with a pointer to the wiki.',
-      'Record the validation outcome honestly: "applied, no measurement" is a valid outcome, and a lint pass is not an evaluation.',
-    ],
+    name: 'decx_propose', label: 'Decx Propose',
+    description: 'Apply one existing skill-file candidate and save its previous content for rollback. Requires a consolidated pattern and a measured baseline trace. Only one candidate may be pending per workspace.',
     parameters: Type.Object({
-      workspace: WORKSPACE,
-      target: Type.String({ description: 'Skill file to change, e.g. "skills/decx-vulnhunt/SKILL.md"' }),
-      change: Type.String({ description: 'The atomic change, e.g. "add a provider-leak gate before reporting"' }),
-      evidence: Type.Optional(Type.String({ description: 'Pattern slug(s) or raw trace id(s) supporting it' })),
-      score: Type.Optional(Type.String({ description: 'Validation score that gated the change, e.g. "0.61 > 0.52 (baseline)" — omit while it is untested' })),
-      id: Type.Optional(Type.String({ description: 'Existing proposal id to update instead of creating one' })),
-      status: Type.Optional(Type.String({ description: 'proposed (default), accepted or rejected' })),
-      outcome: Type.Optional(Type.String({ description: 'What happened when it was applied, e.g. a score or a review verdict' })),
+      workspace: WORKSPACE, target: Type.String(), content: Type.String(), change: Type.String(),
+      pattern: Type.String({ description: 'wiki/patterns/<slug>.md' }),
+      split: Type.String({ description: 'Stable validation split identifier, including dataset revision and task IDs' }),
+      baseline: Type.Number({ minimum: 0, maximum: 1 }),
+      baselineTrace: Type.String({ description: 'raw/traces/<id>.md containing baseline evaluation evidence' }),
     }),
-    async execute(
-      _toolCallId: string,
-      params: { workspace: string; target: string; change: string; evidence?: string; score?: string; id?: string; status?: string; outcome?: string },
-      _signal: unknown,
-      _onUpdate: unknown,
-      ctx: { cwd: string },
-    ) {
+    async execute(_id, params, _signal, _update, ctx) {
       try {
-        const [workspace] = await pick(ctx.cwd, params.workspace);
-        const record = await recordProposal(workspace as Workspace, params as Parameters<typeof recordProposal>[1], fs);
-        return { content: [{ type: 'text' as const, text: `${record.id} ${record.status} in ${record.file}` }], details: record };
+        const [ws] = await pick(ctx.cwd, params.workspace);
+        const result = await mutate(ws, () => proposeCandidate(ws, params, fs, stateDir));
+        return { content: [{ type: 'text' as const, text: `candidate ${result.id} applied; evaluate it in a separate inference session, then decx_gate` }], details: result };
+      } catch (error) {
+        throw failure(error);
+      }
+    },
+  });
+
+  pi.registerTool({
+    name: 'decx_gate', label: 'Decx Gate',
+    description: 'Accept only a strictly better score on the baseline validation split; otherwise restore the skill. Raw and wiki persist. Scores are supplied measurements, not produced by this tool. reject=true rolls back without claiming evaluation.',
+    parameters: Type.Object({
+      workspace: WORKSPACE, split: Type.Optional(Type.String()),
+      candidate: Type.Optional(Type.Number({ minimum: 0, maximum: 1 })),
+      candidateTrace: Type.Optional(Type.String()), reject: Type.Optional(Type.Boolean()), outcome: Type.String(),
+    }),
+    async execute(_id, params, _signal, _update, ctx) {
+      try {
+        const [ws] = await pick(ctx.cwd, params.workspace);
+        const result = await mutate(ws, () => gateCandidate(ws, params, fs, stateDir));
+        return { content: [{ type: 'text' as const, text: `${result.id} ${result.status}` }], details: result };
       } catch (error) {
         throw failure(error);
       }
@@ -397,20 +423,59 @@ export default function decx(pi: ExtensionAPI): void {
     },
   });
 
+  pi.registerCommand('decx-wiki', {
+    description: 'Consolidate execution evidence into wiki patterns, sync the index and check structure; optionally specify a workspace name',
+    handler: async (args, ctx) => {
+      // Never change permissions underneath an in-flight inference tool call.
+      await ctx.waitForIdle();
+      try {
+        cache = undefined;
+        const task = await wikiRefreshTask(await workspaces(ctx.cwd), args, fs);
+        pi.appendEntry('decx-phase', { phase: 'maintain' });
+        phase = 'maintain';
+        maintenanceContext = true;
+        // Trigger the maintainer, rather than merely showing instructions to the user.
+        pi.sendUserMessage(task);
+      } catch (error) {
+        ctx.ui.notify(failure(error).message, 'error');
+      }
+    },
+  });
+
   pi.registerCommand('decx', {
-    description: 'Show the decx status of every workspace, the session checkpoint ledger ("checkpoints"), or rebuild the indexes ("resync")',
+    description: 'Show the decx status of every workspace, the session checkpoint ledger ("checkpoints"), select "phase inference|maintain|propose", or rebuild indexes ("resync")',
     handler: async (args: string, ctx: SessionCtx) => {
+      const parts = args.trim().split(/\s+/);
+      if (parts[0] === 'phase') {
+        const next = parts[1] as Phase;
+        if (!PHASES.includes(next)) {
+          ctx.ui?.notify(`phase: ${phase}; use /decx phase inference|maintain|propose`, 'info');
+          return;
+        }
+        if (next === 'inference' && maintenanceContext) {
+          ctx.ui?.notify('Start a new session for inference: this session has maintenance context.', 'warning');
+          return;
+        }
+        pi.appendEntry('decx-phase', { phase: next });
+        phase = next;
+        maintenanceContext ||= next !== 'inference';
+        ctx.ui?.notify(`Decx phase: ${phase}`, 'info');
+        return;
+      }
       const targets = await workspaces(ctx.cwd);
       if (targets.length === 0) {
         ctx.ui?.notify('no decx workspace found', 'warning');
         return;
       }
       if (args.trim().startsWith('resync')) {
+        if (phase !== 'maintain') { ctx.ui?.notify('Select /decx phase maintain first.', 'warning'); return; }
         const lines: string[] = [];
         for (const target of targets) {
           cache = undefined;
-          await ensureWorkspace(target, fs);
-          const result = await resyncIndex(target, fs);
+          const result = await mutate(target, async () => {
+            await ensureWorkspace(target, fs);
+            return resyncIndex(target, fs);
+          });
           lines.push(`${target.name}: ${result.total} patterns (added ${result.added.length}, removed ${result.removed.length})`);
         }
         ctx.ui?.notify(lines.join('\n'), 'info');
@@ -427,6 +492,20 @@ export default function decx(pi: ExtensionAPI): void {
       const states = await Promise.all(targets.map((target) => status(target, fs)));
       ctx.ui?.notify(states.map(describeStatus).join('\n'), 'info');
     },
+  });
+
+  pi.on('tool_call', async (event, ctx) => {
+    try {
+      const targets = await workspaces(ctx.cwd);
+      if (cache?.error !== undefined && configNotified !== cache.error) {
+        configNotified = cache.error;
+        ctx.ui?.notify(cache.error, 'error');
+      }
+      const reason = await toolBlock(phase, event.toolName, event.input, ctx.cwd, targets);
+      return reason ? { block: true, reason } : undefined;
+    } catch (error) {
+      return { block: true, reason: `Decx policy could not verify access: ${String(error)}` };
+    }
   });
 
   // Round and turn counters feed the checkpoint cadence.  A message another
@@ -481,7 +560,7 @@ export default function decx(pi: ExtensionAPI): void {
     // skills alone, so nothing here advertises the catalog or asks for a read.
     const previous = lastCheckpoint(state);
     const due = settings.unit === 'round' ? checkpointDue(state, settings.every, settings.unit) : undefined;
-    const lines: string[] = [];
+    const lines: string[] = [`Decx phase: ${phase}. Inference uses skills only; maintenance reads raw/wiki through decx_read and changes them only through structured decx tools. Evaluate candidates in a separate inference session.`];
     if (previous !== undefined) {
       lines.push('', `Decx checkpoint — ${describeCheckpoint(previous)}. Resume from it after a compaction, and re-check it against the newest user message before continuing.`);
     }
@@ -503,6 +582,14 @@ export default function decx(pi: ExtensionAPI): void {
   });
 
   pi.on('session_start', async (_event: unknown, ctx: SessionCtx) => {
+    phase = 'inference';
+    maintenanceContext = false;
+    for (const entry of ctx.sessionManager?.getEntries?.() ?? []) {
+      if (entry.type !== 'custom' || entry.customType !== 'decx-phase') continue;
+      const saved = (entry.data as { phase?: Phase })?.phase;
+      if (saved && PHASES.includes(saved)) { phase = saved; maintenanceContext ||= saved !== 'inference'; }
+    }
+    cache = undefined;
     const targets = await workspaces(ctx.cwd);
     const state = await ledger(ctx);
     const checkpoints = state.checkpoints.length === 0 ? 'no checkpoint yet' : `${state.checkpoints.length} checkpoint(s), newest #${state.checkpoints.at(-1)?.n ?? 0}`;

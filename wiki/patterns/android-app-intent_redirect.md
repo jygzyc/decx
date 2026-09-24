@@ -11,6 +11,7 @@ Exported entry, WebView/IntentScheme router, PendingIntent send, or notification
 ## Non-obvious
 - **Component field has higher precedence than `getPackage()`** — package equality check alone is insufficient
 - `getCallingActivity()` / `getCallingPackage()` can return null — null check required or identity bypassed
+- `AccountAuthenticator` may return a caller-influenced Intent in `setAccountAuthenticatorResult`; the account flow can later launch it under system identity
 - Untyped `getParcelableExtra` still calls target's `CREATOR.createFromParcel`: See [[android-app-object_parsing]]
 - `Intent.parseUri` does NOT strip component/package/selector/`FLAG_GRANT_*`/ClipData on pre-API 30 — never pass raw output to `startActivity`
 - Selector overrides component resolution after package check passes

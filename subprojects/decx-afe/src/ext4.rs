@@ -3,18 +3,14 @@
 //! Pure-std port of the TypeScript CLI's `src/android/ext4-reader.ts`.
 //! Parses the filesystem natively (superblock -> group descriptors ->
 //! inodes -> extent trees -> directory entries) so payload extraction needs
-//! no external tools. Only the read paths used by APEX
-//! payloads are implemented; unsupported layouts return
-//! [`Ext4Error::UnsupportedFeature`] so callers can fall back to the
-//! external-tool pipeline, exactly like the TS `UnsupportedImageFeatureError`.
-//! [`Ext4Error::NotExt4Image`] (TS `NotExt4ImageError`) marks images that are
-//! not ext4 at all — the processor falls back to external tools on exactly
-//! these two variants.
+//! no external tools. Only the read paths used by APEX payloads are
+//! implemented; unsupported layouts return [`Ext4Error::UnsupportedFeature`]
+//! (the TS `UnsupportedImageFeatureError`) and images without an ext
+//! superblock return [`Ext4Error::NotExt4Image`] (TS `NotExt4ImageError`).
 
 #![allow(dead_code)]
-// Consumed by the APEX/framework processor once that port lands; until then
-// nothing in the binary reaches this module, which would trip dead_code in
-// this bin-only crate.
+// Reader helpers wider than the paths the processor actually reaches; keeping
+// them compiled is cheaper than trimming the ported API.
 
 use std::collections::HashSet;
 use std::fs;
@@ -42,11 +38,12 @@ const DIRENT_FT_DIR: u8 = 2;
 const DIRENT_FT_LNK: u8 = 7;
 
 /// Inherited from the TS port (Node's `Buffer.alloc` cap): inodes claiming
-/// more data than this are malformed images, not fallback-worthy layouts.
+/// more data than this are malformed images.
 const MAX_INODE_BYTES: u64 = u32::MAX as u64;
 
-/// Error taxonomy mirroring the TS module: `NotExt4Image` and
-/// `UnsupportedFeature` tell the processor to fall back to external tools.
+/// Error taxonomy mirroring the TS module: `NotExt4Image` marks images that
+/// are not ext4 at all, `UnsupportedFeature` a layout the reader does not
+/// implement. Both fail the input.
 #[derive(Debug)]
 pub enum Ext4Error {
     NotExt4Image,
@@ -250,6 +247,12 @@ impl Ext4Image {
         result: &mut Vec<Extent>,
         depth_guard: u32,
     ) -> Result<(), Ext4Error> {
+        if header.len() < 12 {
+            return Err(Ext4Error::BadImage(format!(
+                "extent header needs 12 bytes, got {}",
+                header.len()
+            )));
+        }
         if depth_guard > 4 {
             return Err(Ext4Error::UnsupportedFeature(
                 "Extent tree too deep".to_string(),
@@ -299,7 +302,7 @@ impl Ext4Image {
                 inode.size, MAX_INODE_BYTES
             )));
         }
-        let mut out = vec![0u8; inode.size as usize];
+        let mut out = alloc_zeroed(inode.size)?;
         if inode.size == 0 {
             return Ok(out);
         }
@@ -497,9 +500,12 @@ impl Ext4Image {
             }
             // Untrusted images: never build host paths from names that
             // could escape the extraction root.
-            if entry.name.contains('/') || entry.name.contains('\\') {
+            if entry.name.contains('/')
+                || entry.name.contains('\\')
+                || crate::layout::is_drive_relative_name(&entry.name)
+            {
                 return Err(Ext4Error::BadImage(format!(
-                    "entry name {:?} contains a path separator",
+                    "entry name {:?} is not a safe path segment",
                     entry.name
                 )));
             }
@@ -565,7 +571,7 @@ fn normalize_inner_path(inner_path: &str) -> String {
 
 fn read_geometry(file: &mut fs::File) -> Result<Geometry, Ext4Error> {
     // Mirrors readGeometry(): a short read here means "not an ext4 image"
-    // (NotExt4ImageError in TS), so callers fall back to external tools.
+    // (NotExt4ImageError in TS).
     let mut sb = vec![0u8; 512];
     file.seek(SeekFrom::Start(SUPERBLOCK_OFFSET))
         .map_err(|e| Ext4Error::Io(e.to_string()))?;
@@ -573,9 +579,16 @@ fn read_geometry(file: &mut fs::File) -> Result<Geometry, Ext4Error> {
     if u16le(&sb, 56) != EXT4_MAGIC {
         return Err(Ext4Error::NotExt4Image);
     }
-    // 1024 * (1 << s_log_block_size); wrapping mirrors the JS shift on
-    // garbage input.
-    let block_size = 1024u64.wrapping_shl(u32le(&sb, 24));
+    // 1024 * (1 << s_log_block_size); the spec allows 0..=6 (1 KiB..64 KiB).
+    // A larger field marks a malformed image, not a huge block size: the old
+    // wrapping shift turned 54 into 0, which made every block read empty.
+    let log_block_size = u32le(&sb, 24);
+    if log_block_size > 6 {
+        return Err(Ext4Error::BadImage(format!(
+            "s_log_block_size {log_block_size} is out of range"
+        )));
+    }
+    let block_size = 1024u64 << log_block_size;
     let first_data_block = u32le(&sb, 20) as u64;
     // Field offsets ported as-is from the TS reader (including the u32 read
     // at 40 for s_inodes_per_group and the desc-size read at 256).
@@ -627,6 +640,16 @@ fn read_full(file: &mut fs::File, buf: &mut [u8]) -> std::io::Result<()> {
         }
     }
     Ok(())
+}
+
+/// Zeroed buffer of `len` bytes: an unallocatable request is reported as a bad
+/// image instead of aborting the process.
+fn alloc_zeroed(len: u64) -> Result<Vec<u8>, Ext4Error> {
+    let mut out = Vec::new();
+    out.try_reserve_exact(len as usize)
+        .map_err(|_| Ext4Error::BadImage(format!("cannot allocate {len} bytes for inode data")))?;
+    out.resize(len as usize, 0);
+    Ok(out)
 }
 
 fn u16le(buf: &[u8], off: usize) -> u16 {

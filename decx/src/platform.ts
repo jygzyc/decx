@@ -1,24 +1,26 @@
 /**
- * Platform identity.  Toolkit installs are keyed by `<os>-<arch>` using the
- * vocabulary the DECX install scripts and upstream release assets already use:
- * `macos-*` / `linux-*` / `windows-*` with `x64` / `arm64`.
+ * Platform identity.  Installs are keyed by two axes: the operating system
+ * (`win` / `darwin` / `linux`) and the architecture (`arm64` / `amd64`), joined
+ * as `<os>-<arch>` — e.g. `darwin-arm64`, `win-amd64`, `linux-amd64`.
  */
 
-export type PlatformKey =
-  | 'macos-x64'
-  | 'macos-arm64'
-  | 'linux-x64'
-  | 'linux-arm64'
-  | 'windows-x64'
-  | 'windows-arm64';
+export type OsKey = 'win' | 'darwin' | 'linux';
+
+export type ArchKey = 'arm64' | 'amd64';
+
+export type PlatformKey = `${OsKey}-${ArchKey}`;
+
+export const SUPPORTED_OS: readonly OsKey[] = ['win', 'darwin', 'linux'];
+
+export const SUPPORTED_ARCH: readonly ArchKey[] = ['arm64', 'amd64'];
 
 export const SUPPORTED_PLATFORMS: readonly PlatformKey[] = [
-  'macos-x64',
-  'macos-arm64',
-  'linux-x64',
+  'win-amd64',
+  'win-arm64',
+  'darwin-amd64',
+  'darwin-arm64',
+  'linux-amd64',
   'linux-arm64',
-  'windows-x64',
-  'windows-arm64',
 ];
 
 const OS_LABELS: Record<string, string> = {
@@ -32,20 +34,19 @@ export function platformKey(
   platform: string = process.platform,
   arch: string = process.arch,
 ): PlatformKey | null {
-  const os =
-    platform === 'darwin'
-      ? 'macos'
-      : platform === 'linux'
-        ? 'linux'
-        : platform === 'win32'
-          ? 'windows'
-          : null;
-  const cpu = arch === 'x64' ? 'x64' : arch === 'arm64' ? 'arm64' : null;
+  const os: OsKey | null =
+    platform === 'darwin' ? 'darwin' : platform === 'linux' ? 'linux' : platform === 'win32' ? 'win' : null;
+  const cpu: ArchKey | null = arch === 'x64' ? 'amd64' : arch === 'arm64' ? 'arm64' : null;
   if (os === null || cpu === null) {
     return null;
   }
-  const key = `${os}-${cpu}`;
-  return (SUPPORTED_PLATFORMS as readonly string[]).includes(key) ? (key as PlatformKey) : null;
+  const key: PlatformKey = `${os}-${cpu}`;
+  return (SUPPORTED_PLATFORMS as readonly string[]).includes(key) ? key : null;
+}
+
+/** True when the key is one of the supported `<os>-<arch>` combinations. */
+export function isPlatformKey(key: string): key is PlatformKey {
+  return (SUPPORTED_PLATFORMS as readonly string[]).includes(key);
 }
 
 /** Human label for a Node platform, e.g. `win32` -> `Windows`. */

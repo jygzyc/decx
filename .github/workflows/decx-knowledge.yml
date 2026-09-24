@@ -1,0 +1,31 @@
+name: Decx knowledge
+on:
+  push:
+    branches: ['**']
+    paths: ['.pi/**', 'skills/**', 'wiki/**', 'raw/README.md', '.github/workflows/decx-knowledge.yml']
+  pull_request:
+    paths: ['.pi/**', 'skills/**', 'wiki/**', 'raw/README.md', '.github/workflows/decx-knowledge.yml']
+  schedule:
+    - cron: '19 5 * * 1'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  check:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        node: ['22.18.0', '24']
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+      - run: node --test .pi/extensions/decx/lib.test.ts
+      - run: node .pi/extensions/decx/cli.ts check
+      - run: python skills/check-skills.py

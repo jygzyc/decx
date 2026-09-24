@@ -6,27 +6,33 @@ results into a `framework.jar`.
 
 `decx install afe` prefers a prebuilt `tools-v*` asset for the platform and
 otherwise builds this crate with cargo; the manifest is `decx-afe.json` beside it
-and the agent skill is `skills/decx-afe/SKILL.md`. `release-afe.yml` publishes the
+and the agent skill is `skills/decx-tool/` (routing in its `SKILL.md`, the AFE
+contract in `references/afe.md`). The release jobs in
+`.github/workflows/decx-afe.yml` publish the
 assets the manifest looks for (`afe-{version}-<platform>.tar.gz|zip` plus
 `afe-SHA256SUMS.txt` under a `tools-v*` tag).
 
-The command tree, JSON field names and error codes are a stable contract: `decx
-run`, the skills and any script depend on them. Deliberate differences are listed
+The command tree, JSON field names and error codes are a stable contract: `decx -m
+<tool>`, the skills and any script depend on them. Deliberate differences are listed
 under Invariants.
 
 ## Build, test, run
 
 ```sh
 cargo build --release        # target/release/afe
-cargo test                   # 58 unit + 10 integration tests
+cargo test                   # 51 unit + 11 integration tests
 ```
 
 The committed EROFS fixture `tests/fixtures/apex_payload_erofs.img` has SHA-256
 `14609a7e7ab4a913600ba29d634accab1094229b7bc454a3ea881ca94dedbabc`.
 
-Everything except `debugfs` / `extract.erofs` / `fsck.erofs` (used only as
-fallbacks for unsupported image features) is implemented natively: EROFS and
-ext4 readers, LZ4 block decompression, ZIP read/write, SHA-256.
+Everything is implemented natively: EROFS and ext4 readers, ZIP read/write
+(the `zip` crate), DEFLATE (`flate2`), CRC-32
+(`crc32fast`) and SHA-256 (`sha2`). LZ4 block decompression is the one
+hand-written codec: EROFS hands it a block-aligned pcluster whose tail after
+the stream is padding, which `lz4_flex` cannot decode (it stops when the input
+is exhausted and rejects the padding) and liblz4 bindings would require a C
+toolchain, breaking the pure-Rust MSVC builds.
 
 ## CLI
 
@@ -58,11 +64,12 @@ Output fields:
 - `device system-services`: `{total, services: [{index, name, interfaces}]}` (`total` counts the rows kept after `--grep`)
 - `device permission-info`: `{permission, package, label, description, protectionLevel, ...}` (`description` is `null` for `null`)
 
-Metadata is written per output directory as `<outDir>/.artifact.json`; the
-artifact layout follows the TypeScript rules (defaults
-`<home>/output/framework/<oem>`, `source/`, `out_tmp/`,
-`framework_<oem>_<vendor>.jar`, vendor/OEM auto-detected from the single
-connected device when adb is usable).
+Metadata is written per output directory as `<outDir>/.artifact.json`; runtime
+layout is the TypeScript shape with AFE's own defaults:
+`<sourceDir>/` for inputs (`~/.decx/afe/source`) and
+`<outDir>/` = `out_tmp/` + `framework_<oem>_<vendor>.jar` + `.artifact.json`
+(`~/.decx/afe/out`); vendor/OEM is auto-detected from the single connected
+device when adb is usable.
 
 `afe pack` only re-packs an existing `out_tmp`. Like the TypeScript flow,
 `afe process` removes `out_tmp` once the jar is packed; pass `--keep-outputs`
@@ -73,17 +80,14 @@ message.
 
 | Variable | Purpose |
 | --- | --- |
-| `AFE_HOME`, `DECX_HOME` | Artifact home (default `$HOME`, or `%USERPROFILE%` on Windows). |
+| `AFE_HOME` | Root of the default `source`/`out` directories. |
+| `DECX_HOME` | decx root; AFE uses `<DECX_HOME>/afe` (default `~/.decx/afe`). |
 | `AFE_ADB`, `DECX_ADB` | adb binary (default `adb`). |
-| `AFE_DEBUGFS`, `DECX_DEBUGFS` | debugfs binary for ext4 fallback. |
-| `AFE_EXTRACT_EROFS`, `DECX_EXTRACT_EROFS` | extract.erofs binary. |
-| `AFE_FSCK_EROFS`, `DECX_FSCK_EROFS` | fsck.erofs binary (preferred over extract.erofs). |
 
 `AFE_*` wins over the legacy `DECX_*` name; `DECX_*` remains as a fallback.
-Without an override the tools are looked up on `PATH`
-(`fsck.erofs` before `extract.erofs`, `debugfs` by exact name, executable bit
-required on Unix, native names plus `.exe` on Windows; `.cmd`/`.bat` shims are
-not spawned because the tools are executed directly).
+`AFE_HOME` is the AFE root itself, `DECX_HOME` is the decx root that holds
+`afe/`. Without either, the root is `~/.decx/afe` (`%USERPROFILE%\.decx\afe`
+on Windows).
 
 ## Invariants
 
@@ -92,16 +96,17 @@ not spawned because the tools are executed directly).
   permission parsing that stops at the next block, `adb -s` preferring the
   requested serial.
 - APEX `original_apex` unwrapping, `@version` stripping, `<module>_`-prefixed dex
-  outputs, 8 GiB expanded-entry cap, 30 min tool timeout / 5 min adb timeout,
-  atomic `out_tmp` swap with `.previous`, `Manifest-Version`/`Created-By: decx`
-  CRLF manifest, `--clean-source` semantics, and the exact missing-tool messages.
+  outputs, 8 GiB expanded-entry cap, 5 min adb timeout, atomic `out_tmp` swap
+  with `.previous`, `Manifest-Version`/`Created-By: decx` CRLF manifest,
+  `--clean-source` semantics, and the exact unsupported-image error messages.
 - `afe pack` is a subcommand (packing is not part of `process`); `--keep-outputs`
   retains `out_tmp` for it, otherwise `process` removes it and a later `pack`
   fails with an actionable message.
-- Duplicate output names fail the run (`duplicate output <name> from <path>`)
-  instead of overwriting, reported as `n framework inputs failed; previous output
-  retained`.
+- Duplicate output names are tolerated, like the TypeScript CLI: the later input
+  wins, the collision is counted in the `duplicates` counter and the output is
+  left in place (`n framework inputs failed; previous output retained` only
+  lists genuinely failed inputs).
 - `AFE_*` environment names win over the legacy `DECX_*` ones; `AFE_HOME` sets the
-  artifact home.
+  root of the default `source`/`out` directories (default `~/.decx/afe`).
 - Diagnostics are plain stderr lines and the JSON output is flat data or
   `{code, message, details}` — not a host response envelope.

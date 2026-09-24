@@ -6,7 +6,7 @@
 //! prints the message to stderr.
 //!
 //! Codes used across the tool (same values the TypeScript extension returns):
-//! `FILE_ERROR`, `PROCESS_ERROR`, `TOOL_NOT_FOUND`, `ADB_DEVICE_MISSING`,
+//! `FILE_ERROR`, `PROCESS_ERROR`, `ADB_DEVICE_MISSING`,
 //! `ADB_DEVICE_AMBIGUOUS`, `ADB_NOT_FOUND`, `INVALID_PARAMETER`,
 //! `RESOURCE_NOT_FOUND`, `MISSING_OEM`, `INVALID_ARTIFACT`, `INVALID_LAYOUT`,
 //! `PROCESS_FAILED`, `DECX_ERROR`, `INTERNAL_ERROR`.
@@ -57,14 +57,9 @@ impl Error {
         err
     }
 
-    /// Child-process failure (adb, debugfs, erofs-utils, ...).
+    /// Child-process failure (adb).
     pub fn process(message: impl Into<String>) -> Self {
         Self::new("PROCESS_ERROR", message)
-    }
-
-    /// A required external tool was not found.
-    pub fn tool(message: impl Into<String>) -> Self {
-        Self::new("TOOL_NOT_FOUND", message)
     }
 
     /// A looked-up resource (device, permission, file) does not exist.

@@ -8,18 +8,29 @@
 import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
-import { artifactRoot, distRoot, packageInfo, packageRoot, repoRoot, run } from './common.mjs';
+import { spawnSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 
-if (!fs.existsSync(path.join(distRoot, 'decx', 'lib', 'cli.js'))) {
+const packageRoot = fileURLToPath(new URL('../', import.meta.url));
+const repoRoot = path.resolve(packageRoot, '..');
+const distRoot = path.join(packageRoot, 'dist');
+const artifactRoot = path.join(packageRoot, 'artifacts');
+const packageInfo = JSON.parse(fs.readFileSync(path.join(packageRoot, 'package.json'), 'utf8'));
+function run(command, args) {
+  const result = spawnSync(command, args, { encoding: 'utf8' });
+  if (result.error || result.status !== 0) throw new Error(`${command} ${args.join(' ')} failed (${result.status}): ${result.error?.message ?? ''}\n${result.stdout ?? ''}${result.stderr ?? ''}`);
+}
+if (!fs.existsSync(path.join(distRoot, 'decx.mjs'))) {
   throw new Error('dist/ is empty; run `npm run build` first');
 }
 
-const { version } = packageInfo();
+const { version } = packageInfo;
 const name = `decx-${version}`;
 const stage = path.join(artifactRoot, name);
 fs.rmSync(stage, { recursive: true, force: true });
 fs.mkdirSync(artifactRoot, { recursive: true });
-fs.cpSync(distRoot, stage, { recursive: true });
+fs.mkdirSync(stage, { recursive: true });
+fs.copyFileSync(path.join(distRoot, 'decx.mjs'), path.join(stage, 'decx.mjs'));
 fs.copyFileSync(path.join(repoRoot, 'LICENSE'), path.join(stage, 'LICENSE'));
 fs.copyFileSync(path.join(packageRoot, 'README.md'), path.join(stage, 'README.md'));
 

@@ -10,23 +10,29 @@ upstream's, and its `--help` is the authority.
 | Path | What it is |
 | --- | --- |
 | `decx-droidasc.json` | the toolkit manifest `decx` reads: install kind (`python-venv`), the pinned checkout, entry point, requirements, payload, launch and verify commands. The tool id is the directory name without the `decx-` prefix. |
-| `skills/decx-droidasc/SKILL.md` | the agent skill that drives the installed launcher. |
+| `skills/decx-tool/` | the agent skill that drives the installed launcher (routing in its `SKILL.md`, the DroidASC contract in `references/droidasc.md`). |
 | `source/` | the vendored upstream checkout, pinned as a git submodule (`git submodule status subprojects/decx-droidasc/source`). |
 
 ## Install
 
 ```sh
 decx install droidasc        # private venv over the pinned checkout
-decx run droidasc --help     # the tool's own interface, arguments untouched
+decx -m droidasc --help     # the tool's own interface, arguments untouched
 ```
 
 The install copies upstream `main.py`, the `droidasc/` package and
-`requirements.txt` into `$DECX_HOME/share/droidasc/`, builds a private venv there
-with `pip install -r requirements.txt` (androguard 4.1.3), writes `PROVENANCE`,
-and generates `$DECX_HOME/bin/droidasc` plus a `~/.local/bin` link (a `.cmd` shim
-on Windows). The payload is self-contained: nothing is imported from the
-checkout at run time, so a later `git submodule update` cannot change what the
-installed launcher runs.
+`requirements.txt` into `$DECX_HOME/share/droidasc/` -- from the pinned
+`subprojects/decx-droidasc/source` checkout when the repository has one, else
+from the `droidasc-v*` source archive -- creates a fresh `.venv`
+there, installs `requirements.txt` (androguard 4.1.3) into it -- with
+`uv pip install` when a `uv` is on `PATH`, otherwise with the venv's own `pip`
+-- writes `PROVENANCE`, and generates `$DECX_HOME/bin/droidasc` plus a
+`~/.local/bin` link (a `.cmd` shim on Windows). A checkout install records
+`source` and `source_commit` in PROVENANCE (plus `source_tag` when the checkout
+sits exactly on a tag), so an install can be
+traced to the revision it was built from. The payload is self-contained:
+nothing is imported from the checkout at run time, so a later
+`git submodule update` cannot change what the installed launcher runs.
 
 Python >= 3.10 must already be on `PATH`; the manager reports the shortfall
 instead of installing an interpreter.
@@ -35,15 +41,15 @@ instead of installing an interpreter.
 
 ```sh
 decx install droidasc --home /tmp/decx-home --links /tmp/decx-links
-/tmp/decx-home/share/droidasc/venv/bin/python -c 'import androguard; print(androguard.__version__)'
-decx run --home /tmp/decx-home droidasc --help
+/tmp/decx-home/share/droidasc/.venv/bin/python -c 'import androguard; print(androguard.__version__)'
+decx --home /tmp/decx-home -m droidasc --help
 ```
 
 Run that sequence after every pin move, on each platform, first checking the
 pinned-checkout contract the manifest depends on: `main.py`, `requirements.txt`, the
 `droidasc` package and `from droidasc import main`. It builds a venv and downloads
-packages, so it stays a manual acceptance check — `.github/workflows/test.yml` runs
-offline and never fetches a release.
+packages, so it stays a manual acceptance check — `.github/workflows/decx-droidasc.yml` runs
+it offline in CI and never fetches a release.
 
 ## Upstream
 

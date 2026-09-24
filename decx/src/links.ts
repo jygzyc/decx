@@ -27,6 +27,8 @@ export interface LinkOptions {
   files: readonly string[];
   linkDir: string;
   force?: boolean;
+  /** Platform override for tests; defaults to the running platform. */
+  windows?: boolean;
   log?: (message: string) => void;
 }
 
@@ -92,16 +94,54 @@ function isOurs(home: string, linkPath: string, target: string): boolean {
   return false;
 }
 
+/** Ownership alone does not mean the entry still points at the desired launcher. */
+function isCurrent(linkPath: string, target: string, windows: boolean): boolean {
+  try {
+    const stats = fs.lstatSync(linkPath);
+    if (windows) {
+      return stats.isFile() && fs.readFileSync(linkPath, 'utf8') === shimText(target);
+    }
+    return stats.isSymbolicLink()
+      && path.resolve(path.dirname(linkPath), fs.readlinkSync(linkPath)) === path.resolve(target);
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Preference between two staged files that map to the same command name: a
+ * venv install stages `<tool>` and `<tool>.cmd`, and only one can win the link.
+ */
+function nativeRank(fileName: string, windows: boolean): number {
+  if (!/\.(exe|cmd|bat)$/i.test(fileName)) {
+    return windows ? 0 : 2;
+  }
+  if (!windows) {
+    return 1;
+  }
+  return /\.exe$/i.test(fileName) ? 2 : 1;
+}
+
 /** Creates or refreshes the link for every managed executable. */
 export function createLinks(options: LinkOptions): LinkOutcome[] {
   const log = options.log ?? ((): void => {});
-  const windows = isWindows();
+  const windows = options.windows ?? isWindows();
   const outcomes: LinkOutcome[] = [];
   if (options.files.length === 0) {
     return outcomes;
   }
   fs.mkdirSync(options.linkDir, { recursive: true });
+  // Collapse files that share a command name before linking, so the shim never
+  // ends up pointing at the POSIX shell launcher on Windows (or vice versa).
+  const commands = new Map<string, string>();
   for (const fileName of options.files) {
+    const name = linkName(fileName);
+    const current = commands.get(name);
+    if (current === undefined || nativeRank(fileName, windows) > nativeRank(current, windows)) {
+      commands.set(name, fileName);
+    }
+  }
+  for (const fileName of commands.values()) {
     const name = linkName(fileName);
     const target = linkTarget(options.home, fileName);
     const linkPath = path.join(options.linkDir, linkFileName(name, windows));
@@ -112,11 +152,14 @@ export function createLinks(options: LinkOptions): LinkOutcome[] {
     } catch {
       existing = false;
     }
-    if (existing && isOurs(options.home, linkPath, target)) {
+    const managed = existing && isOurs(options.home, linkPath, target);
+    if (managed && isCurrent(linkPath, target, windows)) {
       outcomes.push(outcome);
       continue;
     }
-    if (existing) {
+    if (managed) {
+      outcome.status = 'updated';
+    } else if (existing) {
       if (options.force !== true) {
         outcomes.push({
           ...outcome,
@@ -134,6 +177,10 @@ export function createLinks(options: LinkOptions): LinkOutcome[] {
       outcome.status = 'created';
     }
     try {
+      if (managed) {
+        // Remove the entry, never write through an old symlink into its target.
+        fs.unlinkSync(linkPath);
+      }
       if (windows) {
         fs.writeFileSync(linkPath, shimText(target));
       } else {

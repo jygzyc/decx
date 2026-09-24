@@ -4,34 +4,80 @@ name: Kuna
 # and the superproject gitlink. `decx install kuna` downloads the release
 # archive for the host platform plus the separate compiled SLEIGH specs
 # archive, and the generated launcher exports `KUNA_SPECS` so the binary finds
-# its languages without any shell setup. Building those archives from the
-# pinned source is release-kuna.yml's job; this workflow guards the install
-# contract.
+# its languages without any shell setup. This workflow guards the install and
+# the upstream-skill-copy contract, and mirrors upstream's releases as this
+# repository's `kuna-v*` releases (below).
 #
-# The release install touches the network (two archives per platform), so it
-# runs on a schedule and on demand; every change to the pin, the manifest or
-# the manager still gets the offline contract check.
+# The release-install check touches the network (two archives per platform), so
+# it also runs weekly and on demand; every change to the pin, the
+# manifest or the manager still gets the offline contract check.
+#
+# The pin follows upstream on its own: every 12 hours the sync-pin job compares
+# the pinned tag with Noelo-Lab/kuna's latest release and pushes nothing when
+# upstream has nothing newer. A new release moves the submodule gitlink,
+# re-copies the skill reference from the new checkout, and pushes that commit
+# together with its `kuna-v<version>` tag -- exactly the tag push the release
+# jobs below publish under. Manual pin moves still work the same way: move the
+# submodule, commit, tag `kuna-v<version>`, push.
+#
+# Publishing the release assets the kuna manifest installs from happens in the
+# same
+# workflow: a `kuna-v*` tag push (or a dispatch with the `tag` input set) runs
+# the validate/mirror/publish jobs instead of the checks. Those jobs only
+# mirror. Noelo-Lab/kuna publishes every platform archive plus the
+# platform-independent compiled SLEIGH specs under tag v{version}, so the jobs
+# fetch exactly those assets and re-publish them as zips. They never build from
+# source: an upstream release that cannot be fetched, or that is missing an
+# asset, fails the run instead of substituting a locally built binary.
+#
+# The published assets are zips whose names follow the manifest's release
+# contract (subprojects/decx-kuna/decx-kuna.json) verbatim --
+# the manager reads those names, so they are not up for design:
+#   kuna-v{version}-linux-x86_64.zip    kuna-v{version}-macos-arm64.zip
+#   kuna-v{version}-linux-arm64.zip     kuna-v{version}-windows-x86_64.zip
+#   kuna-v{version}-macos-x86_64.zip    (kuna, decomp_dbg, slacomp)
+#   kuna-v{version}-specs.zip           compiled specs/ (platform-independent)
+#   kuna-SHA256SUMS.txt                 sha256 of every published asset
+# Upstream ships no windows-arm64 build, so neither does this mirror -- the
+# manager reports that platform as unsupported instead of inventing an asset.
+# `paths` filters tag pushes as well -- the tag commit is diffed against its
+# parent -- so tag the pin-move commit, or dispatch with `tag` manually.
 on:
   push:
     branches: ['**']
-    paths: ['subprojects/decx-kuna/**', 'decx/**', 'skills/decx-kuna/**', '.github/workflows/decx-kuna.yml']
+    tags: ['kuna-v*']
+    paths: ['subprojects/decx-kuna/**', 'decx/**', 'skills/decx-tool/**', '.github/workflows/decx-kuna.yml']
   pull_request:
-    paths: ['subprojects/decx-kuna/**', 'decx/**', 'skills/decx-kuna/**', '.github/workflows/decx-kuna.yml']
+    paths: ['subprojects/decx-kuna/**', 'decx/**', 'skills/decx-tool/**', '.github/workflows/decx-kuna.yml']
   schedule:
+    # Every 12 hours: sync the pin to upstream's latest release (sync-pin).
+    - cron: '0 */12 * * *'
     # Mondays 04:17 UTC: catch a release asset that upstream renamed or pulled.
     - cron: '17 4 * * 1'
   workflow_dispatch:
+    inputs:
+      tag:
+        description: Publish a release for this tag (e.g. kuna-v1.544); leave empty to run the checks only
+        required: false
 
 permissions:
   contents: read
 
 concurrency:
-  group: kuna-${{ github.ref }}
-  cancel-in-progress: true
+  # Scheduled runs get their own group so the commit a sync pushes can never
+  # cancel that sync run mid-push. Never cancel a running release publish;
+  # branch checks are superseded freely.
+  group: kuna-${{ github.event_name == 'schedule' && 'schedule' || github.ref }}
+  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
 
 jobs:
   contract:
     name: Pinned checkout contract
+    # Checks run on branch pushes, pull requests, the weekly schedule and
+    # check-only dispatches; a release event (tag push, or dispatch with `tag`)
+    # and the 12-hour sync tick skip them -- the sync's pushed commit triggers
+    # this job on its own result.
+    if: ${{ !(github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')) && (github.event_name != 'schedule' || github.event.schedule == '17 4 * * 1') && (github.event_name != 'workflow_dispatch' || !inputs.tag) }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     defaults:
@@ -60,6 +106,18 @@ jobs:
           test -d subprojects/decx-kuna/source/specs/Ghidra
           cat subprojects/decx-kuna/source/VERSION
 
+      # The Kuna reference is upstream's own skill file, copied verbatim with only
+      # its frontmatter dropped (a reference file carries no frontmatter).
+      # Re-copy it whenever the pin moves:
+      #   awk 'NR==1 && $0=="---" {skip=1; next} skip && $0=="---" {skip=0; next} !skip' \
+      #     subprojects/decx-kuna/source/skills/kuna/SKILL.md \
+      #     > skills/decx-tool/references/kuna.md
+      - name: The Kuna reference is upstream's copy
+        run: |
+          awk 'NR==1 && $0=="---" {skip=1; next} skip && $0=="---" {skip=0; next} !skip' \
+            subprojects/decx-kuna/source/skills/kuna/SKILL.md > "$RUNNER_TEMP/kuna-ref.md"
+          diff -u "$RUNNER_TEMP/kuna-ref.md" skills/decx-tool/references/kuna.md
+
       # The manifest is the whole install recipe: every platform key the
       # manager supports has to resolve to an archive name, and the launcher
       # has to expose the specs directory, or `decx install kuna` fails on
@@ -68,16 +126,24 @@ jobs:
         run: |
           node -e '
             const manifest = require("./subprojects/decx-kuna/decx-kuna.json");
-            const keys = ["linux-x64", "linux-arm64", "macos-x64", "macos-arm64", "windows-x64"];
-            const { version, assets } = manifest.release;
+            const keys = ["linux-amd64", "linux-arm64", "darwin-amd64", "darwin-arm64", "win-amd64"];
+            const { tagPrefix, assets, checksums } = manifest.release;
+            // The version comes from the resolved kuna-v* tag at install time;
+            // only the templates are pinned here.
+            if (tagPrefix !== "kuna-v") {
+              throw new Error("release.tagPrefix must be kuna-v -- this workflow triggers and publishes kuna-v* tags");
+            }
             for (const key of keys) {
               const name = assets[key];
               if (typeof name !== "string" || name.length === 0) {
                 throw new Error("release.assets is missing " + key);
               }
-              const resolved = name.replace("{version}", version);
+              const resolved = name.replaceAll("{version}", "0.0");
               if (resolved.includes("{")) throw new Error(key + " has an unresolved placeholder: " + name);
-              console.log(key.padEnd(12) + resolved);
+              console.log(key.padEnd(12) + name);
+            }
+            if (checksums !== "kuna-SHA256SUMS.txt") {
+              throw new Error("release.checksums must be kuna-SHA256SUMS.txt -- the mirror publishes exactly that file");
             }
             if (manifest.env?.KUNA_SPECS !== "{prefix}/specs") {
               throw new Error("env.KUNA_SPECS must point the launcher at the specs tree");
@@ -87,7 +153,9 @@ jobs:
 
   release-install:
     name: Release install (${{ matrix.os }})
-    if: ${{ github.event_name != 'pull_request' }}
+    # Weekly schedule only (not the 12-hour sync tick), plus branch pushes and
+    # check-only dispatches; never on pull requests or release events.
+    if: ${{ !(github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')) && github.event_name != 'pull_request' && (github.event_name != 'schedule' || github.event.schedule == '17 4 * * 1') && (github.event_name != 'workflow_dispatch' || !inputs.tag) }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30
     strategy:
@@ -108,7 +176,7 @@ jobs:
       # The version probe the manifest declares: the installed binary answers
       # with the release it came from, which is also what PROVENANCE claims.
       - name: The installed binary answers
-        run: node decx/src/cli.ts run --home "$DECX_HOME" kuna --version
+        run: node decx/src/cli.ts --home "$DECX_HOME" -m kuna --version
 
       # Compiled specs are the second archive; without them the binary starts
       # and then fails to decompile anything. The launcher is `kuna` on POSIX
@@ -124,7 +192,261 @@ jobs:
           grep -q 'KUNA_SPECS' "$launcher"
 
       - name: PROVENANCE records the release
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           cat "$DECX_HOME/share/kuna/PROVENANCE"
-          version=$(node -p 'require("./subprojects/decx-kuna/decx-kuna.json").release.version')
-          grep -q "$version" "$DECX_HOME/share/kuna/PROVENANCE"
+          # The manager resolves the newest stable kuna-v* release of this
+          # repository at install time; the record must name exactly that tag.
+          tag="$(gh api "repos/${{ github.repository }}/releases?per_page=100" \
+            --jq '[.[] | select(.draft != true and .prerelease != true and (.tag_name | startswith("kuna-v")))][0].tag_name')"
+          echo "newest kuna-v* release: $tag"
+          grep -q "release_tag=$tag" "$DECX_HOME/share/kuna/PROVENANCE"
+
+  sync-pin:
+    name: Sync the pin to upstream's latest
+    # Only the 12-hour tick runs the sync. Dispatches stay check-only (the
+    # `tag` input forces a release instead) and pushes and PRs never sync.
+    if: ${{ github.event_name == 'schedule' && github.event.schedule == '0 */12 * * *' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          submodules: recursive
+          fetch-depth: 0
+
+      - name: Compare the pin with upstream's latest release
+        id: upstream
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -eu
+          # The submodule carries upstream's own tags; resolve the pinned
+          # release the same way the validate job does (v1.544 -> 1.544).
+          git -C subprojects/decx-kuna/source fetch --tags --force origin
+          pinned="$(bash .github/scripts/pinned-gitlink.sh subprojects/decx-kuna/source)"
+          pinned_tag="$(git -C subprojects/decx-kuna/source describe --tags --exact-match "$pinned")"
+          latest_tag="$(gh api repos/Noelo-Lab/kuna/releases/latest --jq .tag_name)"
+          echo "pinned: $pinned_tag ($pinned)"
+          echo "upstream latest: $latest_tag"
+          for t in "$pinned_tag" "$latest_tag"; do
+            version="${t#v}"
+            case "$version" in
+              ''|*.*.*|*[!0-9.]*)
+                echo "::error::tag '$t' does not look like v<major.minor>"; exit 1 ;;
+            esac
+          done
+          if [ "$latest_tag" = "$pinned_tag" ] || \
+             [ "$(printf '%s\n%s\n' "$pinned_tag" "$latest_tag" | sort -V | tail -n1)" != "$latest_tag" ]; then
+            echo "upstream has nothing newer than the pin; pushing nothing"
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          # Never move the pin to an incomplete release: installs download the
+          # mirror of exactly these six assets.
+          latest_version="${latest_tag#v}"
+          names="$(gh api repos/Noelo-Lab/kuna/releases/latest --jq '.assets[].name')"
+          for suffix in linux-x86_64.tar.gz linux-arm64.tar.gz macos-x86_64.tar.gz macos-arm64.tar.gz windows-x86_64.zip specs.tar.gz; do
+            if ! grep -qx "kuna-v$latest_version-$suffix" <<<"$names"; then
+              echo "::error::upstream $latest_tag is missing the asset kuna-v$latest_version-$suffix; leaving the pin alone"
+              exit 1
+            fi
+          done
+          echo "tag=$latest_tag" >> "$GITHUB_OUTPUT"
+          echo "changed=true" >> "$GITHUB_OUTPUT"
+
+      - name: Move the pin, push the commit and its kuna-v* tag
+        if: ${{ steps.upstream.outputs.changed == 'true' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          UPSTREAM_TAG: ${{ steps.upstream.outputs.tag }}
+        run: |
+          set -eu
+          version="${UPSTREAM_TAG#v}"
+          mirror_tag="kuna-v$version"
+          if git ls-remote --exit-code origin "refs/tags/$mirror_tag" >/dev/null; then
+            echo "::error::$mirror_tag already exists; the release pipeline should have moved the pin"
+            exit 1
+          fi
+          git -C subprojects/decx-kuna/source checkout --detach "$UPSTREAM_TAG"
+          # The reference is re-copied, never edited (the recipe the contract
+          # job checks); if upstream moved or renamed the skill file this fails
+          # loudly before anything is pushed.
+          awk 'NR==1 && $0=="---" {skip=1; next} skip && $0=="---" {skip=0; next} !skip' \
+            subprojects/decx-kuna/source/skills/kuna/SKILL.md > skills/decx-tool/references/kuna.md
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add subprojects/decx-kuna/source skills/decx-tool/references/kuna.md
+          git commit -m "pin kuna to $UPSTREAM_TAG"
+          # One atomic push: the branch commit and its tag land together, and
+          # the tag push is what starts the validate/mirror/publish chain. A
+          # refused push (someone raced the sync) fails visibly instead of
+          # force-anything; the next tick retries.
+          branch="${{ github.event.repository.default_branch }}"
+          git push --atomic origin "HEAD:refs/heads/$branch" "refs/tags/$mirror_tag"
+
+  validate:
+    name: Validate the tag against the pin
+    if: ${{ (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')) || (github.event_name == 'workflow_dispatch' && inputs.tag != '') }}
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.meta.outputs.tag }}
+      version: ${{ steps.meta.outputs.version }}
+      pinned: ${{ steps.meta.outputs.pinned }}
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          submodules: recursive
+          # Upstream's minor version is a commit count over full history; the
+          # submodule carries its own tags, so `git describe` resolves the
+          # pinned release (v1.544 -> 1.544).
+          fetch-depth: 0
+
+      - id: meta
+        run: |
+          set -eu
+          # The checkout action may clone the submodule shallowly; the release
+          # tag on the pinned commit must be resolvable, so fetch it fully.
+          git -C subprojects/decx-kuna/source fetch --tags --force origin 2>/dev/null || \
+            git -C subprojects/decx-kuna/source fetch --unshallow --tags origin 2>/dev/null || true
+          tag="${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}"
+          case "$tag" in
+            kuna-v*) version="${tag#kuna-v}" ;;
+            *) echo "::error::tag '$tag' must look like kuna-v<major.minor>"; exit 1 ;;
+          esac
+          # Kuna versions are MAJOR.MINOR (scripts/version.sh); that shape is
+          # what `kuna --version` reports and what the manifest pins.
+          case "$version" in
+            ''|*.*.*|*[!0-9.]*)
+              echo "::error::tag version '$version' must look like 1.544"
+              exit 1 ;;
+          esac
+          pinned="$(bash .github/scripts/pinned-gitlink.sh subprojects/decx-kuna/source)"
+          echo "pinned gitlink: $pinned"
+          actual="$(git -C subprojects/decx-kuna/source rev-parse HEAD)"
+          if [ "$actual" != "$pinned" ]; then
+            echo "::error::submodule checkout $actual does not match the pinned gitlink $pinned"
+            exit 1
+          fi
+          described="$(git -C subprojects/decx-kuna/source describe --tags --exact-match "$pinned" 2>/dev/null || true)"
+          echo "pinned tag: ${described:-<none>}"
+          if [ "$described" != "v$version" ]; then
+            echo "::error::tag version '$version' does not match the pinned checkout tag '${described:-<none>}'"
+            echo "::error::re-tag to match the pin, or move the submodule pin to the v$version commit"
+            exit 1
+          fi
+          {
+            echo "tag=$tag"
+            echo "version=$version"
+            echo "pinned=$pinned"
+          } >> "$GITHUB_OUTPUT"
+
+  mirror:
+    name: Mirror upstream's release
+    if: ${{ (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')) || (github.event_name == 'workflow_dispatch' && inputs.tag != '') }}
+    needs: validate
+    runs-on: ubuntu-latest
+    steps:
+      - name: Fetch upstream's release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.validate.outputs.version }}
+        run: |
+          set -eu
+          mkdir -p upstream
+          gh release download "v$VERSION" --repo Noelo-Lab/kuna --dir upstream --clobber \
+            --pattern "kuna-v$VERSION-linux-x86_64.tar.gz" \
+            --pattern "kuna-v$VERSION-linux-arm64.tar.gz" \
+            --pattern "kuna-v$VERSION-macos-x86_64.tar.gz" \
+            --pattern "kuna-v$VERSION-macos-arm64.tar.gz" \
+            --pattern "kuna-v$VERSION-windows-x86_64.zip" \
+            --pattern "kuna-v$VERSION-specs.tar.gz"
+          for suffix in linux-x86_64.tar.gz linux-arm64.tar.gz macos-x86_64.tar.gz macos-arm64.tar.gz windows-x86_64.zip specs.tar.gz; do
+            if [ ! -s "upstream/kuna-v$VERSION-$suffix" ]; then
+              echo "::error::upstream asset missing: kuna-v$VERSION-$suffix"
+              exit 1
+            fi
+          done
+
+      # Every asset becomes a zip, whatever upstream's own container was; the
+      # manifest's release.assets names .zip for all six.
+      - name: Repack to zip and write checksums
+        env:
+          VERSION: ${{ needs.validate.outputs.version }}
+        run: |
+          set -eu
+          mkdir -p dist
+          repack() {
+            src="$1"
+            out="$2"
+            tmp="$(mktemp -d)"
+            case "$src" in
+              *.zip) unzip -q "$src" -d "$tmp" ;;
+              *) tar xzf "$src" -C "$tmp" ;;
+            esac
+            (cd "$tmp" && zip -q -r - .) > "$out"
+            rm -rf "$tmp"
+          }
+          for platform in linux-x86_64 linux-arm64 macos-x86_64 macos-arm64 windows-x86_64; do
+            src="upstream/kuna-v$VERSION-$platform.tar.gz"
+            if [ "$platform" = "windows-x86_64" ]; then
+              src="upstream/kuna-v$VERSION-$platform.zip"
+            fi
+            repack "$src" "dist/kuna-v$VERSION-$platform.zip"
+          done
+          repack "upstream/kuna-v$VERSION-specs.tar.gz" "dist/kuna-v$VERSION-specs.zip"
+          # Sanity: every platform zip carries the binaries, the specs zip
+          # carries compiled .sla files.
+          for platform in linux-x86_64 linux-arm64 macos-x86_64 macos-arm64; do
+            unzip -Z1 "dist/kuna-v$VERSION-$platform.zip" | grep -q 'kuna$'
+          done
+          unzip -Z1 "dist/kuna-v$VERSION-windows-x86_64.zip" | grep -q 'kuna.exe$'
+          test "$(unzip -Z1 "dist/kuna-v$VERSION-specs.zip" | grep -c '\.sla$')" -gt 0
+          : > dist/kuna-SHA256SUMS.txt
+          for asset in dist/*.zip; do
+            (cd dist && sha256sum "$(basename "$asset")") >> dist/kuna-SHA256SUMS.txt
+          done
+          cat dist/kuna-SHA256SUMS.txt
+
+      - uses: actions/upload-artifact@v7.0.1
+        with:
+          name: kuna-fallback
+          path: dist/*
+          if-no-files-found: error
+
+  publish:
+    name: Publish ${{ needs.validate.outputs.tag }}
+    if: ${{ (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')) || (github.event_name == 'workflow_dispatch' && inputs.tag != '') }}
+    needs: [validate, mirror]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: kuna-fallback
+          path: dist
+
+      - name: Publish the release
+        working-directory: dist
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ needs.validate.outputs.tag }}
+          VERSION: ${{ needs.validate.outputs.version }}
+          PINNED: ${{ needs.validate.outputs.pinned }}
+        run: |
+          set -eu
+          origin="a repack of upstream's own release assets (https://github.com/Noelo-Lab/kuna/releases/tag/v$VERSION), rezipped without modification to the payload, pinned at \`$PINNED\`"
+          notes="$(printf 'Kuna %s fallback release -- %s.\n\nEvery asset is a zip shipping \`kuna\` (the CLI), \`decomp_dbg\` (the decompiler console) and \`slacomp\` (the SLEIGH compiler); the specs zip holds the compiled SLEIGH tree. \`decx install kuna\` downloads and extracts both and points \`KUNA_SPECS\` at the result.\n\nNo windows-arm64 asset: upstream Kuna does not build one, so the manager reports that platform as unsupported instead of substituting an emulation.' "$VERSION" "$origin")"
+          if gh release view "$TAG" > /dev/null 2>&1; then
+            gh release upload "$TAG" --clobber ./*
+          else
+            gh release create "$TAG" --title "$TAG" --notes "$notes" ./*
+          fi

@@ -13,8 +13,8 @@
 //!
 //! Multi-device / metabox / 48-bit / chunked / LZMA-deflate-zstd / interlaced
 //! layouts are not produced for APEX payloads and return
-//! [`ErofsError::Unsupported`] 鈥攑ayload extraction never shells out to
-//! external tools.
+//! [`ErofsError::Unsupported`]; extraction is native only and never shells
+//! out to external tools.
 //!
 //! LZ4 pclusters are self-contained LZ4 blocks (the kernel decodes each
 //! pcluster with a single `LZ4_decompress_safe` call, no dictionary), so a
@@ -364,6 +364,13 @@ impl ErofsImage {
                 let len = (dir.size - pos) as usize;
                 (self.read_at(ipos, len)?, len)
             };
+            if data.len() < DIRENT_SIZE {
+                return Err(ErofsError::BadImage(format!(
+                    "dirent block in nid {} is {} bytes, below the {DIRENT_SIZE} byte dirent size",
+                    dir.nid,
+                    data.len()
+                )));
+            }
             let nameoff0 = u16le(&data, 8) as usize;
             if nameoff0 == 0 || nameoff0 > maxsize || !nameoff0.is_multiple_of(DIRENT_SIZE) {
                 return Err(ErofsError::BadImage(format!(
@@ -461,7 +468,7 @@ impl ErofsImage {
     fn read_flat(&self, inode: &Inode) -> Result<Vec<u8>, ErofsError> {
         let bs = self.sb.block_size;
         let size = inode.size;
-        let mut out = vec![0u8; size as usize];
+        let mut out = alloc_zeroed(size, "flat file")?;
         let is_hole = inode.datalayout == DL_FLAT_PLAIN && inode.startblk_or_blocks == NULL_ADDR;
         if is_hole || size == 0 {
             return Ok(out);
@@ -963,7 +970,7 @@ impl ErofsImage {
     fn read_compressed(&self, inode: &Inode) -> Result<Vec<u8>, ErofsError> {
         let z = self.load_zinfo(inode)?;
         let size = inode.size;
-        let mut out = vec![0u8; size as usize];
+        let mut out = alloc_zeroed(size, "compressed file")?;
         if size == 0 {
             return Ok(out);
         }
@@ -1154,9 +1161,12 @@ impl ErofsImage {
             if entry.name == "." || entry.name == ".." {
                 continue;
             }
-            if entry.name.contains('/') || entry.name.contains('\\') {
+            if entry.name.contains('/')
+                || entry.name.contains('\\')
+                || crate::layout::is_drive_relative_name(&entry.name)
+            {
                 return Err(ErofsError::BadImage(format!(
-                    "entry name {:?} contains a path separator",
+                    "entry name {:?} is not a safe path segment",
                     entry.name
                 )));
             }
@@ -1270,6 +1280,14 @@ fn strip_leading_zeros(input: &[u8]) -> &[u8] {
 
 /// Self-contained LZ4 block decode (kernel `LZ4_decompress_safe` semantics:
 /// stop once `out` is full; trailing input ignored).
+///
+/// This stays hand-written on purpose: EROFS hands us a block-aligned
+/// pcluster (`extent_compressedlen`) whose tail after the stream is padding,
+/// while `lz4_flex` only stops when the **input** is exhausted and rejects
+/// the padding (`OffsetZero`), and it has no consumed-length API. `liblz4`
+/// bindings would need a C toolchain and break the pure-Rust
+/// aarch64-pc-windows-msvc cross build. If `lz4_flex` ever grows a
+/// "stop when the output buffer is full" entry point, this can be dropped.
 fn lz4_decode(input: &[u8], out: &mut [u8]) -> Result<(), ErofsError> {
     let bad = |why: &str| ErofsError::BadImage(format!("lz4: {why}"));
     let mut ip = 0usize;
@@ -1339,6 +1357,25 @@ fn lz4_decode(input: &[u8], out: &mut [u8]) -> Result<(), ErofsError> {
         }
     }
     Ok(())
+}
+
+/// Inodes claiming more data than this are malformed images (the same cap the
+/// ext4 reader inherited from the TS port's `Buffer.alloc` limit).
+const MAX_INODE_BYTES: u64 = u32::MAX as u64;
+
+/// Zeroed buffer of `size` bytes: rejects implausible inode sizes and reports
+/// an unallocatable request as a bad image instead of aborting the process.
+fn alloc_zeroed(size: u64, what: &str) -> Result<Vec<u8>, ErofsError> {
+    if size > MAX_INODE_BYTES {
+        return Err(ErofsError::BadImage(format!(
+            "{what} claims {size} bytes, above the {MAX_INODE_BYTES} byte cap"
+        )));
+    }
+    let mut out = Vec::new();
+    out.try_reserve_exact(size as usize)
+        .map_err(|_| ErofsError::BadImage(format!("cannot allocate {size} bytes for {what}")))?;
+    out.resize(size as usize, 0);
+    Ok(out)
 }
 
 fn u16le(buf: &[u8], off: usize) -> u16 {

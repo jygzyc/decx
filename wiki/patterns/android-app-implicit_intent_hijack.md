@@ -12,6 +12,7 @@ Sensitive data, URI grant, callback, or result sent through implicit Intent reso
 - Android 5+ blocks implicit `bindService` BUT NOT implicit `startService` on exported services
 - `setPackage(pkg)` is NOT sufficient — resolver can still pick any matching activity inside that package
 - `startActivityForResult` with implicit Intent lets attacker return forged grant-bearing Intent via `setResult`
+- Request-code branches in an externally reachable result Activity can route the caller through a victim permission-dependent path
 - `FLAG_GRANT_*` survives implicit dispatch — attacker gets `content://` URI grant without having permission
 
 ## Reject

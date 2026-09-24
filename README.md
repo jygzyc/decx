@@ -23,7 +23,7 @@ host supports.
 decx install kuna        # upstream release for this platform, plus compiled SLEIGH specs
 decx install droidasc    # private venv over the pinned submodule
 decx install afe         # prebuilt tools release, else cargo build of subprojects/decx-afe
-decx run kuna --help     # runs the tool itself; arguments are never translated
+decx -m kuna --help      # runs the tool itself; arguments are never translated
 decx help install        # usage for the manager or one command
 ```
 
@@ -40,7 +40,7 @@ there; no Git Bash, `uname` or POSIX tooling is involved.
 
 | Tool | macOS / Linux | Windows |
 | --- | --- | --- |
-| DroidASC | `$PREFIX/bin/droidasc` | `%PREFIX%\bin\droidasc.cmd` (launcher for `%PREFIX%\share\droidasc\venv\Scripts\python.exe`) |
+| DroidASC | `$PREFIX/bin/droidasc` | `%PREFIX%\bin\droidasc.cmd` (launcher for `%PREFIX%\share\droidasc\.venv\Scripts\python.exe`) |
 | Kuna | `bin/kuna` (launcher for `share/kuna/bin/kuna`), `specs/` | `bin\kuna.cmd` (launcher for `share\kuna\bin\kuna.exe`), `specs\` |
 | AFE | `bin/afe` | `bin\afe.exe` |
 
@@ -53,22 +53,26 @@ What each platform needs:
   no Windows arm64 release, and `decx install kuna` reports that instead of building the reference
   checkout.
 - **AFE** — always built from this repository (`subprojects/decx-afe`, Rust; MSVC on Windows). Its
-  optional external extractors (`debugfs`, `fsck.erofs`, `extract.erofs`) have no Windows builds,
-  so on Windows AFE always uses its native ext4/EROFS/ZIP readers.
+  ext4/EROFS/ZIP readers are fully native, so no external extractor is needed on any platform.
 
-AFE only prepares artifacts: device collection needs ADB, unsupported image features may fall back
-to platform tools, and picking an analyzer for the result stays the caller's job. See the
+AFE only prepares artifacts: device collection needs ADB, unsupported image features fail with an
+actionable error, and picking an analyzer for the result stays the caller's job. See the
 [AFE README](subprojects/decx-afe/README.md).
 
 ## Skills
 
-The repository's [skills](skills/) are one per analysis surface and one per tool: `decx-init`,
-`decx-vulnhunt`, `decx-report` and `decx-poc` are the process skills, while `decx-droidasc`,
-`decx-kuna` and `decx-afe` each drive one installed tool and carry that tool's own install, run
-and error contract. Point the agent harness at `skills/`. The manager does not install skills.
+The repository has one agent skill, [decx-tool](skills/decx-tool/): it routes between the
+installed tools, and each tool's own commands, output and error contract, and install
+method live in its `references/` file — `droidasc.md`, `kuna.md` (upstream's own skill,
+copied verbatim) and `afe.md`. Point the agent harness at `skills/`. The manager does not
+install skills.
 
 DECX follows [WikiSkill](https://arxiv.org/html/2608.27454) §3: a shared workspace with three
 **sibling** layers, not a wiki inside every skill.
+
+Start a new pi session and run `/decx-wiki` to consolidate execution traces, update the wiki and check its structure.
+
+The pi extension enforces inference/maintenance/proposal tool access and applies candidates with measured-score gating and skill rollback. See [the workflow and access boundary](.pi/extensions/decx/README.md).
 
 ```text
 raw/                         # immutable execution records (private by default)
@@ -77,7 +81,7 @@ wiki/
   index.md                   # shared pattern catalog
   patterns/                  # consolidated experience, not execution instructions
   logs.md                    # maintainer log (seeded; written only with log: true)
-  skill-impact.md            # proposal ledger (seeded; written by decx_propose)
+  skill-impact.md            # proposal ledger (seeded; written by decx_propose / decx_gate)
 skills/
   <name>/
     SKILL.md                 # complete execution procedure
@@ -102,16 +106,21 @@ python3 skills/check-skills.py && node --test .pi/extensions/decx/lib.test.ts &&
 
 AGENTS.md §Validation lists the full gate per area; CI is one workflow per subject under
 `.github/workflows/` — `decx-cli.yml`, `decx-afe.yml`, `decx-droidasc.yml` and
-`decx-kuna.yml` — each scoped to its own paths. The manager and crate gates run offline
+`decx-kuna.yml` — each scoped to its own paths and carrying both the checks and the
+release for its subject: branch pushes and PRs run the checks, a matching tag push (or a
+dispatch with the `tag` input) publishes. The manager and crate gates run offline
 (fixture archives, fake toolchains, temp prefixes); the DroidASC and Kuna workflows
 deliberately exercise the real install paths, and the PR workflows never compile the
-vendored upstream checkouts. Publishing is one workflow per piece: `release-cli.yml`
-(`decx-v*` → `decx-<version>.tar.gz` + `decx-SHA256SUMS.txt`), `release-afe.yml`
-(`tools-v*` → the six `afe-<version>-<platform>` archives + `afe-SHA256SUMS.txt`),
-`release-kuna.yml` (`kuna-v*` → mirrors upstream's release assets repacked as zip, building
-the pinned checkout for upstream's five targets only when upstream cannot be fetched) and `release-droidasc.yml` (`droidasc-v*` → the pinned source tarball). The
-kuna and droidasc assets back the manifests' `fallbackRelease` blocks; upstream releases stay
-the primary install source.
+vendored upstream checkouts. Releases: `decx-v*` → `decx-<version>.tar.gz` +
+`decx-SHA256SUMS.txt`, `tools-v*` → the six `afe-<version>-<platform>` archives +
+`afe-SHA256SUMS.txt`, `kuna-v*` → mirrors upstream's release assets (repacked as zip,
+never built locally) and `droidasc-v*` → the pinned source tarball. Kuna tracks upstream
+on its own: every 12 hours its workflow compares the pinned tag with upstream's latest
+release and pushes nothing when there is nothing newer — a new release moves the submodule
+pin, re-copies the skill reference and pushes the commit with its `kuna-v<version>` tag,
+which is the release trigger. `decx install kuna` installs from these repository releases
+(the manifest resolves the newest `kuna-v*` tag; the mirror adds the checksums upstream
+does not publish).
 
 ## Scope and non-goals
 

@@ -11,8 +11,9 @@ Caller-controlled flow carries a `content://` URI, ClipData, or `FLAG_GRANT_*` i
 ## Non-obvious
 - `FLAG_GRANT_PERSISTABLE_URI_PERMISSION` + `takePersistableUriPermission` = grant survives activity lifetime (persistent)
 - `FLAG_GRANT_PREFIX_URI_PERMISSION` (often forgotten) extends grant to all paths under prefix
+- Drag-and-drop carries `ClipData` across app boundaries; a receiving app that follows attacker-controlled content URIs may consume a grant it did not intend to expose
 - FileProvider with broad `<root-path>` + ANY grant primitive = arbitrary file access — grant and path compose
-- `setResult` returning caller-supplied Intent = URI grant to attacker: See [[android-app-setresult_leak]]
+- An Activity returning a caller-supplied Intent from `setResult` can pass through its `content://` URI and preloaded `FLAG_GRANT_*` bits to the caller
 - Nested Intent in redirect carries grant flags transitively — redirecting Activity launches under victim identity, transitively granting
 - `grantUriPermission` with caller-controlled `toPackage`/`uri`/`flags` is its own primitive
 

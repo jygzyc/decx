@@ -1,5 +1,5 @@
 /**
- * Install inspection.  `decx install` and `decx run` never guess: an install
+ * Install inspection.  `decx install` and `decx -m <tool>` never guess: an install
  * exists when `<home>/bin` holds the tool's launcher and the payload directory
  * it points at is there; the version comes from that payload's PROVENANCE.
  */
@@ -111,7 +111,7 @@ function managedLauncher(home: string, bin: string): string | null {
  * is a leftover, not an install.
  */
 export function toolState(home: string, manifest: ToolManifest): ToolState {
-  const launcher = manifest.launch?.bin ?? manifest.id;
+  const launcher = manifest.launch ?? manifest.bins?.[0] ?? manifest.id;
   const bin = managedLauncher(home, launcher);
   const prefix = toolPrefix(home, manifest.id);
   if (bin === null || !isDir(prefix)) {

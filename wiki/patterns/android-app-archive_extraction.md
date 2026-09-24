@@ -10,7 +10,6 @@ App unpacks a downloaded archive (zip/apk/jar/tar) or loads code from an attacke
 
 ## Non-obvious
 - **Zip entry name `../` is not filtered by `ZipInputStream.getNextEntry()`** — `new File(destDir, entry.getName())` with `../app_shared_prefs/secrets.xml` writes outside `destDir`
-- `ZipEntry.getName()` does NOT canonicalize — developer must check `file.getCanonicalPath().startsWith(destDir.getCanonicalPath())`
 - Zip slip + FileProvider grant = arbitrary file overwrite → readback chain: overwrite `shared_prefs` → app reads attacker-controlled config → next launch loads attacker data
 - **Dynamic loading from world-writable locations**: `DexClassLoader("/sdcard/plugin.apk", ...)` — if attacker can write to the path, code execution under app identity
 - `PackageParser` / `PackageManager.getPackageArchiveInfo()` on attacker-supplied APK can trigger XML parsing of `AndroidManifest.xml` — XXE or billion-laughs in manifest

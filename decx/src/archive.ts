@@ -47,11 +47,72 @@ function resolveEntry(root: string, name: string): string {
   return target;
 }
 
+/** Never follow archive-created or pre-existing symlinks while materializing entries.
+ * Check the leaf too: writeFile, chmod and the hard-link copy fallback follow it.
+ * The root is canonical, so symlinks above the staging directory are harmless.
+ */
+function assertNoSymlinkPath(root: string, target: string): void {
+  let current = root;
+  for (const part of path.relative(root, target).split(path.sep)) {
+    if (part === '') {
+      continue;
+    }
+    current = path.join(current, part);
+    const entry = fs.lstatSync(current, { throwIfNoEntry: false });
+    if (entry === undefined) {
+      // No descendant can exist yet; mkdir will create it below a checked parent.
+      return;
+    }
+    if (entry.isSymbolicLink()) {
+      throw new ArchiveError(`archive entry uses a symlink path: ${current}`);
+    }
+  }
+}
+
 function assertLinkInside(root: string, linkPath: string, linkName: string, target: string): void {
-  const resolvedRoot = path.resolve(root);
-  const resolved = path.resolve(path.dirname(target), linkName);
-  if (resolved !== resolvedRoot && !resolved.startsWith(`${resolvedRoot}${path.sep}`)) {
-    throw new ArchiveError(`archive symlink escapes the destination: ${linkPath} -> ${linkName}`);
+  const escape = () => new ArchiveError(`archive symlink escapes the destination: ${linkPath} -> ${linkName}`);
+  let current = path.dirname(target);
+  let followed = 0;
+  function components(value: string): string[] {
+    // Do not normalize away '..': the filesystem expands symlinks first.
+    const native = process.platform === 'win32' ? value.replaceAll('/', '\\') : value;
+    if (path.isAbsolute(native)) {
+      if (native !== root && !native.startsWith(`${root}${path.sep}`)) {
+        throw escape();
+      }
+      current = root;
+      return native.slice(root.length).split(path.sep);
+    }
+    if (process.platform === 'win32' && /^[A-Za-z]:/.test(native)) {
+      throw escape();
+    }
+    return native.split(path.sep);
+  }
+  let pending = components(linkName);
+  while (pending.length > 0) {
+    const part = pending.shift()!;
+    if (part === '' || part === '.') {
+      continue;
+    }
+    if (part === '..') {
+      if (current === root) {
+        throw escape();
+      }
+      current = path.dirname(current);
+      continue;
+    }
+    current = path.join(current, part);
+    const entry = fs.lstatSync(current, { throwIfNoEntry: false });
+    if (entry?.isSymbolicLink()) {
+      if (++followed > 40) {
+        throw new ArchiveError(`archive symlink chain is cyclic or too deep: ${linkPath}`);
+      }
+      const next = fs.readlinkSync(current);
+      current = path.dirname(current);
+      pending = [...components(next), ...pending];
+    }
+    // Missing components are allowed for forward/dangling links. Recheck all
+    // links after extraction, when later entries may have changed resolution.
   }
 }
 
@@ -107,6 +168,8 @@ function parsePax(buffer: Buffer): Record<string, string> {
 export function extractTarGz(archive: string, dest: string): void {
   const buffer = zlib.gunzipSync(fs.readFileSync(archive));
   fs.mkdirSync(dest, { recursive: true });
+  const root = fs.realpathSync(dest);
+  const symlinks: { name: string; linkName: string; target: string }[] = [];
   let offset = 0;
   let globalPax: Record<string, string> = {};
   let pendingPax: Record<string, string> | null = null;
@@ -159,7 +222,8 @@ export function extractTarGz(archive: string, dest: string): void {
     if (name === '') {
       continue;
     }
-    const target = resolveEntry(dest, name);
+    const target = resolveEntry(root, name);
+    assertNoSymlinkPath(root, target);
     switch (typeflag) {
       case '0':
       case '\0':
@@ -178,16 +242,18 @@ export function extractTarGz(archive: string, dest: string): void {
         if (linkName === '') {
           throw new ArchiveError(`archive symlink has no target: ${name}`);
         }
-        assertLinkInside(dest, name, linkName, target);
+        assertLinkInside(root, name, linkName, target);
         fs.mkdirSync(path.dirname(target), { recursive: true });
         fs.symlinkSync(linkName, target);
+        symlinks.push({ name, linkName, target });
         break;
       }
       case '1': {
         if (linkName === '') {
           throw new ArchiveError(`archive hard link has no target: ${name}`);
         }
-        const source = resolveEntry(dest, linkName);
+        const source = resolveEntry(root, linkName);
+        assertNoSymlinkPath(root, source);
         fs.mkdirSync(path.dirname(target), { recursive: true });
         try {
           fs.linkSync(source, target);
@@ -200,6 +266,9 @@ export function extractTarGz(archive: string, dest: string): void {
         // character/block devices, fifos and sockets have no meaning in a tool install
         break;
     }
+  }
+  for (const { name, linkName, target } of symlinks) {
+    assertLinkInside(root, name, linkName, target);
   }
 }
 

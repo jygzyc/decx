@@ -16,8 +16,6 @@ Entry vectors (compose into single "attacker URL lands in WebView" signal):
 - `loadDataWithBaseURL` with `file://` baseURL + attacker HTML
 
 ## Non-obvious
-- `shouldOverrideUrlLoading` returning `true` without calling `view.loadUrl()` does NOT block — URL still loads
-- `shouldInterceptRequest` returning `WebResourceResponse` with attacker-controlled `Content-Type` = XSS path for trusted origin
 - Mixed content default was `MIXED_CONTENT_ALWAYS_ALLOW` on older API — `https://` page silently loads `http://` subresource
 - `<application android:usesCleartextTraffic="true">` is app-wide permit (overrides per-domain config)
 - `usesCleartextTraffic="true"` + WebView loading `http://` via `javascript:`/`intent://` redirect = silent MITM

@@ -13,7 +13,7 @@
 
 import { join, resolve } from 'node:path';
 import { discoverWorkspaces, describeFinding, describeStatus, ensureWorkspace, isWikiError, readWorkspaceConfig, requireWorkspace, resyncIndex, status } from './lib.ts';
-import { nodeFs } from './node-fs.ts';
+import { nodeFs, withWorkspaceLock } from './node-fs.ts';
 
 interface Options {
   command: string;
@@ -66,8 +66,10 @@ async function main(): Promise<number> {
 
   if (options.command === 'resync') {
     for (const workspace of targets) {
-      await ensureWorkspace(workspace, fs);
-      const result = await resyncIndex(workspace, fs);
+      const result = await withWorkspaceLock(workspace.root, async () => {
+        await ensureWorkspace(workspace, fs);
+        return resyncIndex(workspace, fs);
+      });
       console.log(`${workspace.name}: ${result.total} patterns (added ${result.added.length}, removed ${result.removed.length})`);
     }
     return 0;

@@ -6,7 +6,7 @@
   "license": "Apache-2.0",
   "type": "module",
   "bin": {
-    "decx": "dist/decx/lib/cli.js"
+    "decx": "dist/decx.mjs"
   },
   "engines": {
     "node": ">=22.18"
@@ -15,18 +15,16 @@
     "dist/"
   ],
   "scripts": {
-    "test": "node --test \"tests/**/*.test.ts\" \"scripts/*.test.mjs\"",
+    "test": "node --test \"tests/**/*.test.ts\" \"tests/*.test.mjs\"",
     "typecheck": "tsc --noEmit",
     "build": "node scripts/build.mjs",
     "prepack": "npm run build",
     "pack": "node scripts/pack.mjs",
-    "smoke": "node scripts/smoke.mjs",
-    "smoke:source": "node scripts/smoke.mjs --source",
-    "release:check": "node scripts/check-release.mjs",
     "decx": "node src/cli.ts"
   },
   "devDependencies": {
     "@types/node": "^24.0.0",
+    "esbuild": "^0.28.2",
     "typescript": "^5.9.0"
   }
 }

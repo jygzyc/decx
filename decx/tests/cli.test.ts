@@ -5,8 +5,9 @@ import os from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
-import { parseArgs } from '../src/cli.ts';
+import { launchSpec, parseArgs } from '../src/cli.ts';
 import { resolveHome } from '../src/config.ts';
+import { envCmdLauncherText, envLauncherText } from '../src/install.ts';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const CLI = path.resolve(HERE, '..', 'src', 'cli.ts');
@@ -41,33 +42,57 @@ test('the manager installs, runs and reports its version -- and nothing else', (
   // Help advertises exactly the commands that still exist.
   const help = runCli(['help']);
   assert.equal(help.status, 0);
-  for (const line of ['install <tool>', 'run <tool> [args]', 'version', 'help [command]']) {
+  for (const line of ['install <tool>', '-m, --module <tool>', 'version', 'help [command]']) {
     assert.ok(help.text.includes(line), `help should document ${line}`);
   }
+  assert.ok(!help.text.includes('run <tool>'), 'help must not advertise the removed run command');
   assert.ok(!/^\s*list\b/m.test(help.text), 'help must not advertise a list command');
   assert.equal(runCli(['help', 'list']).status, 2);
 });
 
-test('parseArgs keeps the tool argv untouched from the tool id on', () => {
-  const plain = parseArgs(['run', 'kuna', '--version']);
-  assert.equal(plain.command, 'run');
-  assert.deepEqual(plain.positionals, ['kuna']);
-  assert.deepEqual(plain.runArgs, ['--version']);
+test('the module flag is a usage error without a value or for an unknown tool', () => {
+  // A module without a value, and an unknown tool, are both usage errors.
+  const missing = runCli(['-m']);
+  assert.equal(missing.status, 2);
+  assert.equal((missing.json as { error: { code: string } }).error.code, 'USAGE');
 
-  // decx options may sit between `run` and the tool id ...
-  const withOptions = parseArgs(['run', '--home', '/tmp/decx-home', '--subprojects', '/tmp/decx-subprojects', '--pretty', 'kuna', 'docs', 'cli']);
-  assert.deepEqual(withOptions.positionals, ['kuna']);
+  const unknown = runCli(['-m', 'nope']);
+  assert.equal(unknown.status, 2);
+  const payload = unknown.json as { command: string; error: { code: string } };
+  assert.equal(payload.command, 'module');
+  assert.equal(payload.error.code, 'UNKNOWN_TOOL');
+});
+
+test('parseArgs keeps the tool argv untouched from the module id on', () => {
+  const plain = parseArgs(['-m', 'kuna', '--version']);
+  assert.equal(plain.command, null);
+  assert.equal(plain.module, 'kuna');
+  assert.deepEqual(plain.toolArgs, ['--version']);
+
+  // decx options may sit before the module, in either spelling ...
+  const withOptions = parseArgs(['--home', '/tmp/decx-home', '--subprojects', '/tmp/decx-subprojects', '--pretty', '-m', 'kuna', 'docs', 'cli']);
   assert.equal(withOptions.home, '/tmp/decx-home');
   assert.equal(withOptions.subprojects, '/tmp/decx-subprojects');
   assert.equal(withOptions.pretty, true);
-  assert.deepEqual(withOptions.runArgs, ['docs', 'cli']);
+  assert.equal(withOptions.module, 'kuna');
+  assert.deepEqual(withOptions.toolArgs, ['docs', 'cli']);
+  assert.deepEqual(parseArgs(['--module', 'kuna', 'docs', 'cli']).toolArgs, ['docs', 'cli']);
 
   // ... but everything after the id belongs to the tool, even our own names.
-  const forwarded = parseArgs(['run', '--home', '/tmp/decx-home', 'demo', '--flag']);
+  const forwarded = parseArgs(['--home', '/tmp/decx-home', '-m', 'demo', '--flag']);
   assert.equal(forwarded.home, '/tmp/decx-home');
-  assert.deepEqual(forwarded.runArgs, ['--flag']);
-  assert.deepEqual(parseArgs(['run', 'kuna', '--home', '/tmp/elsewhere']).runArgs, ['--home', '/tmp/elsewhere']);
-  assert.deepEqual(parseArgs(['run', 'kuna', '-h']).runArgs, ['-h']);
+  assert.deepEqual(forwarded.toolArgs, ['--flag']);
+  assert.deepEqual(parseArgs(['-m', 'kuna', '--home', '/tmp/elsewhere']).toolArgs, ['--home', '/tmp/elsewhere']);
+  assert.deepEqual(parseArgs(['-m', 'kuna', '-h']).toolArgs, ['-h']);
+  const unusual = ['', 'two words', 'a"b', 'trailing\\', '--', '--pretty', '--module'];
+  assert.deepEqual(parseArgs(['-m', 'kuna', ...unusual]).toolArgs, unusual);
+
+  // The module flag needs a value and only belongs to a bare invocation.
+  assert.equal(parseArgs(['-m']).error, 'missing value for -m');
+  assert.equal(parseArgs(['--module']).error, 'missing value for --module');
+  assert.equal(parseArgs(['install', '-m', 'kuna']).error, 'unknown option: -m');
+  assert.equal(parseArgs(['install', 'demo', '--from-source']).error, 'unknown option: --from-source');
+  assert.equal(parseArgs(['install', 'demo', '--source', '/tmp/checkout']).error, 'unknown option: --source');
 
   assert.equal(parseArgs(['--help']).help, true);
   assert.equal(parseArgs(['--version']).versionFlag, true);
@@ -135,3 +160,75 @@ test('--pretty indents the JSON output', () => {
   assert.equal(status, 0);
   assert.match(text, /\n {2}"ok": true/);
 });
+
+test('launchSpec leaves native argv alone and marks pre-escaped cmd arguments verbatim', () => {
+  const args = ['', 'two words', 'a"b', 'C:\\with space\\', '--home', '&|<>^'];
+  for (const [platform, launcher] of [['linux', '/tmp/tool'], ['win32', 'C:\\tools\\tool.exe']] as const) {
+    const spec = launchSpec(launcher, args, platform);
+    assert.deepEqual(spec, { command: launcher, args });
+    assert.notEqual(spec.args, args);
+  }
+  for (const extension of ['cmd', 'BAT']) {
+    const spec = launchSpec(`C:\\tool dir\\demo.${extension}`, ['', 'a"b', 'end\\'], 'win32', { ComSpec: 'custom-cmd.exe' });
+    assert.equal(spec.command, 'custom-cmd.exe');
+    assert.equal(spec.windowsVerbatimArguments, true);
+    assert.deepEqual(spec.args.slice(0, -1), ['/d', '/s', '/v:off', '/c']);
+    assert.equal(spec.args.at(-1), `"C:\\tool^ dir\\demo.${extension} ^^^"^^^" ^^^"a\\^^^"b^^^" ^^^"end\\\\^^^""`);
+  }
+});
+
+for (const kind of ['native', 'posix launcher', 'Windows cmd launcher'] as const) {
+  test(`-m preserves argv, stdio, exit code and environment through a ${kind}`, {
+    skip: kind === 'Windows cmd launcher' ? process.platform !== 'win32' : kind === 'posix launcher' && process.platform === 'win32',
+  }, (t) => {
+    const root = fs.realpathSync(tempDir());
+    t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+    const home = path.join(root, 'install with spaces');
+    const payload = path.join(home, 'share', 'demo');
+    const subprojects = path.join(root, 'subprojects');
+    fs.mkdirSync(path.join(home, 'bin'), { recursive: true });
+    fs.mkdirSync(payload, { recursive: true });
+    fs.mkdirSync(path.join(subprojects, 'decx-demo'), { recursive: true });
+    fs.writeFileSync(path.join(subprojects, 'decx-demo', 'decx-demo.json'), JSON.stringify({
+      manifest: 2, summary: 'offline argv probe', bins: ['demo'],
+      release: { asset: 'demo-{version}-{os}-{arch}.zip' },
+    }));
+    const script = path.join(payload, 'probe.cjs');
+    fs.writeFileSync(script, `
+      const fs = require('node:fs');
+      process.stdout.write(JSON.stringify({ args: process.argv.slice(2),
+        input: fs.readFileSync(0, 'utf8'), home: process.env.DECX_HOME,
+        inherited: process.env.DECX_TEST_INHERITED, initialized: process.env.DECX_TEST_INITIALIZED,
+        path: process.env.PATH, cwd: process.cwd() }));
+      process.stderr.write('native stderr\\n');
+      process.exit(Number(process.env.DECX_TEST_EXIT));
+    `);
+    if (kind === 'native') {
+      const target = path.join(home, 'bin', process.platform === 'win32' ? 'demo.exe' : 'demo');
+      fs.copyFileSync(process.execPath, target);
+      fs.chmodSync(target, 0o755);
+    } else {
+      const initialized = { DECX_TEST_INITIALIZED: payload };
+      const windows = kind === 'Windows cmd launcher';
+      fs.writeFileSync(path.join(home, 'bin', windows ? 'demo.cmd' : 'demo'),
+        windows ? envCmdLauncherText(process.execPath, initialized) : envLauncherText(process.execPath, initialized),
+        { mode: 0o755 });
+    }
+    const args = ['', 'two words', 'a"b', 'say "hello world"', 'C:\\space here\\', '\\"', '--home', '--pretty', '--', '中文'];
+    for (const exit of [0, 37]) {
+      const result = spawnSync(process.execPath, [CLI, '--home', home, '--subprojects', subprojects, '-m', 'demo', script, ...args], {
+        encoding: 'utf8', input: 'stdin unchanged\n', cwd: root,
+        env: { ...process.env, DECX_HOME: path.join(root, 'wrong home'), DECX_TEST_INHERITED: 'parent value',
+          DECX_TEST_INITIALIZED: 'parent default', DECX_TEST_EXIT: String(exit) },
+      });
+      assert.equal(result.error, undefined);
+      assert.equal(result.status, exit, result.stdout + result.stderr);
+      assert.equal(result.stderr, 'native stderr\n');
+      assert.deepEqual(JSON.parse(result.stdout), {
+        args, input: 'stdin unchanged\n', home, inherited: 'parent value',
+        initialized: kind === 'native' ? 'parent default' : payload,
+        path: process.env.PATH, cwd: root,
+      });
+    }
+  });
+}

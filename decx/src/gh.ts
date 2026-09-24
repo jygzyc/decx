@@ -5,7 +5,7 @@
  * newest prerelease), the release assets themselves, and -- when the project
  * publishes one -- a `SHA256SUMS`-style file.  Downloads stream to disk while
  * hashing, so a large archive is never buffered twice, and redirects are
- * followed by hand so the bearer token is never sent to the download host.
+ * followed by hand so the bearer token stays bound to the initial origin.
  */
 
 import { createHash } from 'node:crypto';
@@ -41,7 +41,7 @@ export class GithubError extends Error {
 }
 
 export interface GithubRequestOptions {
-  /** `GITHUB_TOKEN` / `GH_TOKEN`; sent as a bearer token to the API host only. */
+  /** `GITHUB_TOKEN` / `GH_TOKEN`; sent only to each request's initial origin. */
   token?: string;
   userAgent?: string;
   apiBase?: string;
@@ -79,8 +79,8 @@ interface RequestOptions {
   token?: string;
   userAgent: string;
   accept?: string;
-  /** Host the token may be sent to; redirects to other hosts drop it. */
-  authHost?: string;
+  /** Initial origin the token may be sent to; fixed across all redirect hops. */
+  authOrigin?: string;
 }
 
 function request(url: string, options: RequestOptions, redirects = 0): Promise<RawResponse> {
@@ -96,13 +96,13 @@ function request(url: string, options: RequestOptions, redirects = 0): Promise<R
       reject(new GithubError('BAD_URL', `not a valid URL: ${url}`));
       return;
     }
-    const authHost = options.authHost ?? target.host;
+    const authOrigin = options.authOrigin ?? target.origin;
     const transport = target.protocol === 'http:' ? http : https;
     const headers: Record<string, string> = {
       accept: options.accept ?? '*/*',
       'user-agent': options.userAgent,
     };
-    if (options.token !== undefined && target.host === authHost) {
+    if (options.token !== undefined && target.origin === authOrigin) {
       headers.authorization = `Bearer ${options.token}`;
     }
     const req = transport.get(target, { headers }, (res) => {
@@ -110,8 +110,18 @@ function request(url: string, options: RequestOptions, redirects = 0): Promise<R
       const location = res.headers.location;
       if (status >= 300 && status < 400 && location !== undefined) {
         res.resume();
-        const next = new URL(location, target).toString();
-        resolve(request(next, options, redirects + 1));
+        let next: URL;
+        try {
+          next = new URL(location, target);
+        } catch {
+          reject(new GithubError('BAD_URL', `not a valid redirect URL: ${location}`));
+          return;
+        }
+        if (target.protocol === 'https:' && next.protocol !== 'https:') {
+          reject(new GithubError('INSECURE_REDIRECT', `refusing HTTPS downgrade from ${target} to ${next}`));
+          return;
+        }
+        resolve(request(next.toString(), { ...options, authOrigin }, redirects + 1));
         return;
       }
       resolve({ status, body: res });
@@ -181,8 +191,8 @@ function releaseFromJson(repository: string, json: GithubReleaseJson, source: st
 /**
  * Resolves the tag to install.  An explicit tag is returned untouched (the
  * caller already knows it; no API round-trip and no rate limit), while
- * "latest" is the newest stable release, or the newest release matching
- * `tagPrefix`.
+ * "latest" is the newest stable release, or the newest stable release matching
+ * `tagPrefix` across the paginated release list.
  */
 export async function resolveRelease(options: ResolveReleaseOptions): Promise<ResolvedRelease> {
   const repository = options.repository;
@@ -200,27 +210,30 @@ export async function resolveRelease(options: ResolveReleaseOptions): Promise<Re
     const json = await getJson<GithubReleaseJson>(`${apiBase}/repos/${repository}/releases/latest`, requestOptions);
     return releaseFromJson(repository, json, `${apiBase}/repos/${repository}/releases/latest`);
   }
-  const list = await getJson<GithubReleaseJson[]>(
-    `${apiBase}/repos/${repository}/releases?per_page=100`,
-    requestOptions,
-  );
-  const matches = list.filter((release) => {
-    if (release.draft === true || typeof release.tag_name !== 'string') {
-      return false;
-    }
-    if (options.tagPrefix !== undefined && !release.tag_name.startsWith(options.tagPrefix)) {
-      return false;
-    }
-    return release.prerelease !== true;
-  });
-  const first = matches[0];
-  if (first === undefined) {
-    const prefix = options.tagPrefix !== undefined ? ` with tag prefix "${options.tagPrefix}"` : '';
-    throw new GithubError('RELEASE_NOT_FOUND', `no stable release${prefix} found in ${repository}`, {
-      hint: 'pass --version <tag> to pick a release explicitly, or use --from-source',
+  const listUrl = `${apiBase}/repos/${repository}/releases`;
+  const pageSize = 100;
+  for (let page = 1; ; page += 1) {
+    const list = await getJson<GithubReleaseJson[]>(`${listUrl}?per_page=${pageSize}&page=${page}`, requestOptions);
+    const first = list.find((release) => {
+      if (release.draft === true || typeof release.tag_name !== 'string') {
+        return false;
+      }
+      if (options.tagPrefix !== undefined && !release.tag_name.startsWith(options.tagPrefix)) {
+        return false;
+      }
+      return release.prerelease !== true;
     });
+    if (first !== undefined) {
+      return releaseFromJson(repository, first, listUrl);
+    }
+    if (list.length < pageSize) {
+      break;
+    }
   }
-  return releaseFromJson(repository, first, `${apiBase}/repos/${repository}/releases`);
+  const prefix = options.tagPrefix !== undefined ? ` with tag prefix "${options.tagPrefix}"` : '';
+  throw new GithubError('RELEASE_NOT_FOUND', `no stable release${prefix} found in ${repository}`, {
+    hint: 'pass --version <tag> to pick a release explicitly',
+  });
 }
 
 export interface DownloadResult {

@@ -31,3 +31,9 @@ decx/artifacts/
 Thumbs.db
 *.swp
 *~
+
+# Cooperative knowledge-layer write lock (normally removed after each operation).
+/.pi/decx-write.lock/
+
+# Intermediate results from agent work (never committed).
+/.pi-scratch/

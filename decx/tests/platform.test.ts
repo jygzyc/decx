@@ -3,12 +3,12 @@ import { test } from 'node:test';
 import { SUPPORTED_PLATFORMS, exeSuffix, osLabel, platformKey } from '../src/platform.ts';
 
 test('platform keys use the toolkit vocabulary', () => {
-  assert.equal(platformKey('darwin', 'arm64'), 'macos-arm64');
-  assert.equal(platformKey('darwin', 'x64'), 'macos-x64');
-  assert.equal(platformKey('linux', 'x64'), 'linux-x64');
+  assert.equal(platformKey('darwin', 'arm64'), 'darwin-arm64');
+  assert.equal(platformKey('darwin', 'x64'), 'darwin-amd64');
+  assert.equal(platformKey('linux', 'x64'), 'linux-amd64');
   assert.equal(platformKey('linux', 'arm64'), 'linux-arm64');
-  assert.equal(platformKey('win32', 'x64'), 'windows-x64');
-  assert.equal(platformKey('win32', 'arm64'), 'windows-arm64');
+  assert.equal(platformKey('win32', 'x64'), 'win-amd64');
+  assert.equal(platformKey('win32', 'arm64'), 'win-arm64');
 });
 
 test('unsupported platform and arch pairs return null', () => {

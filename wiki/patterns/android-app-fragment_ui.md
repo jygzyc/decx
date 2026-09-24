@@ -19,7 +19,6 @@ Primitive shape:
 - Floating-window tapjacking flags + `filterTouchesWhenObscured` version split: See [[android-framework-transition_control]]
 - `START_REDELIVER_INTENT` re-delivers attacker payload on every crash — stable DoS, no new Intent required
 - `onNewIntent` overwrites `getIntent()` without clearing extras — `singleTask`/`singleTop` attacker re-launches treated as continuation
-- Sensitive action closed in `onDestroy` (not `onPause`) keeps running when app backgrounds
 
 ## Reject
 Fragments are public constants, `isValidFragment` strictly rejects caller-controlled names, no protected input/action, or task/overlay protections block attacker control.

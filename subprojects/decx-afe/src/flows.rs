@@ -10,7 +10,6 @@ use serde_json::{json, Value};
 use crate::adb::AdbClient;
 use crate::collector::collect_framework;
 use crate::error::{Error, Result};
-use crate::framework_tools::ToolContext;
 use crate::layout::{
     layout_json, resolve_framework_layout, summarize_artifact, FrameworkLayoutRequest,
 };
@@ -96,7 +95,7 @@ pub fn process(options: &FrameworkOptions, clean_source: bool) -> Result<Value> 
         &options.request(false),
         device.as_mut().map(|client| client as &mut AdbClient),
     )?;
-    let processed = process_framework(&layout, &ToolContext::from_process_env())?;
+    let processed = process_framework(&layout)?;
     let jar_path = pack_framework_jar(&layout)?;
     let file_count = count_framework_files(&layout.out_tmp_dir);
     if !options.keep_outputs {

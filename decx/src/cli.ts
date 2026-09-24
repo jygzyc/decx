@@ -1,13 +1,14 @@
 #!/usr/bin/env node
 /**
- * `decx` -- install the DECX tools and launch them.  It is a thin wrapper: the
- * three commands either move files into DECX_HOME (`install`), report what is
- * there (`list`) or exec a tool's launcher (`run`), and the tools themselves
- * are never translated.
+ * `decx` -- install the DECX tools and run them.  It is a thin wrapper:
+ * `install` moves files into DECX_HOME, `decx -m <tool> [args...]` execs the
+ * installed launcher with every later argument untouched, and the tools
+ * themselves are never translated.
  *
- * Data commands print one JSON object on stdout (`help` and `run` print text or
- * the tool's own output); failures use `{ok:false,error:{code,message,hint}}`
- * and exit 1 (runtime error) or 2 (usage error).
+ * Data commands print one JSON object on stdout (`help` and a module run print
+ * text or the tool's own output); failures use
+ * `{ok:false,error:{code,message,hint}}` and exit 1 (runtime error) or 2
+ * (usage error).
  */
 
 import { spawnSync } from 'node:child_process';
@@ -21,6 +22,10 @@ import { fail, ok, stringify } from './json.ts';
 import { loadManifests, type LoadResult, type ToolManifest } from './manifest.ts';
 import { currentPlatformKey, isWindows } from './platform.ts';
 
+/** Replaced by the bundler; absent when Node runs the TypeScript source. */
+declare const __DECX_VERSION__: string;
+declare const __DECX_MANIFESTS__: LoadResult;
+
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const SUBPROJECTS_DIR = path.resolve(HERE, '..', '..', 'subprojects');
 const REPO_ROOT = path.resolve(HERE, '..', '..');
@@ -28,24 +33,26 @@ const REPO_ROOT = path.resolve(HERE, '..', '..');
 const HELP = `decx -- DECX toolkit installer and manager
 
 usage: decx <command> [options]
+       decx -m <tool> [args...]  run one installed tool
 
 commands:
   install <tool>       download or build a tool into DECX_HOME (JSON)
-  run <tool> [args]    run the tool's launcher, passing args through
   version              print the CLI version (JSON)
   help [command]       print help
 
+run:
+  -m, --module <tool>  exec the installed launcher; every argument after the
+                       tool id is the tool's own, flags included
+
 options:
   --home/--prefix <dir>  install root (default $DECX_HOME, else ~/.decx)
-  --subprojects <dir>  tool subproject directory (default <repo>/subprojects)
+  --subprojects <dir>  tool subproject directory (overrides embedded/repository tools)
   --pretty             indent the JSON output
   -h, --help           print help (decx <command> --help for one command)
   -V, --version        print the CLI version
 
 install options:
   --version <tag>      release tag to install (e.g. 1.508 or tools-v0.1.0)
-  --from-source        build the vendored checkout with cargo
-  --source <dir>       checkout to build (implies --from-source)
   --force              reinstall over an existing install, replacing links
   --links <dir>        PATH link directory (default ~/.local/bin)
   --no-links           install without PATH links
@@ -58,38 +65,31 @@ const COMMAND_HELP: Record<string, string> = {
 
 Install one tool into DECX_HOME: the executables go to $DECX_HOME/bin, the
 payload to $DECX_HOME/share/<tool>, and a PATH link to ~/.local/bin (or
---links).  Release installs download the platform asset (sha256-verified when
-the release publishes checksums); kind "python-venv" tools build a private
-virtualenv over the pinned checkout; a manifest with a buildable source block
-can be built with --from-source instead.  Nothing is committed until every
-check, including the tool's own verify command, has succeeded.
+--links).  Release installs download the platform asset and verify it against
+the release's checksums when the manifest declares them; kind "python-venv"
+tools build a private virtualenv over the pinned checkout.  Nothing is
+committed until every check, including the tool's own verify command, has
+succeeded.
 
-options: --version <tag>, --from-source, --source <dir>, --force,
-         --links <dir>, --no-links, --home <dir>, --subprojects <dir>, --pretty
-`,
-  run: `usage: decx run [options] <tool> [args...]
-
-Run a tool's launcher with the remaining arguments passed through untouched.
-Options before the tool id belong to decx (--home, --subprojects, --pretty); every
-argument after it belongs to the tool.
-
-options: --home <dir>, --subprojects <dir>, --pretty
+options: --version <tag>, --force, --links <dir>, --no-links, --home <dir>,
+         --subprojects <dir>, --pretty
 `,
 };
 
-const KNOWN_COMMANDS = new Set(['install', 'run', 'version', 'help']);
+const KNOWN_COMMANDS = new Set(['install', 'version', 'help']);
 
 interface CliArgs {
   command: string | null;
-  /** `install <tool>`: the tool id.  `run <tool> args...`: the id plus its argv. */
+  /** `install <tool>`: the tool id. */
   positionals: string[];
-  runArgs: string[];
+  /** `-m <tool>`: the tool to run.  When set, `toolArgs` is the tool's argv. */
+  module?: string;
+  /** Every argument after `-m <tool>`. */
+  toolArgs: string[];
   home?: string;
   subprojects?: string;
   links?: string;
   releaseTag?: string;
-  source?: string;
-  fromSource: boolean;
   force: boolean;
   noLinks: boolean;
   pretty: boolean;
@@ -105,14 +105,12 @@ const GLOBAL_VALUE_FLAGS: Record<string, 'home' | 'subprojects' | 'links'> = {
   '--links': 'links',
 };
 
-const INSTALL_VALUE_FLAGS: Record<string, 'releaseTag' | 'source'> = {
+const INSTALL_VALUE_FLAGS: Record<string, 'releaseTag'> = {
   '--version': 'releaseTag',
   '--release-tag': 'releaseTag',
-  '--source': 'source',
 };
 
-const BOOLEAN_FLAGS: Record<string, 'fromSource' | 'force' | 'noLinks' | 'pretty'> = {
-  '--from-source': 'fromSource',
+const BOOLEAN_FLAGS: Record<string, 'force' | 'noLinks' | 'pretty'> = {
   '--force': 'force',
   '--no-links': 'noLinks',
   '--pretty': 'pretty',
@@ -122,8 +120,7 @@ export function parseArgs(argv: readonly string[]): CliArgs {
   const args: CliArgs = {
     command: null,
     positionals: [],
-    runArgs: [],
-    fromSource: false,
+    toolArgs: [],
     force: false,
     noLinks: false,
     pretty: false,
@@ -132,9 +129,20 @@ export function parseArgs(argv: readonly string[]): CliArgs {
   };
   for (let index = 0; index < argv.length; index += 1) {
     const token = argv[index] as string;
-    // Everything after `run <tool>` is the tool's own argv, flags included.
-    if (args.command === 'run' && args.positionals.length > 0) {
-      args.runArgs.push(...argv.slice(index));
+    // `-m <tool>` ends the manager's own parsing: the id and everything after
+    // it is the tool's argv, flags included.
+    if (token === '-m' || token === '--module') {
+      if (args.command !== null) {
+        args.error = `unknown option: ${token}`;
+        return args;
+      }
+      const id = argv[index + 1];
+      if (id === undefined || (id.startsWith('-') && id !== '-')) {
+        args.error = `missing value for ${token}`;
+        return args;
+      }
+      args.module = id;
+      args.toolArgs = argv.slice(index + 2);
       return args;
     }
     if (token === '-h' || token === '--help') {
@@ -180,6 +188,7 @@ export function parseArgs(argv: readonly string[]): CliArgs {
 }
 
 function packageVersion(): string {
+  if (typeof __DECX_VERSION__ !== 'undefined') return __DECX_VERSION__;
   try {
     const file = path.resolve(HERE, '..', 'package.json');
     const parsed = JSON.parse(fs.readFileSync(file, 'utf8')) as { version?: string };
@@ -202,7 +211,7 @@ function failAndExit(command: string | null, code: string, message: string, hint
   process.exit(emitFailure(command, code, message, hint, exitCode));
 }
 
-function failWith(command: string, error: unknown): number {
+function failWith(command: string | null, error: unknown): number {
   if (error instanceof InstallError) {
     return emitFailure(command, error.code, error.message, error.hint, error.exitCode);
   }
@@ -235,8 +244,6 @@ function requireManifest(load: LoadResult, id: string): ToolManifest {
 function installOptions(args: CliArgs): InstallOptions {
   return {
     ...(args.releaseTag !== undefined ? { version: args.releaseTag } : {}),
-    ...(args.fromSource ? { fromSource: true } : {}),
-    ...(args.source !== undefined ? { source: args.source } : {}),
     force: args.force,
     ...(args.links !== undefined ? { links: args.links } : {}),
     ...(args.noLinks ? { noLinks: true } : {}),
@@ -262,15 +269,28 @@ export function installPayload(result: InstallResult): Record<string, unknown> {
   };
 }
 
+/** Quote for the native argv parser, then protect both cmd parsing passes (%*). */
+function cmdArgument(value: string): string {
+  const quoted = `"${value.replace(/(\\*)"/g, '$1$1\\"').replace(/(\\*)$/, '$1$1')}"`;
+  const escape = (text: string): string => text.replace(/([()%!^"<>&|;, *?])/g, '^$1');
+  return escape(escape(quoted));
+}
+
 /** cmd.exe cannot exec `.cmd`/`.bat` directly; wrap them with correct quoting. */
 export function launchSpec(
   launcher: string,
   args: readonly string[],
   platform: string = process.platform,
-): { command: string; args: string[] } {
+  env: NodeJS.ProcessEnv = process.env,
+): { command: string; args: string[]; windowsVerbatimArguments?: boolean } {
   if (isWindows(platform) && /\.(cmd|bat)$/i.test(launcher)) {
-    const quoted = [launcher, ...args].map((part) => `"${part.replaceAll('"', '""')}"`).join(' ');
-    return { command: process.env.ComSpec ?? 'cmd.exe', args: ['/d', '/s', '/c', `"${quoted}"`] };
+    const command = launcher.replace(/([()%!^"<>&|;, *?])/g, '^$1');
+    const quoted = [command, ...args.map(cmdArgument)].join(' ');
+    return {
+      command: env.ComSpec ?? env.COMSPEC ?? 'cmd.exe',
+      args: ['/d', '/s', '/v:off', '/c', `"${quoted}"`],
+      windowsVerbatimArguments: true,
+    };
   }
   return { command: launcher, args: [...args] };
 }
@@ -278,8 +298,11 @@ export function launchSpec(
 export async function run(argv: readonly string[], env: NodeJS.ProcessEnv = process.env): Promise<number> {
   const args = parseArgs(argv);
   const command = args.command;
+  const moduleId = args.module;
+  // A module run is not a manager command: the failure envelope says `module`.
+  const origin = moduleId !== undefined ? 'module' : command;
   if (args.error !== undefined) {
-    failAndExit(command, 'USAGE', args.error, 'run `decx help`', 2);
+    failAndExit(origin, 'USAGE', args.error, 'run `decx help`', 2);
   }
   if (args.versionFlag) {
     emit(ok('version', { version: packageVersion(), node: process.versions.node }), args.pretty);
@@ -289,6 +312,42 @@ export async function run(argv: readonly string[], env: NodeJS.ProcessEnv = proc
     process.stdout.write(HELP);
     return 0;
   }
+
+  const home = resolveHome(args.home, env);
+  const manifests = (): LoadResult => {
+    if (args.subprojects !== undefined) return loadManifests(path.resolve(args.subprojects));
+    return typeof __DECX_MANIFESTS__ !== 'undefined' ? __DECX_MANIFESTS__ : loadManifests(SUBPROJECTS_DIR);
+  };
+
+  if (moduleId !== undefined) {
+    // `-m <tool> [args...]`: the launcher replaces the manager here, so every
+    // argument after the id is the tool's own argv.
+    try {
+      const manifest = requireManifest(manifests(), moduleId);
+      const state = toolState(home, manifest);
+      if (!state.installed || state.bin === undefined) {
+        throw new InstallError('NOT_INSTALLED', `${manifest.id} is not installed (no launcher in ${binRoot(home)})`, {
+          hint: `run \`decx install ${manifest.id}\``,
+        });
+      }
+      const spec = launchSpec(state.bin, args.toolArgs, process.platform, env);
+      // Tools resolve their payload from $DECX_HOME (AFE does), so a custom
+      // --home has to reach the child even when the host never exported it.
+      const child = spawnSync(spec.command, spec.args, {
+        stdio: 'inherit',
+        env: { ...env, DECX_HOME: home },
+        windowsHide: false,
+        ...(spec.windowsVerbatimArguments === true ? { windowsVerbatimArguments: true } : {}),
+      });
+      if (child.error !== undefined) {
+        throw new InstallError('LAUNCH_FAILED', `could not launch ${state.bin}: ${child.error.message}`);
+      }
+      return child.status ?? 1;
+    } catch (error) {
+      return failWith(origin, error);
+    }
+  }
+
   if (command === null) {
     process.stdout.write(HELP);
     return 2;
@@ -313,26 +372,10 @@ export async function run(argv: readonly string[], env: NodeJS.ProcessEnv = proc
     return 0;
   }
 
-  const home = resolveHome(args.home, env);
-  const subprojectsDir = args.subprojects !== undefined ? path.resolve(args.subprojects) : SUBPROJECTS_DIR;
   try {
-    const load = loadManifests(subprojectsDir);
+    const load = manifests();
     const id = toolId(args.positionals, command);
     const manifest = requireManifest(load, id);
-    if (command === 'run') {
-      const state = toolState(home, manifest);
-      if (!state.installed || state.bin === undefined) {
-        throw new InstallError('NOT_INSTALLED', `${manifest.id} is not installed (no launcher in ${binRoot(home)})`, {
-          hint: `run \`decx install ${manifest.id}\``,
-        });
-      }
-      const spec = launchSpec(state.bin, args.runArgs);
-      const child = spawnSync(spec.command, spec.args, { stdio: 'inherit', env, windowsHide: false });
-      if (child.error !== undefined) {
-        throw new InstallError('LAUNCH_FAILED', `could not launch ${state.bin}: ${child.error.message}`);
-      }
-      return child.status ?? 1;
-    }
     const state = toolState(home, manifest);
     if (state.installed && !args.force) {
       throw new InstallError('ALREADY_INSTALLED', `${manifest.id} is already installed at ${state.prefix}`, {

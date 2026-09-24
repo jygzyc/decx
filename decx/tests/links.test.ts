@@ -10,8 +10,9 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
+import { launchSpec } from '../src/cli.ts';
 import { binPath, provenanceFile } from '../src/config.ts';
-import { venvLauncherText } from '../src/install.ts';
+import { envCmdLauncherText, venvLauncherText } from '../src/install.ts';
 import { createLinks, linkFileName, linkName, shimText } from '../src/links.ts';
 
 function tempDir(prefix = 'decx-links-'): string {
@@ -55,6 +56,21 @@ test('createLinks links every managed executable into the link directory', () =>
   assert.equal(created, 3);
 });
 
+test('prefers the platform launcher when two staged files share one command', () => {
+  const home = tempDir();
+  store(home, 'droidasc', 'droidasc.cmd');
+  const windowsDir = tempDir();
+  createLinks({ home, files: ['droidasc', 'droidasc.cmd'], linkDir: windowsDir, windows: true });
+  assert.deepEqual(fs.readdirSync(windowsDir), ['droidasc.cmd']);
+  assert.equal(fs.readFileSync(path.join(windowsDir, 'droidasc.cmd'), 'utf8'), shimText(binPath(home, 'droidasc.cmd')));
+  if (process.platform !== 'win32') {
+    const posixDir = tempDir();
+    createLinks({ home, files: ['droidasc.cmd', 'droidasc'], linkDir: posixDir, windows: false });
+    assert.deepEqual(fs.readdirSync(posixDir), ['droidasc']);
+    assert.equal(fs.realpathSync(path.join(posixDir, 'droidasc')), fs.realpathSync(binPath(home, 'droidasc')));
+  }
+});
+
 test('createLinks is idempotent', () => {
   const home = tempDir();
   const linkDir = tempDir();
@@ -87,7 +103,7 @@ test('createLinks with force moves the foreign file aside', () => {
   fs.writeFileSync(foreign, '#!/bin/sh\necho someone else\n', { mode: 0o755 });
   const outcomes = createLinks({ home, files: ['kuna'], linkDir, force: true });
   assert.equal(outcomes[0]?.status, 'updated');
-  const leftovers = fs.readdirSync(linkDir).filter((entry) => entry.startsWith('kuna.decx-old-'));
+  const leftovers = fs.readdirSync(linkDir).filter((entry) => entry.startsWith(`${linkFileName('kuna')}.decx-old-`));
   assert.equal(leftovers.length, 1);
   const link = path.join(linkDir, linkFileName('kuna'));
   if (process.platform === 'win32') {
@@ -95,6 +111,76 @@ test('createLinks with force moves the foreign file aside', () => {
   } else {
     assert.equal(fs.realpathSync(link), fs.realpathSync(binPath(home, 'kuna')));
   }
+});
+
+test('managed Windows shims refresh when the launcher target or body changes', (t) => {
+  const root = tempDir();
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const home = path.join(root, 'home');
+  const linkDir = path.join(root, 'links');
+  store(home, 'demo.exe', 'demo.cmd');
+  const options = { home, linkDir, windows: true };
+  assert.equal(createLinks({ ...options, files: ['demo.exe'] })[0]?.status, 'created');
+  const link = path.join(linkDir, 'demo.cmd');
+  assert.equal(createLinks({ ...options, files: ['demo.cmd'] })[0]?.status, 'updated');
+  assert.equal(fs.readFileSync(link, 'utf8'), shimText(binPath(home, 'demo.cmd')));
+  assert.equal(createLinks({ ...options, files: ['demo.cmd'] })[0]?.status, 'unchanged');
+  fs.writeFileSync(link, shimText(binPath(home, 'demo.cmd')).replace('exit /b %errorlevel%', 'rem outdated body'));
+  assert.equal(createLinks({ ...options, files: ['demo.cmd'] })[0]?.status, 'updated');
+  assert.equal(fs.readFileSync(link, 'utf8'), shimText(binPath(home, 'demo.cmd')));
+  const nextHome = path.join(root, 'new home');
+  store(nextHome, 'demo.cmd');
+  assert.equal(createLinks({ ...options, home: nextHome, files: ['demo.cmd'] })[0]?.status, 'updated');
+  assert.equal(fs.readFileSync(link, 'utf8'), shimText(binPath(nextHome, 'demo.cmd')));
+  assert.deepEqual(fs.readdirSync(linkDir), ['demo.cmd']);
+});
+
+test('managed POSIX links refresh changed and dangling targets, but foreign links stay intact', {
+  skip: process.platform === 'win32',
+}, (t) => {
+  const root = tempDir();
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const home = path.join(root, 'home');
+  const linkDir = path.join(root, 'links');
+  store(home, 'demo', 'demo.exe');
+  const options = { home, linkDir, windows: false };
+  createLinks({ ...options, files: ['demo.exe'] });
+  const link = path.join(linkDir, 'demo');
+  fs.unlinkSync(binPath(home, 'demo.exe'));
+  assert.equal(createLinks({ ...options, files: ['demo'] })[0]?.status, 'updated');
+  assert.equal(fs.readlinkSync(link), binPath(home, 'demo'));
+  assert.equal(createLinks({ ...options, files: ['demo'] })[0]?.status, 'unchanged');
+  store(home, 'demo.exe');
+  assert.equal(createLinks({ ...options, files: ['demo.exe'] })[0]?.status, 'updated');
+  assert.equal(fs.readlinkSync(link), binPath(home, 'demo.exe'));
+  assert.equal(fs.readFileSync(binPath(home, 'demo'), 'utf8'), '#!/bin/sh\n');
+  fs.unlinkSync(link);
+  const foreign = path.join(root, 'other', 'demo');
+  fs.symlinkSync(foreign, link);
+  assert.equal(createLinks({ ...options, files: ['demo'] })[0]?.status, 'conflict');
+  assert.equal(fs.readlinkSync(link), foreign);
+});
+
+test('Windows PATH shim reaches the refreshed launcher and initializes its environment', {
+  skip: process.platform !== 'win32',
+}, (t) => {
+  const root = tempDir();
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const home = path.join(root, 'home with spaces');
+  const linkDir = path.join(root, 'PATH links');
+  store(home, 'demo.exe');
+  createLinks({ home, linkDir, files: ['demo.exe'] });
+  fs.unlinkSync(binPath(home, 'demo.exe'));
+  fs.writeFileSync(binPath(home, 'demo.cmd'), envCmdLauncherText(process.execPath, { DECX_TEST_INITIALIZED: 'ready' }));
+  assert.equal(createLinks({ home, linkDir, files: ['demo.cmd'] })[0]?.status, 'updated');
+  const script = path.join(root, 'probe.cjs');
+  fs.writeFileSync(script, `process.stdout.write(JSON.stringify({ args: process.argv.slice(2), env: process.env.DECX_TEST_INITIALIZED })); process.exit(29);`);
+  const args = ['', 'two words', 'trailing\\'];
+  const spec = launchSpec(path.join(linkDir, 'demo.cmd'), [script, ...args]);
+  const result = spawnSync(spec.command, spec.args, { encoding: 'utf8', windowsVerbatimArguments: spec.windowsVerbatimArguments });
+  assert.equal(result.error, undefined);
+  assert.equal(result.status, 29, result.stdout + result.stderr);
+  assert.deepEqual(JSON.parse(result.stdout), { args, env: 'ready' });
 });
 
 test('shimText carries the marker and forwards argv', () => {
@@ -121,11 +207,11 @@ test('a script launcher runs correctly through its PATH symlink', { skip: proces
   fs.mkdirSync(path.dirname(binPath(home, 'droidasc')), { recursive: true });
   fs.writeFileSync(
     binPath(home, 'droidasc'),
-    venvLauncherText({ id: 'droidasc', platformOs: 'linux', venvBin: 'bin', venvPython: 'python', entry: 'main.py' }),
+    venvLauncherText({ id: 'droidasc', platformOs: 'linux', venvDir: '.venv', venvBin: 'bin', venvPython: 'python', entry: 'main.py' }),
     { mode: 0o755 },
   );
-  fs.mkdirSync(path.join(home, 'share', 'droidasc', 'venv', 'bin'), { recursive: true });
-  fs.writeFileSync(path.join(home, 'share', 'droidasc', 'venv', 'bin', 'python'), '#!/bin/sh\necho "venv:$*"\n', {
+  fs.mkdirSync(path.join(home, 'share', 'droidasc', '.venv', 'bin'), { recursive: true });
+  fs.writeFileSync(path.join(home, 'share', 'droidasc', '.venv', 'bin', 'python'), '#!/bin/sh\necho "venv:$*"\n', {
     mode: 0o755,
   });
   fs.writeFileSync(path.join(home, 'share', 'droidasc', 'main.py'), '# entry point\n');

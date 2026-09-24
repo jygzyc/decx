@@ -18,6 +18,7 @@
 export interface WikiFs {
   readFile(path: string): Promise<string>;
   writeFile(path: string, text: string): Promise<void>;
+  createFile(path: string, text: string): Promise<boolean>;
   exists(path: string): Promise<boolean>;
   listDir(path: string): Promise<string[]>;
   mkdirp(path: string): Promise<void>;
@@ -386,19 +387,16 @@ function impactHeader(): string {
 
 export async function readPage(ws: Workspace, rel: string, fs: WikiFs): Promise<{ path: string; text: string }> {
   const clean = normalizeRel(rel);
-  const alias = clean === RAW_TRACES || clean.startsWith(`${RAW_TRACES}/`) ? joinPath(ws.raw, clean) : undefined;
-  for (const path of [
-    joinPath(ws.wiki, clean),
-    joinPath(ws.raw, clean),
-    joinPath(ws.raw, RAW_TRACES, clean),
-    ...(alias === undefined ? [] : [alias]),
-    joinPath(ws.skills, clean),
-    joinPath(ws.root, clean),
-  ]) {
-    if (await fs.exists(path)) {
-      return { path, text: await fs.readFile(path) };
-    }
+  const path = /^(wiki|raw|skills)\//.test(clean)
+    ? joinPath(ws.root, clean)
+    : clean.startsWith('traces/') ? joinPath(ws.raw, clean)
+    : joinPath(ws.wiki, clean);
+  if (!/^(?:wiki\/(?:index|logs|skill-impact)\.md|wiki\/patterns\/[^/]+\.md|raw\/traces\/[^/]+\.md|skills\/[^/]+\/(?:SKILL\.md|PURPOSE\.md|references\/.+))$/.test(
+    path.slice(ws.root.length + 1),
+  )) {
+    throw new WikiError('BAD_PATH', 'read only wiki pages, raw traces or skill resources');
   }
+  if (await fs.exists(path)) return { path, text: await fs.readFile(path) };
   const available = await workspaceListing(ws, fs);
   throw new WikiError('NOT_FOUND', `no decx page ${clean} in ${ws.name}`, `available: ${available.join(', ') || '(none)'}`);
 }
@@ -443,7 +441,7 @@ export async function writeTrace(
   if (input.body.trim() === '') {
     throw new WikiError('BAD_TRACE', 'a trace needs a body', 'include the exact commands and error text');
   }
-  await ensureWorkspace(ws, fs);
+  await fs.mkdirp(joinPath(ws.raw, RAW_TRACES));
   const existing = await traceFiles(ws, fs);
   let seen = 0;
   let id = traceId(input.summary, now, seen);
@@ -451,8 +449,8 @@ export async function writeTrace(
     seen += 1;
     id = traceId(input.summary, now, seen);
   }
-  const rel = `${LAYERS.raw}/${RAW_TRACES}/${id}.md`;
-  const header = [
+  let rel = `${LAYERS.raw}/${RAW_TRACES}/${id}.md`;
+  let header = [
     '---',
     `id: ${id}`,
     `date: ${now.toISOString()}`,
@@ -466,7 +464,13 @@ export async function writeTrace(
     input.body.trim(),
     '',
   ].join('\n');
-  await fs.writeFile(joinPath(ws.root, rel), header);
+  while (!(await fs.createFile(joinPath(ws.root, rel), header))) {
+    seen += 1;
+    const previous = id;
+    id = traceId(input.summary, now, seen);
+    header = header.replace(`id: ${previous}\n`, `id: ${id}\n`);
+    rel = `${LAYERS.raw}/${RAW_TRACES}/${id}.md`;
+  }
   return { id, path: rel };
 }
 
@@ -626,7 +630,35 @@ export async function resyncIndex(ws: Workspace, fs: WikiFs): Promise<{ added: s
   return { added, removed, total: pages.length };
 }
 
-export async function applyMaintain(
+/** Validate the entire patch against an overlay before touching persistent pages. */
+export async function applyMaintain(ws: Workspace, patch: MaintainPatch, fs: WikiFs, now = new Date()): Promise<MaintainResult> {
+  const writes = new Map<string, string>();
+  const directories = new Set<string>();
+  const overlay: WikiFs = {
+    ...fs,
+    readFile: async path => writes.has(path) ? writes.get(path)! : fs.readFile(path),
+    exists: async path => writes.has(path) || directories.has(path) || await fs.exists(path),
+    writeFile: async (path, text) => { writes.set(path, text); },
+    createFile: async (path, text) => {
+      if (writes.has(path) || await fs.exists(path)) return false;
+      writes.set(path, text); return true;
+    },
+    mkdirp: async path => { directories.add(path); },
+    listDir: async path => {
+      const names = await safeListDirs(fs, path);
+      for (const file of writes.keys()) {
+        if (file.startsWith(`${path}/`) && !file.slice(path.length + 1).includes('/')) names.push(file.slice(path.length + 1));
+      }
+      return [...new Set(names)];
+    },
+  };
+  const result = await applyMaintainStaged(ws, patch, overlay, now);
+  for (const path of directories) await fs.mkdirp(path);
+  for (const [path, text] of writes) await fs.writeFile(path, text);
+  return result;
+}
+
+async function applyMaintainStaged(
   ws: Workspace,
   patch: MaintainPatch,
   fs: WikiFs,
@@ -655,6 +687,7 @@ export async function applyMaintain(
 
   for (const item of patch.update_patterns ?? []) {
     const name = item.name.trim();
+    if (!PATTERN_NAME.test(name)) throw new WikiError('BAD_PATTERN_NAME', `invalid pattern name: ${name}`);
     const path = joinPath(ws.wiki, FILES.patterns, `${name}.md`);
     if (!(await fs.exists(path))) {
       throw new WikiError('PATTERN_MISSING', `no pattern page ${name}`, 'create it first (create_patterns) or check the spelling');
@@ -673,11 +706,14 @@ export async function applyMaintain(
     await resyncIndex(ws, fs);
     resynced = true;
   } else if (patch.update_index !== undefined) {
-    const pages = (await patternPages(ws, fs)).map(({ name }) => name);
+    const entries = await patternPages(ws, fs);
+    const pages = entries.map(({ name }) => name);
     const listed = indexRows(patch.update_index);
     const missing = pages.filter((name) => !listed.includes(name));
     const stale = listed.filter((name) => !pages.includes(name));
-    if (missing.length > 0 || stale.length > 0) {
+    if (missing.length > 0 || stale.length > 0 || new Set(listed).size !== listed.length
+      || !patch.update_index.includes(INDEX_START) || !patch.update_index.includes(INDEX_END)
+      || entries.some(({ name, page }) => !patch.update_index!.includes(indexRow(name, page)))) {
       const details = [
         missing.length > 0 ? `missing rows: ${missing.join(', ')}` : '',
         stale.length > 0 ? `rows without a page: ${stale.join(', ')}` : '',
@@ -768,16 +804,16 @@ export async function recordProposal(
   }
 
   if (input.target.trim() === '' || input.change.trim() === '') {
-    throw new WikiError('BAD_PROPOSAL', 'a proposal needs a target skill file and the change it makes', 'e.g. target "skills/decx-vulnhunt/SKILL.md"');
+    throw new WikiError('BAD_PROPOSAL', 'a proposal needs a target skill file and the change it makes', 'e.g. target "skills/decx-tool/SKILL.md"');
   }
   const target = normalizeRel(input.target);
   const skillName = /^skills\/([^/]+)\//.exec(`${target}/`)?.[1];
   const file = target.split('/').at(-1) ?? '';
   if (skillName !== undefined && (file === '' || !file.includes('.'))) {
-    throw new WikiError('BAD_PROPOSAL', `a proposal changes one file inside one skill, not the path ${JSON.stringify(input.target)}`, 'name the file the change lands in, e.g. "skills/decx-vulnhunt/SKILL.md"');
+    throw new WikiError('BAD_PROPOSAL', `a proposal changes one file inside one skill, not the path ${JSON.stringify(input.target)}`, 'name the file the change lands in, e.g. "skills/decx-tool/SKILL.md"');
   }
   if (skillName === undefined) {
-    throw new WikiError('BAD_PROPOSAL', `a proposal changes one file inside one skill, not ${JSON.stringify(input.target)}`, 'targets look like "skills/decx-vulnhunt/SKILL.md" or "skills/decx-vulnhunt/references/patterns/android-app-uri_grant.md"');
+    throw new WikiError('BAD_PROPOSAL', `a proposal changes one file inside one skill, not ${JSON.stringify(input.target)}`, 'targets look like "skills/decx-tool/SKILL.md" or "skills/decx-tool/references/droidasc.md"');
   }
   if (!(await fs.exists(joinPath(ws.skills, skillName, 'SKILL.md')))) {
     throw new WikiError('UNKNOWN_SKILL', `no skill ${skillName} in ${ws.name}`, 'the target skill directory must contain a SKILL.md');
@@ -848,6 +884,13 @@ export async function lintWorkspace(ws: Workspace, fs: WikiFs): Promise<LintFind
   if (await fs.exists(joinPath(ws.wiki, FILES.index))) {
     const index = await fs.readFile(joinPath(ws.wiki, FILES.index));
     const listed = indexRows(index);
+    const seenRows = new Set<string>();
+    for (const name of listed) {
+      if (seenRows.has(name)) {
+        findings.push({ level: 'error', area: 'wiki', file: FILES.index, message: `row for ${name} is listed more than once` });
+      }
+      seenRows.add(name);
+    }
     for (const { name } of pages) {
       if (!listed.includes(name)) {
         findings.push({ level: 'error', area: 'wiki', file: FILES.index, message: `no row for pattern ${name}` });
@@ -863,6 +906,9 @@ export async function lintWorkspace(ws: Workspace, fs: WikiFs): Promise<LintFind
         findings.push({ level: 'error', area: 'wiki', file: FILES.index, message: `row for ${name} no longer matches its page: run decx_maintain with resync_index` });
       }
     }
+    findings.push(
+      ...(await linkFindings(fs, 'wiki', FILES.index, index, [ws.wiki, joinPath(ws.wiki, FILES.patterns), ws.root, ws.skills])),
+    );
   }
 
   if (await fs.exists(joinPath(ws.wiki, FILES.impact))) {

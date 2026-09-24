@@ -36,6 +36,7 @@ pub struct FrameworkLayout {
 /// Inputs for [`resolve_framework_layout`].
 #[derive(Debug, Clone, Default)]
 pub struct FrameworkLayoutRequest {
+    /// Root for the default `source`/`out` directories ([`crate::afe_home`]).
     pub home: PathBuf,
     pub oem: Option<String>,
     pub vendor: Option<String>,
@@ -71,6 +72,15 @@ pub fn segment(value: &str) -> String {
     } else {
         trimmed.to_string()
     }
+}
+
+/// Windows drive-relative names ("C:evil.dex") carry a prefix but no root, so
+/// `Path::join`/`Path::push` treats them as a path replacement and they escape
+/// the extraction root. Rejected on every platform so an image extracts the
+/// same way everywhere.
+pub fn is_drive_relative_name(name: &str) -> bool {
+    let mut chars = name.chars();
+    matches!(chars.next(), Some(c) if c.is_ascii_alphabetic()) && chars.next() == Some(':')
 }
 
 /// Make `path` absolute (against the current directory) and lexically
@@ -243,11 +253,11 @@ pub fn resolve_framework_layout(
     let vendor = segment(&vendor);
     let out_dir = match explicit_out_dir {
         Some(dir) => dir,
-        None => absolute(&request.home.join("output").join("framework").join(&oem)),
+        None => absolute(&request.home.join("out")),
     };
     let source_dir = match &request.source_dir {
         Some(path) => absolute(path),
-        None => out_dir.join("source"),
+        None => absolute(&request.home.join("source")),
     };
     let out_tmp_dir = out_dir.join("out_tmp");
     if source_dir == out_dir
@@ -359,7 +369,8 @@ mod tests {
         };
         let layout = resolve_framework_layout(&request, None).unwrap();
         assert_eq!(layout.artifact.name, "framework_samsung_device_unknown");
-        assert_eq!(layout.source_dir, out_dir.join("source"));
+        // An explicit --out does not move the default source directory.
+        assert_eq!(layout.source_dir, dir.join("source"));
         assert_eq!(layout.out_tmp_dir, out_dir.join("out_tmp"));
         assert!(out_dir.join(".artifact.json").is_file());
 
@@ -373,7 +384,7 @@ mod tests {
         assert_eq!(layout.artifact.oem, "samsung_device");
         assert_eq!(layout.artifact.vendor, "unknown");
 
-        // Default output lives under <home>/output/framework/<oem>.
+        // Defaults sit directly under the AFE home: <home>/source, <home>/out.
         let default_home = mkdtemp(&std::env::temp_dir(), "afe-home-").unwrap();
         let request = FrameworkLayoutRequest {
             home: default_home.clone(),
@@ -381,10 +392,9 @@ mod tests {
             ..FrameworkLayoutRequest::default()
         };
         let layout = resolve_framework_layout(&request, None).unwrap();
-        assert_eq!(
-            layout.out_dir,
-            default_home.join("output").join("framework").join("pixel")
-        );
+        assert_eq!(layout.source_dir, default_home.join("source"));
+        assert_eq!(layout.out_dir, default_home.join("out"));
+        assert_eq!(layout.out_tmp_dir, default_home.join("out").join("out_tmp"));
         assert!(layout.out_dir.join(".artifact.json").is_file());
 
         std::fs::remove_dir_all(&dir).ok();

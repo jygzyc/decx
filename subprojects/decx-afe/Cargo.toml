@@ -15,7 +15,11 @@ path = "src/lib.rs"
 
 [dependencies]
 clap = { version = "4", features = ["derive"] }
+crc32fast = "1"
+flate2 = "1"
 serde_json = "1"
+sha2 = "0.10"
+zip = { version = "2", default-features = false, features = ["deflate"] }
 
 [profile.release]
 strip = true
