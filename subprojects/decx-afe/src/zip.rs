@@ -7,7 +7,7 @@
 use std::cell::RefCell;
 use std::collections::HashSet;
 use std::fs::{self, File};
-use std::io::{Cursor, Read, Write};
+use std::io::{Cursor, Read, Seek, Write};
 use std::path::Path;
 
 use flate2::read::DeflateDecoder;
@@ -32,22 +32,32 @@ pub struct ZipEntry {
 ///
 /// The archive is parsed once, when it is opened; [`ZipArchive::entries`] and
 /// friends report the parse failure if the bytes were not a valid zip.
+trait ReadSeek: Read + Seek {}
+impl<T: Read + Seek> ReadSeek for T {}
+
+const MAX_IN_MEMORY_ENTRY: u64 = 64 * 1024 * 1024;
+const MAX_EXPANDED_ENTRY_BYTES: u64 = 8 * 1024 * 1024 * 1024;
+
 pub struct ZipArchive {
     label: String,
-    parsed: RefCell<Option<zip::ZipArchive<Cursor<Vec<u8>>>>>,
+    parsed: RefCell<Option<zip::ZipArchive<Box<dyn ReadSeek>>>>,
     parse_error: Option<String>,
 }
 
 impl ZipArchive {
     /// Open an archive from disk and parse its central directory.
     pub fn open(path: &str) -> Result<Self, Error> {
-        let bytes = fs::read(path).map_err(|err| io_error(&format!("read '{path}'"), err))?;
-        Ok(Self::from_bytes(path, bytes))
+        let file = File::open(path).map_err(|err| io_error(&format!("open '{path}'"), err))?;
+        Ok(Self::from_reader(path, Box::new(file)))
     }
 
     /// Wrap an in-memory archive. Invalid data is reported by [`Self::entries`].
     pub fn from_bytes(label: &str, bytes: Vec<u8>) -> Self {
-        match zip::ZipArchive::new(Cursor::new(bytes)) {
+        Self::from_reader(label, Box::new(Cursor::new(bytes)))
+    }
+
+    fn from_reader(label: &str, reader: Box<dyn ReadSeek>) -> Self {
+        match zip::ZipArchive::new(reader) {
             Ok(archive) => ZipArchive {
                 label: label.to_string(),
                 parsed: RefCell::new(Some(archive)),
@@ -121,7 +131,7 @@ impl ZipArchive {
                 .by_index_raw(index)
                 .ok()
                 .map(|raw| method_code(raw.compression()));
-            let mut file = match archive.by_index(index) {
+            let file = match archive.by_index(index) {
                 Ok(file) => file,
                 Err(ZipError::FileNotFound) => return Ok(None),
                 Err(err) => return Err(self.method_error(name, method, err)),
@@ -129,24 +139,86 @@ impl ZipArchive {
             // The size in the central directory is untrusted: never reserve
             // from it (a lying size used to abort the process with a capacity
             // overflow). Grow as bytes actually arrive instead.
+            if file.size() > MAX_IN_MEMORY_ENTRY {
+                return Err(Error::file(
+                    format!("entry '{name}' exceeds the 64 MiB in-memory read limit"),
+                    Some(&self.label),
+                ));
+            }
             let mut data = Vec::new();
-            file.read_to_end(&mut data).map_err(|err| {
-                if err.to_string().contains("Invalid checksum") {
-                    self.bad_checksum(name)
-                } else {
-                    Error::file(
-                        format!("Failed to read '{name}' from '{}': {err}", self.label),
-                        Some(&self.label),
-                    )
-                }
-            })?;
+            file.take(MAX_IN_MEMORY_ENTRY + 1)
+                .read_to_end(&mut data)
+                .map_err(|err| {
+                    if err.to_string().contains("Invalid checksum") {
+                        self.bad_checksum(name)
+                    } else {
+                        Error::file(
+                            format!("Failed to read '{name}' from '{}': {err}", self.label),
+                            Some(&self.label),
+                        )
+                    }
+                })?;
+            if data.len() as u64 > MAX_IN_MEMORY_ENTRY {
+                return Err(Error::file(
+                    format!("entry '{name}' exceeds the 64 MiB in-memory read limit"),
+                    Some(&self.label),
+                ));
+            }
             Ok(Some(data))
+        })
+    }
+
+    /// Stream one entry to `target` without loading its payload into memory.
+    pub fn extract_name(&self, name: &str, target: &Path) -> Result<(), Error> {
+        self.with_archive(|parsed| {
+            let index = parsed
+                .index_for_name(name)
+                .ok_or_else(|| self.no_entry(name))?;
+            let entry = parsed
+                .by_index(index)
+                .map_err(|err| self.zip_error(Some(name), err))?;
+            if entry.size() > MAX_EXPANDED_ENTRY_BYTES {
+                return Err(Error::file(
+                    "expanded entry exceeds 8 GiB",
+                    Some(&self.label),
+                ));
+            }
+            if let Some(parent) = target.parent() {
+                if !parent.as_os_str().is_empty() {
+                    fs::create_dir_all(parent).map_err(|err| {
+                        io_error(&format!("create dir '{}'", parent.display()), err)
+                    })?;
+                }
+            }
+            let result = (|| -> Result<(), Error> {
+                let mut output = File::create(target)
+                    .map_err(|err| io_error(&format!("create '{}'", target.display()), err))?;
+                let bytes =
+                    std::io::copy(&mut entry.take(MAX_EXPANDED_ENTRY_BYTES + 1), &mut output)
+                        .map_err(|err| {
+                            Error::file(
+                                format!("Failed to read '{name}' from '{}': {err}", self.label),
+                                Some(&self.label),
+                            )
+                        })?;
+                if bytes > MAX_EXPANDED_ENTRY_BYTES {
+                    return Err(Error::file(
+                        "expanded entry exceeds 8 GiB",
+                        Some(&self.label),
+                    ));
+                }
+                Ok(())
+            })();
+            if result.is_err() {
+                let _ = fs::remove_file(target);
+            }
+            result
         })
     }
 
     fn with_archive<T>(
         &self,
-        action: impl FnOnce(&mut zip::ZipArchive<Cursor<Vec<u8>>>) -> Result<T, Error>,
+        action: impl FnOnce(&mut zip::ZipArchive<Box<dyn ReadSeek>>) -> Result<T, Error>,
     ) -> Result<T, Error> {
         let mut guard = self.parsed.borrow_mut();
         match guard.as_mut() {
@@ -329,11 +401,10 @@ fn add_zip_entry(
     writer
         .start_file(name, deflated_options())
         .map_err(|err| zip_write_error(&format!("write '{name}'"), err))?;
-    let data =
-        fs::read(source).map_err(|err| io_error(&format!("read '{}'", source.display()), err))?;
-    writer
-        .write_all(&data)
-        .map_err(|err| io_error(&format!("write '{name}'"), err))
+    let mut file =
+        File::open(source).map_err(|err| io_error(&format!("open '{}'", source.display()), err))?;
+    std::io::copy(&mut file, writer).map_err(|err| io_error(&format!("write '{name}'"), err))?;
+    Ok(())
 }
 
 fn zip_write_error(context: &str, err: ZipError) -> Error {
@@ -361,16 +432,5 @@ pub fn read_zip_entry_text(archive_path: &str, name: &str) -> Result<String, Err
 
 /// Extract one entry of an archive on disk to `target`.
 pub fn extract_zip_entry(archive_path: &str, name: &str, target: &str) -> Result<(), Error> {
-    let archive = ZipArchive::open(archive_path)?;
-    let data = archive
-        .read_name(name)?
-        .ok_or_else(|| archive.no_entry(name))?;
-    let target_path = Path::new(target);
-    if let Some(parent) = target_path.parent() {
-        if !parent.as_os_str().is_empty() {
-            fs::create_dir_all(parent)
-                .map_err(|err| io_error(&format!("create dir '{}'", parent.display()), err))?;
-        }
-    }
-    fs::write(target_path, data).map_err(|err| io_error(&format!("write '{target}'"), err))
+    ZipArchive::open(archive_path)?.extract_name(name, Path::new(target))
 }

@@ -83,18 +83,15 @@ droidasc findrefs "app.apk" field "apiKey" -o field_refs.txt
 ## Install
 
 ```bash
-decx install droidasc   # private venv over the pinned upstream checkout
+decx install droidasc   # private venv installing the published PyPI package
 decx -m droidasc getclass "<container>" "<class>"
 ```
 
-- DECX installs the pinned upstream checkout when available, not PyPI: the venv gets
-  `androguard==4.1.3` from
-  `requirements.txt`, the manager copies the `droidasc/` package next to `main.py`, and
-  the `droidasc` launcher (`droidasc.cmd` on Windows) runs that entry point.
-- The install needs Python >= 3.10 on PATH (`DECX_PYTHON` picks another interpreter, otherwise
-  the install fails naming the shortfall); the launcher runs the installed copy under
-  `<DECX_HOME>/share/droidasc/`, not the vendored checkout, and there is no source build —
-  `--from-source` and `--source` do not apply here (exit 2, `USAGE`: "droidasc installs from
-  its Python checkout").
+- DECX creates a private environment under `<DECX_HOME>/runtime/droidasc/` and
+  installs the published `droidasc` PyPI distribution with pip. The manager records
+  provenance in `<DECX_HOME>/share/droidasc/PROVENANCE`; it needs no source tree.
+- The install needs Python >= 3.10 on PATH (`DECX_PYTHON` picks another interpreter,
+  otherwise the install fails naming the shortfall). `--version <version>` pins the
+  PyPI distribution. Source-build flags do not apply to this tool.
 - Upstream's own entry points are the `droidasc` console script and
   `python -m droidasc`; they are the same CLI shown above.

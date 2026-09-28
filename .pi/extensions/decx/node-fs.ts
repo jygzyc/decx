@@ -12,10 +12,12 @@ async function guard(path: string): Promise<void> {
   const parts = absolute.slice(root.length).split(sep);
   let managed = false;
   let current = root;
+
   for (const part of parts) {
     current = resolve(current, part);
-    managed ||= ['raw', 'wiki', 'skills'].includes(part);
+    managed ||= ['.decxwiki', 'raw', 'wiki', 'skills'].includes(part);
     if (!managed) continue;
+
     try {
       const stat = await lstat(current);
       if (stat.isSymbolicLink() || (stat.isFile() && stat.nlink > 1)) {
@@ -34,7 +36,13 @@ export function nodeFs(): WikiFs {
       return readFile(path, 'utf8');
     },
     async writeFile(path, text) {
-      if (resolve(path).split(sep).includes('raw')) throw new WikiError('IMMUTABLE_RAW', 'raw files can only be created once; record a new trace for corrections');
+      if (/(?:^|[\\/])raw[\\/]traces(?:[\\/]|$)/.test(resolve(path))) {
+        throw new WikiError(
+          'IMMUTABLE_RAW',
+          'raw files can only be created once; record a new trace for corrections',
+        );
+      }
+
       await guard(path);
       await mkdir(dirname(path), { recursive: true });
       const temporary = `${path}.${randomUUID()}.tmp`;
@@ -58,8 +66,10 @@ export function nodeFs(): WikiFs {
     },
     async exists(path) {
       await guard(path);
-      try { await access(path); return true; }
-      catch (error) {
+      try {
+        await access(path);
+        return true;
+      } catch (error) {
         if (['ENOENT', 'ENOTDIR'].includes((error as NodeJS.ErrnoException).code ?? '')) return false;
         throw error;
       }
@@ -83,13 +93,23 @@ export function operationQueue() {
 export async function withWorkspaceLock<T>(root: string, run: () => Promise<T>): Promise<T> {
   const lock = resolve(root, '.pi', 'decx-write.lock');
   await mkdir(dirname(lock), { recursive: true });
-  try { await mkdir(lock); }
-  catch (error) {
+
+  try {
+    await mkdir(lock);
+  } catch (error) {
     if ((error as NodeJS.ErrnoException).code === 'EEXIST') {
-      throw new WikiError('WORKSPACE_BUSY', `another operation holds ${lock}`, 'retry after it finishes; after a crash, verify no writer is running before removing this lock directory');
+      throw new WikiError(
+        'WORKSPACE_BUSY',
+        `another operation holds ${lock}`,
+        'retry after it finishes; after a crash, verify no writer is running before removing this lock directory',
+      );
     }
     throw error;
   }
-  try { return await run(); }
-  finally { await rm(lock, { recursive: true }); }
+
+  try {
+    return await run();
+  } finally {
+    await rm(lock, { recursive: true });
+  }
 }

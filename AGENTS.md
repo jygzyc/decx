@@ -10,20 +10,21 @@ It is not a decompiler, unified analysis CLI, plugin runtime, or analysis server
 - Native binary analysis uses upstream [Kuna](https://github.com/Noelo-Lab/kuna) directly.
 - `subprojects/` holds every subproject: its own `README.md`, the toolkit manifest
   `decx-<id>.json` the manager reads, and for a vendored tool its pinned `source/`
-  checkout. The agent skill that drives a tool lives in `skills/decx-tool/` — one
-  skill for every tool, each tool's contract in `references/<id>.md`; Kuna's reference
+  checkout. The portable execution skills live in root `skills/`; the tool-routing
+  skill is `skills/decx-tool/`, each tool's contract in `references/<id>.md`; Kuna's reference
   is upstream's own skill file copied verbatim (frontmatter dropped) and is re-copied,
   never edited, when the pin moves. DECX's own
   `decx-afe/` sits beside the vendored upstream checkouts `decx-droidasc/source` and
   `decx-kuna/source`, which are git submodules pinned by `.gitmodules` and the
   superproject gitlinks.
 - Android framework collection and preprocessing lives in `subprojects/decx-afe/`.
-- The agent skill (one skill for every tool) lives in `skills/`; read
-  `skills/AGENTS.md` before editing it.
+- The portable execution skills live in root `skills/`; read `skills/AGENTS.md`
+  before editing it. The wiki-maintenance process is built into the extension,
+  not a separate skill.
 - `decx/` is the toolkit installer and manager: a Node CLI that discovers the tools in
   `subprojects/decx-<id>/decx-<id>.json`, installs, locates and runs them, and reports what is
   installed and what this host supports. Development runs TypeScript directly on
-  Node 22.18+; releases ship compiled JavaScript with bundled tool manifests. It prints
+  Node 24.21+; releases ship compiled JavaScript with bundled tool manifests. It prints
   JSON on stdout and keeps no runtime dependencies. It is the only
   install path — installs are declared as data, never as per-platform scripts.
 
@@ -41,17 +42,17 @@ native only: an unsupported ext4/EROFS feature fails the input with an actionabl
 instead of falling back to external tools. AFE produces files;
 it does not start an analyzer or own analysis sessions.
 
-The manager must not silently modify shell startup files, overwrite unrelated tools, or
-install agent plugins. Use explicit prefixes, staged installs and clear requirements, and
+The manager must not silently modify shell startup files, overwrite unrelated tools,
+install agent plugins, or install skills (`npx skills` owns skill installation). Use explicit prefixes, staged installs and clear requirements, and
 never run an install against the user's real home directory during tests. Upstream source
 builds execute third-party code: record what was fetched, built and verified in
-`share/<id>/PROVENANCE`. Installs follow each tool's manifest — kuna this repository's
-`kuna-v*` release (a zip mirror of upstream's, checksummed) plus its compiled SLEIGH specs,
-droidasc a private venv over the pinned submodule,
+`share/<id>/PROVENANCE`. Installs follow each tool's manifest — kuna the official upstream `v*` release plus
+its compiled SLEIGH specs, both verified against GitHub REST asset SHA-256 digests,
+droidasc a private venv installing the published PyPI package with pip,
 afe a prebuilt `tools-v*` archive when one carries an AFE build for the platform and
 otherwise a cargo build. The rules behind them (the `env` launcher contract, `release.tagPrefix`
 resolution, `--version <tag>`, when `--from-source` is offered) are documented in `decx/README.md`.
-CI builds and packages the pinned upstream checkouts without modifying their source.
+CI never modifies the pinned upstream checkouts; DroidASC installs directly from PyPI.
 Installation prefers upstream distribution; repository release assets are fallback sources.
 Integrity failures must stop installation, not silently switch sources.
 
@@ -67,7 +68,7 @@ Git and reports the exact shortfall instead of installing them (agents run on No
 already; `mise`/`nvm`/`rustup` remain the user's choice). It also does not translate
 analysis commands — `decx -m <tool>` reaches a tool's own help and output unchanged. Keep it
 manifest-driven: a new tool is a new `subprojects/decx-<id>/decx-<id>.json` (with its own
-`README.md` and `skills/<id>/`), never new
+`README.md` and a reference in `decx-tool`), never new
 special-cased code. Installs keep every executable in `$DECX_HOME/bin` and each payload
 in `$DECX_HOME/share/<id>/PROVENANCE`, and link the executables into `~/.local/bin`
 (`--links`, `$DECX_LINKS_DIR`; `.cmd` shims on Windows). Keep that layout and those
@@ -75,13 +76,17 @@ PROVENANCE keys stable so `decx -m <tool>` and any reader of `share/<id>/PROVENA
 working on existing installs; the legacy `$DECX_HOME/tools/<id>` shape is not detected or
 migrated.
 
-Decx follows WikiSkill's three sibling layers at the workspace root: `raw/` (immutable
-execution records), `wiki/` (shared pattern catalog, maintenance log and skill-impact
-history) and `skills/` (portable execution procedures). Never nest `raw/` inside `wiki/`,
-or a wiki inside each skill. The inference agent uses skills, not the maintenance wiki, so
-`SKILL.md` and its bundled resources must retain every task-critical rule; `PURPOSE.md`
-maps a skill to its motivating patterns and is never an inference dependency. The
-maintenance rules for these layers live in `skills/AGENTS.md`.
+The extension implements the WikiSkill loop inside pi: `/decx init` creates a fresh
+`.decxwiki/raw` and `.decxwiki/wiki` in the current project and creates the
+empty `.agents/skills` layer. It never installs skills: `npx skills` installs
+`decx-tool` from the repository's root `skills/` into that directory. `/decx-wiki` consolidates traces
+into patterns; `decx_propose` and `decx_gate` update or roll back the *active* skill
+under `.agents/skills`, with measured validation. The wiki is maintenance material,
+not an inference dependency; `SKILL.md` and references remain complete without it.
+The old root-level `raw/` and `wiki/` and former skill content were archived
+locally under `archive/legacy-knowledge/` and removed from version control;
+root `skills/` now contains only installable, current execution skills. Never bootstrap new
+projects from that archive, commit it, or treat it as a discovered workspace.
 
 The evolution sequence is execution → trace consolidation → one-skill proposal →
 validation → accept or rollback. Only the skill candidate rolls back; raw evidence and wiki
@@ -96,25 +101,29 @@ ledger lives under the pi agent directory, outside the three knowledge layers.
 - AFE: `cd subprojects/decx-afe && cargo build --release && cargo test` (stable Rust);
   `cargo fmt --check` and `cargo clippy --all-targets -- -D warnings` must stay clean.
 - Manager: `cd decx && npm ci && npm run typecheck && npm test && npm run build`; `node src/cli.ts version` must keep printing one JSON
-  envelope. Install tests are offline — fixture archives served locally, fake python/pip
-  and cargo on `PATH` — and must never touch the real home directory or the network; pass
-  `--home`/`DECX_HOME` with temp dirs.
+  envelope. Run `npm run setup:scriptc` before `npm run build:scriptc` or the independent TS-tool test;
+  it installs the pinned compiler under the ignored `.scriptc-toolchain/`, outside `npm ci`.
+  `build:scriptc` embeds the Node bundle in a scriptc-compiled native launcher
+  for the host (four platforms, excluding Windows arm64 and macOS x64); the launcher requires Node 24.21+ on PATH. Install tests are offline — fixture archives served locally, a local wheel installed
+  with real Python/pip into a private venv, and fake toolchains for other branches — and must never touch the real home
+  directory or the network; pass `--home`/`DECX_HOME` with temp dirs.
 - Skills: `python3 skills/check-skills.py` verifies frontmatter, names and relative
   links; also verify every documented native command against the supported upstream
   revision. Never invent missing analysis commands.
-- Decx: `node --test .pi/extensions/decx/lib.test.ts` runs the extension tests,
-  and `node .pi/extensions/decx/cli.ts check` checks the shared workspace
-  (frontmatter, card sections, index sync, markdown and wikilink targets; exit 1 on
-  errors). Use maintenance tools for routine knowledge updates; reviewed repository
+- Decx: `node --test .pi/extensions/decx/*.test.ts` runs the extension tests. Structural validation happens against an
+  initialized temporary project (`project=$(mktemp -d); node .pi/extensions/decx/cli.ts init --root "$project";
+  node .pi/extensions/decx/cli.ts check --root "$project"`) because old repository knowledge is archived locally and
+  is not a workspace. Use maintenance tools for routine knowledge updates; reviewed repository
   migrations may edit files directly and must regenerate/check the index. The checkpoint hook is covered by the same tests: it counts rounds and turns,
   keeps the last ten checkpoints per session and repeats the request until the pending
   round is covered.
 - Analysis procedure: `decx-tool` owns per-tool syntax and the routing between tools.
-  Session bookkeeping and the trace → pattern → proposal loop are `decx_*` tools, not
-  skills.
+  Session bookkeeping and the trace → pattern → proposal loop are `decx_*` tools;
+  the `/decx-wiki` extension command orchestrates maintenance without a wiki skill.
+  `decx-tool` works without the extension.
 
 Agent plugins and extension manifests (Codex, Claude) are out of scope: the integration
-contract is `skills/` plus the one pi extension that owns the Decx layer
+contract is the portable `decx-tool` skill plus the one pi extension that owns the Decx layer
 (`.pi/extensions/decx/`); nothing else may register into an agent harness. GitHub runs
 workflows only from the repository root, so each subproject and area has its own file
 there, scoped to its own `paths:` — keep them in sync when the crate, manifests, skills,
@@ -124,16 +133,17 @@ tag push (or a `workflow_dispatch` with the `tag` input) runs the release jobs i
 each refusing to build when its tag does not match the pinned version. `decx-cli.yml`
 (`cd decx && npm ci && npm run typecheck &&
 npm test`, plus the JSON-envelope and usage-error smoke runs, on Linux, macOS and Windows
-across Node 22.18 and 24; tag `decx-v*`, checked against `decx/package.json`, builds
-`dist/`, packs `decx-<version>.tar.gz` plus `decx-SHA256SUMS.txt` and smokes the packed
-CLI on all three OSes before publishing), `decx-afe.yml` (crate fmt/clippy on Linux; test,
+on the latest Node 24 release; tag `decx-v*`, checked against `decx/package.json`, builds
+`dist/`, installs the pinned scriptc compiler separately and tests an independently compiled TS tool, then builds four native launchers on their target hosts (Node required at runtime), packs `decx-<version>.tar.gz` plus `decx-SHA256SUMS.txt` and a separate
+`decx-pi-<version>.tar.gz` plus `decx-pi-SHA256SUMS.txt` (extension and execution
+skills), and smokes the bundles and launchers on all four architectures before publishing), `decx-afe.yml` (crate fmt/clippy on Linux; test,
 release build and
 a `--help` smoke on Linux, macOS and Windows;
 Windows arm64 cross check; tag `tools-v*`, checked against
 `subprojects/decx-afe/Cargo.toml`, builds the six `afe-<version>-<platform>` archives plus
-`afe-SHA256SUMS.txt`), `decx-droidasc.yml` (the manager's private-venv install over the
-pinned checkout, then upstream `main.py --help`; tag `droidasc-v*` packages the pinned
-source tree as `droidasc-<version>-source.tar.gz` plus `droidasc-SHA256SUMS.txt`) and
+`afe-SHA256SUMS.txt`), `decx-droidasc.yml` (the manager creates a private venv,
+installs the published PyPI package and invokes `droidasc --help` across platforms;
+no source archive is published) and
 `decx-kuna.yml` (pin, manifest and
 upstream-skill-copy contract on every change; release install on Linux, macOS and Windows
 weekly and on demand; every 12 hours a scheduled job compares the pinned tag with upstream's
@@ -145,7 +155,7 @@ The manager and crate jobs are offline — the manager's install tests use fixtu
 archives, fake toolchains and temporary prefixes — while the two tool workflows
 deliberately exercise the real install paths (`pip install` into the tool's venv, the Kuna
 release and specs archives); no workflow compiles the vendored upstream checkouts.
-The kuna manifest installs from these repository releases directly — manifest 2 resolves
-the newest `kuna-v*` tag, and the mirror adds the checksum file upstream does not publish.
-Keep README.md and README_zh.md aligned with the actual standalone
-tools; do not document removed `decx` commands as current functionality.
+The kuna manifest installs from official upstream releases — manifest 2 resolves the
+newest stable `v*` tag and verifies each asset against its GitHub REST SHA-256 digest;
+the repository mirror adds a checksum file for its optional zip assets.
+Keep README.md and README_zh.md aligned with the actual tools and launcher runtime requirements; do not document removed `decx` commands as current functionality.

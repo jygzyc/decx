@@ -13,6 +13,7 @@ import {
   discoverWorkspaces,
   emptySessionState,
   ensureWorkspace,
+  initLocalWiki,
   firstSentence,
   indexRow,
   indexRows,
@@ -93,29 +94,70 @@ describe('paths and parsing', () => {
 });
 
 describe('workspaces', () => {
-  it('discovers the project itself and configured roots, never a skill-local wiki', async () => {
-    const workspace = await fixture();
-    const found = await discoverWorkspaces(workspace.root, fs);
+  it('discovers only an initialized local wiki, never archived root layers', async () => {
+    const archived = await fixture();
+    assert.deepEqual(await discoverWorkspaces(archived.root, fs), []);
+    const local = await initLocalWiki(archived.root, fs);
+    const found = await discoverWorkspaces(archived.root, fs);
     assert.equal(found.length, 1);
-    const [only] = found;
-    assert.equal(only.root, workspace.root);
-    assert.equal(only.wiki, join(workspace.root, 'wiki'));
-    assert.equal(only.raw, join(workspace.root, 'raw'));
-    assert.equal(only.skills, join(workspace.root, 'skills'));
+    assert.equal(found[0].root, local.workspace.root);
+    assert.equal(found[0].skills, join(archived.root, '.agents', 'skills'));
+    assert.notEqual(found[0].skills, archived.skills);
+  });
 
-    await mkdir(join(workspace.root, 'skills', 'demo', 'wiki'), { recursive: true });
-    assert.deepEqual(
-      (await discoverWorkspaces(workspace.root, fs)).map((item) => item.name),
-      [only.name],
-      'a wiki nested in a skill is not a workspace',
-    );
+  it('initializes .decxwiki in an empty project and preserves existing pages', async () => {
+    const project = await mkdtemp(join(tmpdir(), 'decx-project-'));
+    roots.push(project);
+    assert.deepEqual(await discoverWorkspaces(project, fs), []);
+    const first = await initLocalWiki(project, fs);
+    assert.equal(first.workspace.root, join(project, '.decxwiki'));
+    assert.deepEqual(first.created, ['index.md', 'logs.md', 'skill-impact.md']);
+    assert.equal(await readFile(join(project, '.decxwiki', '.gitignore'), 'utf8'), '/raw/\n');
+    assert.deepEqual(await fs.listDir(join(project, '.agents', 'skills')), []);
+    assert.equal((await discoverWorkspaces(project, fs))[0].root, first.workspace.root);
+    const index = join(first.workspace.wiki, 'index.md');
+    await writeFile(index, 'my index\n');
+    assert.deepEqual((await initLocalWiki(project, fs)).created, []);
+    assert.equal(await readFile(index, 'utf8'), 'my index\n');
+    assert.equal((await status(first.workspace, fs)).patterns, 0);
+  });
 
-    const configured = await discoverWorkspaces(workspace.root, fs, [{ name: 'decx', root: '.' }]);
-    assert.deepEqual(
-      configured.map((item) => item.name),
-      ['decx'],
-    );
-    assert.equal(configured[0].wiki, join(workspace.root, 'wiki'));
+  it('preserves a skill installed by an external skill manager', async () => {
+    const project = await mkdtemp(join(tmpdir(), 'decx-existing-skill-'));
+    roots.push(project);
+    const installed = join(project, '.agents', 'skills', 'decx-tool', 'SKILL.md');
+    await mkdir(join(project, '.agents', 'skills', 'decx-tool'), { recursive: true });
+    await writeFile(installed, '# locally installed\n');
+    await initLocalWiki(project, fs);
+    await initLocalWiki(project, fs);
+    assert.equal(await fs.readFile(installed), '# locally installed\n');
+    assert.deepEqual(await fs.listDir(join(project, '.agents', 'skills')), ['decx-tool']);
+  });
+
+  it('can initialize a project below an unrelated ancestor named raw', async () => {
+    const parent = await mkdtemp(join(tmpdir(), 'decx-ancestor-'));
+    roots.push(parent);
+    const project = join(parent, 'raw', 'project');
+    await mkdir(project, { recursive: true });
+    const { workspace } = await initLocalWiki(project, fs);
+    assert.match(await readFile(join(workspace.wiki, 'index.md'), 'utf8'), /decx:index:start/);
+  });
+
+  it('does not treat an unrelated root wiki or skills directory as a workspace', async () => {
+    const workspace = await fixture();
+    assert.deepEqual(await discoverWorkspaces(workspace.root, fs), []);
+    const local = await initLocalWiki(workspace.root, fs);
+    assert.equal((await discoverWorkspaces(workspace.root, fs))[0].root, local.workspace.root);
+  });
+
+  it('rejects a symlinked .decxwiki instead of following it', async () => {
+    const project = await mkdtemp(join(tmpdir(), 'decx-project-'));
+    const outside = await mkdtemp(join(tmpdir(), 'decx-outside-'));
+    roots.push(project, outside);
+    const { symlink } = await import('node:fs/promises');
+    await symlink(outside, join(project, '.decxwiki'), process.platform === 'win32' ? 'junction' : 'dir');
+    await assert.rejects(initLocalWiki(project, fs), throwsCode('UNSAFE_PATH'));
+    assert.deepEqual(await import('node:fs/promises').then(({ readdir }) => readdir(outside)), []);
   });
 
   it('seeds the workspace files once', async () => {
@@ -160,6 +202,22 @@ describe('traces', () => {
 });
 
 describe('index', () => {
+  it('does not erase the index when listing patterns fails', async () => {
+    const workspace = await fixture();
+    await resyncIndex(workspace, fs);
+    const path = join(workspace.wiki, 'index.md');
+    const before = await readFile(path, 'utf8');
+    const denied = Object.assign(new Error('access denied'), { code: 'EACCES' });
+    await assert.rejects(resyncIndex(workspace, {
+      ...fs,
+      listDir: async (dir) => {
+        if (dir === join(workspace.wiki, 'patterns')) throw denied;
+        return fs.listDir(dir);
+      },
+    }), (error: unknown) => error === denied);
+    assert.equal(await readFile(path, 'utf8'), before);
+  });
+
   it('resyncs the managed block and reports the delta', async () => {
     const workspace = await fixture();
     const first = await resyncIndex(workspace, fs);
@@ -528,6 +586,28 @@ describe('knowledge access boundaries', () => {
 });
 
 describe('candidate validation and rollback', () => {
+  it('proposes and gates against a skill installed independently after wiki initialization', async () => {
+    const project = await mkdtemp(join(tmpdir(), 'decx-active-'));
+    roots.push(project);
+    const { workspace: ws } = await initLocalWiki(project, fs);
+    const target = 'skills/decx-tool/SKILL.md';
+    const active = join(project, '.agents', target);
+    const before = '# decx-tool\n';
+    await mkdir(join(project, '.agents', 'skills', 'decx-tool'), { recursive: true });
+    await writeFile(active, before);
+    assert.equal((await readPage(ws, target, fs)).text, before);
+    await fs.writeFile(join(ws.wiki, 'patterns', 'alpha.md'), page('alpha', 'android-app', 'Alpha trigger.'));
+    const baseline = await writeTrace(ws, { summary: 'baseline', body: 'baseline score 0.5' }, fs);
+    const state = join(project, 'agent-state');
+    const content = `${before}\n# Candidate\n`;
+    await proposeCandidate(ws, { target, content, change: 'test', pattern: 'wiki/patterns/alpha.md', split: 'same-split', baseline: 0.5, baselineTrace: baseline.path }, fs, state);
+    assert.equal(await fs.readFile(active), content);
+    assert.equal(await fs.exists(join(ws.root, target)), false);
+    const result = await gateCandidate(ws, { reject: true, outcome: 'rollback' }, fs, state);
+    assert.equal(result.status, 'rejected');
+    assert.equal(await fs.readFile(active), before);
+  });
+
   async function candidate() {
     const ws = await fixture();
     const baseline = await writeTrace(ws, { summary: 'baseline', body: 'validation tasks a,b: score 0.5' }, fs);

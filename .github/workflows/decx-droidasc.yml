@@ -1,26 +1,8 @@
 name: DroidASC
 
-# DroidASC is vendored, not ours: `subprojects/decx-droidasc/source` is pinned by
-# `.gitmodules` and the superproject gitlink, and upstream runs its own test
-# suite in its own repository. What has to keep working *here* is the DECX
-# install path over that pin -- the manager builds a private virtualenv next to
-# the checkout's entry point and the launcher drives `main.py` with no system
-# Python packages and no shell setup.
-#
-# The same workflow also publishes the pinned source payload `decx install
-# droidasc` can fall back to downloading instead of requiring the vendored
-# checkout: a `droidasc-v*` tag push (or a dispatch with the `tag` input set)
-# runs the package/publish jobs instead of the install check. The asset
-# contract (consumed by the droidasc manifest's install fallback):
-#   droidasc-{version}-source.tar.gz   main.py + droidasc/ + requirements.txt
-#                                      (+ LICENSE/VERSION when upstream ships
-#                                      them) from the pinned submodule gitlink
-#   droidasc-SHA256SUMS.txt            sha256 of every published asset
-# The payload is a relocatable source tree, never a built virtualenv: a venv
-# hard-codes the build machine's interpreter paths and is not portable across
-# OS or Python installs. The manager assembles the venv on the user's machine.
-# `paths` filters tag pushes as well -- the tag commit is diffed against its
-# parent -- so tag the pin-move commit, or dispatch with `tag` manually.
+# DroidASC is published to PyPI. DECX creates the private venv and runs the
+# manifest's pip install command; no release archive or packaging script is
+# needed. Keep the pinned checkout for upstream reference, not installation.
 on:
   push:
     branches: ['**']
@@ -28,35 +10,22 @@ on:
     paths: ['subprojects/decx-droidasc/**', 'decx/**', 'skills/decx-tool/**', '.github/workflows/decx-droidasc.yml']
   pull_request:
     paths: ['subprojects/decx-droidasc/**', 'decx/**', 'skills/decx-tool/**', '.github/workflows/decx-droidasc.yml']
+  schedule:
+    - cron: '17 4 * * 1'
   workflow_dispatch:
-    inputs:
-      tag:
-        description: Publish a release for this tag (e.g. droidasc-v0.1.0); leave empty to run the checks only
-        required: false
 
 permissions:
   contents: read
 
-concurrency:
-  group: droidasc-${{ github.ref }}
-  # Never cancel a running release publish; branch checks are superseded freely.
-  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
-
 jobs:
   install:
-    name: Install the pin (${{ matrix.os }}, Python ${{ matrix.python }})
-    # Checks run on branch pushes, pull requests and check-only dispatches;
-    # a release event (tag push, or dispatch with `tag`) skips them.
-    if: ${{ !(github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')) && (github.event_name != 'workflow_dispatch' || !inputs.tag) }}
+    name: PyPI install (${{ matrix.os }}, Python ${{ matrix.python }})
     runs-on: ${{ matrix.os }}
     timeout-minutes: 25
     strategy:
       fail-fast: false
       matrix:
         include:
-          # Upstream tests 3.11 and 3.12; DECX only claims >= 3.10, so the
-          # oldest upstream-supported interpreter is checked on the default
-          # runner and the newest on all three platforms.
           - os: ubuntu-latest
             python: '3.11'
           - os: ubuntu-latest
@@ -69,8 +38,6 @@ jobs:
       run:
         shell: bash
     env:
-      # Never the real home directory: the manager writes `bin/`, `share/` and
-      # a PROVENANCE record, and `--no-links` keeps it out of PATH as well.
       DECX_HOME: ${{ runner.temp }}/decx-home
     steps:
       - uses: actions/checkout@v7.0.1
@@ -80,110 +47,14 @@ jobs:
       - uses: actions/setup-python@v7.0.0
         with:
           python-version: ${{ matrix.python }}
-          cache: pip
-          cache-dependency-path: subprojects/decx-droidasc/source/requirements.txt
 
-      - name: Show the pin under test
-        run: git submodule status subprojects/decx-droidasc/source
-
-      # androguard is installed into the tool's own virtualenv, so this is also
-      # the check that the manifest's requirement pin resolves on every
-      # platform.
-      - name: Install with the manager
+      - name: Install from PyPI with DECX
         run: node decx/src/cli.ts install droidasc --home "$DECX_HOME" --no-links --pretty
 
-      # `decx -m` execs the generated launcher with the arguments untouched;
-      # the help text is upstream's, which is what a skill reads before it
-      # guesses.
       - name: Run the installed tool
         run: node decx/src/cli.ts --home "$DECX_HOME" -m droidasc --help
 
-      - name: PROVENANCE records the pinned revision
+      - name: PROVENANCE records the PyPI package and version
         run: |
-          pinned="$(bash .github/scripts/pinned-gitlink.sh subprojects/decx-droidasc/source)"
-          echo "gitlink: $pinned"
-          grep -q "subprojects/decx-droidasc/source" "$DECX_HOME/share/droidasc/PROVENANCE"
-          grep -qi "$pinned" "$DECX_HOME/share/droidasc/PROVENANCE"
-
-  package:
-    name: Package the pinned source
-    if: ${{ (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')) || (github.event_name == 'workflow_dispatch' && inputs.tag != '') }}
-    runs-on: ubuntu-latest
-    outputs:
-      tag: ${{ steps.package.outputs.tag }}
-      version: ${{ steps.package.outputs.version }}
-      pinned: ${{ steps.package.outputs.pinned }}
-    steps:
-      - uses: actions/checkout@v7.0.1
-        with:
-          submodules: recursive
-
-      - id: package
-        run: |
-          set -eu
-          tag="${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}"
-          case "$tag" in
-            droidasc-v*) version="${tag#droidasc-v}" ;;
-            *) echo "::error::tag '$tag' must look like droidasc-v<version>"; exit 1 ;;
-          esac
-          # Version lands in the asset name; keep it a plain version string.
-          case "$version" in
-            ''|*[!0-9.]*)
-              echo "::error::tag version '$version' must be numeric like 0.1.0"
-              exit 1 ;;
-          esac
-          out="dist/droidasc-$version-source.tar.gz"
-          bash .github/scripts/package-droidasc-source.sh "$out" "$version" | tee package.log
-          pinned="$(sed -n 's/^pinned=//p' package.log)"
-          test -n "$pinned"
-          {
-            echo "tag=$tag"
-            echo "version=$version"
-            echo "pinned=$pinned"
-          } >> "$GITHUB_OUTPUT"
-
-      - name: Checksums
-        working-directory: dist
-        run: |
-          set -eu
-          # One asset per release; name it from disk rather than trusting the
-          # output plumbing.
-          assets=$(ls droidasc-*-source.tar.gz)
-          test "$(echo "$assets" | wc -l | tr -d ' ')" = "1"
-          sha256sum $assets > droidasc-SHA256SUMS.txt
-          cat droidasc-SHA256SUMS.txt
-
-      - uses: actions/upload-artifact@v7
-        with:
-          name: droidasc-source
-          path: dist/*
-          if-no-files-found: error
-
-  publish:
-    name: Publish ${{ needs.package.outputs.tag }}
-    if: ${{ (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')) || (github.event_name == 'workflow_dispatch' && inputs.tag != '') }}
-    needs: package
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    steps:
-      - uses: actions/download-artifact@v8
-        with:
-          name: droidasc-source
-          path: dist
-      - name: Publish the release
-        working-directory: dist
-        env:
-          GH_TOKEN: ${{ github.token }}
-          GH_REPO: ${{ github.repository }}
-          TAG: ${{ needs.package.outputs.tag }}
-          PINNED: ${{ needs.package.outputs.pinned }}
-        run: |
-          set -eu
-          version="${TAG#droidasc-v}"
-          notes="$(printf 'DroidASC source payload %s, exported from the pinned submodule\n`subprojects/decx-droidasc/source` at `%s`.\n\n`droidasc-%s-source.tar.gz` carries the interpreter payload (`main.py`, `droidasc/`, `requirements.txt`); the manager builds the private virtualenv on the install machine.' "$version" "$PINNED" "$version")"
-          if gh release view "$TAG" > /dev/null 2>&1; then
-            gh release upload "$TAG" --clobber ./*
-          else
-            gh release create "$TAG" --title "$TAG" --notes "$notes" ./*
-          fi
+          grep -q '^install_command: pip install droidasc$' "$DECX_HOME/share/droidasc/PROVENANCE"
+          grep -Eq '^version: [0-9]' "$DECX_HOME/share/droidasc/PROVENANCE"

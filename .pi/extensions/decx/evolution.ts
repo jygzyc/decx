@@ -40,6 +40,10 @@ function skillTarget(target: unknown): string {
   return normalized;
 }
 
+function skillFilePath(ws: Workspace, target: string): string {
+  return join(ws.skills, target.slice('skills/'.length));
+}
+
 function parseCandidate(raw: string): Candidate | null {
   let parsed: unknown;
   try {
@@ -81,7 +85,7 @@ export async function proposeCandidate(ws: Workspace, input: {
   const candidate: Candidate = { id: proposal.id, target, before, after: input.content, split: input.split, baseline: input.baseline, baselineTrace: input.baselineTrace };
   // Save recovery data before applying the candidate. A failed write is recoverable by rejection.
   await fs.writeFile(statePath, JSON.stringify(candidate, null, 2));
-  await fs.writeFile(join(ws.root, target), input.content);
+  await fs.writeFile(skillFilePath(ws, target), input.content);
   return { id: proposal.id };
 }
 
@@ -91,7 +95,7 @@ export async function gateCandidate(ws: Workspace, input: GateInput, fs: WikiFs,
   const pending = parseCandidate(await fs.readFile(statePath));
   if (!pending) throw new WikiError('NO_CANDIDATE', 'no pending candidate');
   pending.target = skillTarget(pending.target);
-  const current = await fs.readFile(join(ws.root, pending.target));
+  const current = await fs.readFile(skillFilePath(ws, pending.target));
   if (current !== pending.after && current !== pending.before) throw new WikiError('CANDIDATE_CONFLICT', 'skill changed outside the proposal; refusing to overwrite it');
   // Once a decision is durable, retries finish that decision rather than changing it.
   input = pending.decision?.evaluation ?? input;
@@ -106,7 +110,7 @@ export async function gateCandidate(ws: Workspace, input: GateInput, fs: WikiFs,
   if (status === 'accepted' && current !== pending.after) throw new WikiError('CANDIDATE_CONFLICT', 'accepted candidate is no longer applied');
   pending.decision = { status, evaluation: input };
   await fs.writeFile(statePath, JSON.stringify(pending, null, 2));
-  if (status === 'rejected') await fs.writeFile(join(ws.root, pending.target), pending.before);
+  if (status === 'rejected') await fs.writeFile(skillFilePath(ws, pending.target), pending.before);
   await recordProposal(ws, {
     id: pending.id, target: pending.target, change: '', status,
     score: input.reject ? 'not evaluated' : `${input.candidate} vs ${pending.baseline}; split=${pending.split}`,

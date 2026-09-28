@@ -1,73 +1,57 @@
 # decx-kuna — native binary decompilation (upstream Kuna)
 
-The subproject around [Kuna](https://github.com/Noelo-Lab/kuna), the native
-decompiler for ELF/PE/Mach-O. DECX installs this repository's `kuna-v*` mirrors
-of upstream's release archives and never compiles kuna (`cargo` is not needed
-anywhere in this path), so `source/` is vendored for reference only.
+DECX installs the official [Kuna](https://github.com/Noelo-Lab/kuna) release
+archives directly. The vendored `source/` checkout is pinned for the agent skill
+reference and release tracking; the manager never compiles it.
 
-## In this repository
+## Contents
 
-| Path | What it is |
+| Path | Purpose |
 | --- | --- |
-| `decx-kuna.json` | the toolkit manifest `decx` reads: the release repository (this repository's mirrors) and the `kuna-v` tag prefix the manager resolves, the per-platform asset names, the second `specs` asset, the checksums file, `KUNA_SPECS`, the three executables and the verify probe. |
-| `skills/decx-tool/` | the agent skill that drives the installed launcher — upstream Kuna's own skill (`source/skills/kuna/SKILL.md`) copied verbatim into `references/kuna.md`, with only the frontmatter dropped. |
-| `source/` | the vendored upstream checkout, pinned as a git submodule (`git submodule status subprojects/decx-kuna/source`). Installs never use it. |
+| `decx-kuna.json` | Manifest: official `Noelo-Lab/kuna` `v*` releases, platform archives, compiled specs, GitHub asset SHA-256 digests, three executables and the `KUNA_SPECS` launcher environment. |
+| `skills/decx-tool/references/kuna.md` | Upstream Kuna's skill copied verbatim without frontmatter. |
+| `source/` | Pinned upstream git submodule, not an install payload. |
 
 ## Install
 
 ```sh
-decx install kuna        # this repository's newest kuna-v* release for this platform + compiled SLEIGH specs
-decx -m kuna --help      # the tool's own interface, arguments untouched
+decx install kuna        # latest official stable v* release + compiled SLEIGH specs
+decx kuna --version      # forwards arguments and output unchanged
+decx -m kuna --help      # equivalent explicit form
 ```
 
-Two assets are downloaded from the newest stable `kuna-v*` release of this
-repository: the platform archive and `kuna-v<version>-specs.zip`, verified
-against `kuna-SHA256SUMS.txt` (upstream publishes no checksum file; the mirror
-adds one).
+The platform archive and `kuna-v<version>-specs.tar.gz` are downloaded from the
+same upstream Release. GitHub REST asset metadata publishes a SHA-256 digest
+for each; DECX verifies **both** archives before extracting them and refuses
+missing or mismatched digests. No repository mirror or checksum asset is
+required. `--version <tag>` selects an older official release explicitly.
 
-The payload lands in `$DECX_HOME/share/kuna/` (`bin/`, `specs/Ghidra/Processors/`,
-`PROVENANCE`), and `$DECX_HOME/bin/{kuna,decomp_dbg,slacomp}` are launchers that
-export `KUNA_SPECS=$DECX_HOME/share/kuna/specs` before running the packaged
-binary; without it Kuna decodes nothing (`No sleigh specification for
-AARCH64:LE:64:v8A`). `decx install` also links `kuna` into `~/.local/bin`
-(a `.cmd` shim on Windows).
+The binaries and specs land under `$DECX_HOME/share/kuna/`; wrappers in
+`$DECX_HOME/bin/{kuna,decomp_dbg,slacomp}` export
+`KUNA_SPECS=$DECX_HOME/share/kuna/specs`. Managed links in `~/.local/bin` expose
+all three executables (`.cmd` shims on Windows). Without the compiled specs,
+Kuna cannot decode instructions.
 
-Platforms with an asset: `linux-amd64`, `linux-arm64`, `darwin-arm64`,
-`darwin-amd64`, `win-amd64`. The manifest resolves the newest stable `kuna-v*`
-tag at install time (`release.tagPrefix`); `decx install kuna --version <tag>`
-installs another tag.
+Supported release platforms: `linux-amd64`, `linux-arm64`, `darwin-amd64`,
+`darwin-arm64`, `win-amd64`. Windows arm64 has no upstream release asset.
 
-## Verify
+## Verification
 
 ```sh
 decx install kuna --home /tmp/decx-home --links /tmp/decx-links
-test -f /tmp/decx-home/share/kuna/PROVENANCE
 test -d /tmp/decx-home/share/kuna/specs/Ghidra/Processors
-env -u KUNA_SPECS decx --home /tmp/decx-home -m kuna functions /tmp/decx-home/share/kuna/bin/slacomp
+node decx/src/cli.ts --home /tmp/decx-home kuna --version
 ```
 
-Run that sequence after every pin move, on each platform: it checks the payload, the store
-launchers (each must contain `KUNA_SPECS=`), the PATH link, and a real `kuna` invocation
-whose environment has no `KUNA_SPECS`, which proves the launcher supplies it. It downloads
-the release, so it stays a manual acceptance check — the weekly `release-install` job in
-`.github/workflows/decx-kuna.yml` covers the real path in CI; everything else runs offline.
+The weekly `release-install` job in `.github/workflows/decx-kuna.yml` exercises
+the real upstream download on Linux, macOS and Windows. Offline manager tests
+use local fixture releases with both valid and invalid asset digests.
 
-## Upstream
+## Upstream tracking
 
-- Repository: <https://github.com/Noelo-Lab/kuna> (Apache-2.0).
-- The pin tracks upstream automatically: every 12 hours the `sync-pin` job in
-  `.github/workflows/decx-kuna.yml` compares it with upstream's latest release
-  and pushes nothing when there is nothing newer. A new release moves the
-  submodule gitlink, re-copies the skill (`awk 'NR==1 && $0=="---" {skip=1; next} skip && $0=="---" {skip=0; next} !skip' subprojects/decx-kuna/source/skills/kuna/SKILL.md > skills/decx-tool/references/kuna.md`)
-  and pushes the commit with its `kuna-v<version>` tag. Manual moves follow
-  the same recipe: `git -C subprojects/decx-kuna/source checkout <rev>`, commit
-  the gitlink, re-copy the reference, tag `kuna-v<version>`, push.
-- Repository release assets (`jygzyc/decx`, tag `kuna-v<version>`) are mirrors
-  of upstream's own release, republished as zip by the release jobs in
-  `.github/workflows/decx-kuna.yml`, with `kuna-SHA256SUMS.txt` added. The
-  manifest installs from them directly (it resolves the newest `kuna-v*` tag);
-  `decx install` never downloads from upstream.
-- `source/` is upstream's code, and `skills/decx-tool/references/kuna.md` is upstream's
-  own skill copied verbatim (frontmatter aside). DECX changes belong to this
-  subproject — the manifest and this README — not to either file; a Kuna
-  behaviour change is filed upstream, not patched into the copy.
+Every 12 hours, `sync-pin` compares the vendored gitlink with the latest Kuna
+release. On a change it updates the pin, re-copies the upstream skill reference,
+and publishes a repository `kuna-v<version>` mirror tag. The mirror workflow
+still repacks archives as zip and publishes a checksum file, but the manager
+now prefers and installs official upstream releases. DECX does not modify the
+vendored checkout or the copied upstream skill.

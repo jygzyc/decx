@@ -19,6 +19,20 @@ def default_roots() -> list[pathlib.Path]:
     return [REPO_ROOT / "skills"]
 
 
+def scalar_syntax_problem(field: str, raw: str):
+    """Catch the YAML plain-scalar cases the lightweight parser below misses."""
+    value = raw.strip()
+    if value.startswith(("\"", "'")):
+        if len(value) < 2 or not value.endswith(value[0]):
+            return f"{field} has an unterminated quoted scalar"
+        return None
+    if re.search(r":\s", value):
+        return f"{field} contains ': '; quote the scalar"
+    if re.search(r"\s#", value):
+        return f"{field} contains an unquoted YAML comment marker"
+    return None
+
+
 def main() -> int:
     args = sys.argv[1:]
     if args:
@@ -57,6 +71,10 @@ def main() -> int:
             )
         if not desc or len(desc.group(1).strip()) < 20:
             problems.append(f"{skill.name}: frontmatter description missing or too short")
+        else:
+            syntax = scalar_syntax_problem("description", desc.group(1))
+            if syntax is not None:
+                problems.append(f"{skill.name}: {syntax}")
         if name:
             seen.setdefault(name.group(1).strip(), []).append(skill.name)
         for link in re.findall(r"\]\(([^)\s]+)\)", text):

@@ -817,10 +817,13 @@ impl ErofsImage {
             // Next lcluster is already a new head: one-lcluster pcluster.
             return Ok(1u64 << z.lclusterbits);
         }
-        if next.delta0 != 1 || next.compressedblks.is_none() {
+        let Some(compressed_blocks) = next.compressedblks else {
+            return Err(ErofsError::BadImage("bogus CBLKCNT".into()));
+        };
+        if next.delta0 != 1 {
             return Err(ErofsError::BadImage("bogus CBLKCNT".into()));
         }
-        Ok(next.compressedblks.unwrap() as u64 * self.sb.block_size)
+        Ok(u64::from(compressed_blocks) * self.sb.block_size)
     }
 
     /// Kernel `z_erofs_get_extent_decompressedlen` for a head extent.

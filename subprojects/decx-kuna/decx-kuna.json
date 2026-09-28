@@ -1,20 +1,25 @@
 {
+  "$schema": "../decx-tool.schema.json",
   "manifest": 2,
   "summary": "Native decompiler for ELF/PE/Mach-O: functions, pseudo-C, xrefs, disassembly (upstream Kuna)",
   "homepage": "https://github.com/Noelo-Lab/kuna",
   "license": "Apache-2.0",
-  "notes": "installed from this repository's kuna-v* release, which mirrors the upstream release assets as zips and adds a checksum file; the compiled SLEIGH specs ship as a second asset and the generated launcher exports KUNA_SPECS so kuna finds them without any shell setup",
+  "notes": "installed from upstream Noelo-Lab/kuna releases; GitHub asset SHA-256 digests verify both the executable archive and compiled SLEIGH specs, and the launcher exports KUNA_SPECS",
   "env": { "KUNA_SPECS": "{prefix}/specs" },
   "release": {
+    "repository": "Noelo-Lab/kuna",
+    "tagPrefix": "v",
+    "checksums": null,
     "assets": {
-      "darwin-arm64": "kuna-v{version}-macos-arm64.zip",
-      "darwin-amd64": "kuna-v{version}-macos-x86_64.zip",
-      "linux-amd64": "kuna-v{version}-linux-x86_64.zip",
-      "linux-arm64": "kuna-v{version}-linux-arm64.zip",
+      "darwin-arm64": "kuna-v{version}-macos-arm64.tar.gz",
+      "darwin-amd64": "kuna-v{version}-macos-x86_64.tar.gz",
+      "linux-amd64": "kuna-v{version}-linux-x86_64.tar.gz",
+      "linux-arm64": "kuna-v{version}-linux-arm64.tar.gz",
       "win-amd64": "kuna-v{version}-windows-x86_64.zip"
     },
-    "extraAssets": { "specs": "kuna-v{version}-specs.zip" }
+    "extraAssets": { "specs": "kuna-v{version}-specs.tar.gz" }
   },
-  "bins": ["kuna", "decomp_dbg", "slacomp"],
+  "install": ["github-release"],
+  "launch": { "type": "bin", "commands": ["kuna", "decomp_dbg", "slacomp"] },
   "verify": "--version"
 }

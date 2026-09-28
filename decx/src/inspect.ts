@@ -70,6 +70,13 @@ export function provenanceVersion(provenance: Record<string, string>): string | 
 export function provenanceBinaries(provenance: Record<string, string>): string[] {
   const list = provenance.binaries;
   if (list !== undefined && list.trim() !== '') {
+    // Older installs used a whitespace-joined list. Preserve a space-containing
+    // primary executable recorded separately, rather than splitting its name
+    // into unrelated store files when removing that legacy install.
+    const primary = provenance.binary === undefined ? '' : path.basename(provenance.binary);
+    if (primary.includes(' ') && (list === primary || list.startsWith(`${primary} `))) {
+      return [primary, ...list.slice(primary.length).trim().split(/\s+/).filter(Boolean)];
+    }
     return list.split(/\s+/).filter((name) => name !== '');
   }
   const single = provenance.binary;
@@ -111,14 +118,20 @@ function managedLauncher(home: string, bin: string): string | null {
  * is a leftover, not an install.
  */
 export function toolState(home: string, manifest: ToolManifest): ToolState {
-  const launcher = manifest.launch ?? manifest.bins?.[0] ?? manifest.id;
-  const bin = managedLauncher(home, launcher);
+  const launcher = manifest.launch.commands[0] as string;
+  const current = managedLauncher(home, launcher);
   const prefix = toolPrefix(home, manifest.id);
+  const file = provenanceFile(home, manifest.id);
+  const provenance = isFile(file) ? readProvenance(file) : null;
+  const recorded = provenance?.tool === manifest.id ? provenance.binary : undefined;
+  const previous = recorded !== undefined && path.dirname(recorded) === binRoot(home) && isFile(recorded) ? recorded : null;
+  const bin = provenance === null ? current : provenance.tool === manifest.id
+    ? (current !== null && (provenanceBinaries(provenance).includes(path.basename(current)) ||
+      (provenance.binaries === undefined && provenance.binary === undefined)) ? current : previous)
+    : null;
   if (bin === null || !isDir(prefix)) {
     return { id: manifest.id, installed: false, ...(bin !== null ? { bin } : {}) };
   }
-  const file = provenanceFile(home, manifest.id);
-  const provenance = isFile(file) ? readProvenance(file) : null;
   const version = provenance !== null ? provenanceVersion(provenance) : undefined;
   return {
     id: manifest.id,

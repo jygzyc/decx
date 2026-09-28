@@ -1,14 +1,9 @@
 /**
  * Decx extension.
  *
- * A decx workspace has WikiSkill's three sibling layers (the model lives in
- * `lib.ts`, the rules in AGENTS.md and skills/AGENTS.md):
- *
- *   raw/traces/  immutable execution traces (private by default)
- *   wiki/    index.md, patterns/*.md, logs.md, skill-impact.md — the shared,
- *            never-rolled-back maintenance layer
- *   skills/  <name>/SKILL.md + PURPOSE.md + references — self-contained
- *            execution procedures the inference agent reads on its own
+ * The current project's `.decxwiki` contains raw/traces and wiki/ (patterns,
+ * index, logs, ledger). Active standalone skills are under `.agents/skills`.
+ * The WikiSkill maintenance loop is implemented here, not in a wiki skill.
  *
  * The tools here serve maintenance: consult the catalog, record a trace,
  * consolidate patterns, propose at most one atomic skill change, lint the
@@ -16,11 +11,10 @@
  *
  * Config (optional): `.pi/extensions/decx.json`
  *   {
- *     "workspaces": [{ "name": "decx", "root": "." }],
  *     "checkpoints": { "every": 7, "unit": "round", "inject": true }
  *   }
- * Without it the project itself is the single workspace as soon as it has a
- * `skills/` or `wiki/` layer. A checkpoint is asked for every 7 user rounds
+ * Only `.decxwiki` in the current project is a workspace; `/decx init` creates
+ * it. A checkpoint is asked for every 7 user rounds
  * (`unit: "turn"` counts agent turns instead, `inject: false` only counts).
  *
  * Checkpoints are session state and live in `<agent dir>/decx/sessions/`, not
@@ -28,7 +22,14 @@
  */
 
 import type { ExtensionAPI } from '@earendil-works/pi-coding-agent';
-import { CONFIG_DIR_NAME, DEFAULT_MAX_BYTES, DEFAULT_MAX_LINES, getAgentDir, truncateHead, withFileMutationQueue } from '@earendil-works/pi-coding-agent';
+import {
+  CONFIG_DIR_NAME,
+  DEFAULT_MAX_BYTES,
+  DEFAULT_MAX_LINES,
+  getAgentDir,
+  truncateHead,
+  withFileMutationQueue,
+} from '@earendil-works/pi-coding-agent';
 import { Type } from 'typebox';
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
@@ -46,12 +47,12 @@ import {
   describeStatus,
   discoverWorkspaces,
   ensureWorkspace,
+  initLocalWiki,
   isWikiError,
   lastCheckpoint,
   readPage,
   readSessionState,
   recordCheckpoint,
-  readWorkspaceConfig,
   requireWorkspace,
   resyncIndex,
   skillDirs,
@@ -67,7 +68,7 @@ import {
   type Workspace,
 } from './lib.ts';
 
-const WORKSPACE = Type.String({ description: 'Workspace name (a project with raw/, wiki/ and skills/), e.g. "decx"' });
+const WORKSPACE = Type.String({ description: 'Workspace name (the initialized .decxwiki in this project), e.g. "decx"' });
 
 const EDIT = Type.Object({
   op: Type.Union([Type.Literal('append'), Type.Literal('replace'), Type.Literal('insert_after')], {
@@ -116,7 +117,7 @@ interface CheckpointSettings {
   inject: boolean;
 }
 
-/** Workspace roots plus the checkpoint cadence, both from `decx.json`. */
+/** Discovered local workspace and optional checkpoint cadence from `decx.json`. */
 interface WorkspaceConfig {
   cwd: string;
   workspaces: Workspace[];
@@ -159,6 +160,7 @@ interface SessionCtx {
   cwd: string;
   sessionManager?: { getSessionId?: () => string; getEntries?: () => { type: string; customType?: string; data?: unknown }[] };
   hasUI?: boolean;
+  reload?: () => Promise<void>;
   ui?: { notify(message: string, level?: string): void };
 }
 
@@ -196,7 +198,6 @@ export default function decx(pi: ExtensionAPI): void {
   let configNotified = '';
   const config = async (cwd: string): Promise<WorkspaceConfig> => {
     if (cache === undefined || cache.cwd !== cwd) {
-      const configured = await readWorkspaceConfig(join(cwd, CONFIG_DIR_NAME, 'extensions', 'decx.json'), fs);
       let parsed: RawConfig | undefined;
       let error: string | undefined;
       try {
@@ -205,7 +206,7 @@ export default function decx(pi: ExtensionAPI): void {
         // A broken config must not quietly disable checkpoints and workspaces.
         error = failure(problem).message;
       }
-      cache = { cwd, workspaces: await discoverWorkspaces(cwd, fs, configured), checkpoints: checkpointSettings(parsed), error };
+      cache = { cwd, workspaces: await discoverWorkspaces(cwd, fs), checkpoints: checkpointSettings(parsed), error };
     }
     return cache;
   };
@@ -227,10 +228,18 @@ export default function decx(pi: ExtensionAPI): void {
     }
   };
 
+  const initialize = async (cwd: string): Promise<Workspace> => {
+    const target = join(cwd, '.decxwiki');
+    await fs.exists(target); // reject directory aliases before taking the workspace lock
+    const { workspace } = await serialize(() => withWorkspaceLock(target, () => initLocalWiki(cwd, fs)));
+    cache = undefined;
+    return workspace;
+  };
+
   const pick = async (cwd: string, name?: string): Promise<Workspace[]> => {
     const all = await workspaces(cwd);
     if (all.length === 0) {
-      throw new Error('no decx workspace found: a project with a skills/ or wiki/ layer, or a "workspaces" entry in .pi/extensions/decx.json');
+      throw new Error('no decx workspace found; run /decx init in this project');
     }
     return name === undefined ? all : [requireWorkspace(all, name)];
   };
@@ -430,6 +439,7 @@ export default function decx(pi: ExtensionAPI): void {
       await ctx.waitForIdle();
       try {
         cache = undefined;
+        if ((await workspaces(ctx.cwd)).length === 0) await initialize(ctx.cwd);
         const task = await wikiRefreshTask(await workspaces(ctx.cwd), args, fs);
         pi.appendEntry('decx-phase', { phase: 'maintain' });
         phase = 'maintain';
@@ -443,9 +453,17 @@ export default function decx(pi: ExtensionAPI): void {
   });
 
   pi.registerCommand('decx', {
-    description: 'Show the decx status of every workspace, the session checkpoint ledger ("checkpoints"), select "phase inference|maintain|propose", or rebuild indexes ("resync")',
+    description: 'Initialize .decxwiki ("init"), show workspace status and checkpoints, select a phase, or rebuild indexes ("resync")',
     handler: async (args: string, ctx: SessionCtx) => {
       const parts = args.trim().split(/\s+/);
+      if (parts[0] === 'init') {
+        try {
+          if (parts.length !== 1) throw new Error('usage: /decx init');
+          const workspace = await initialize(ctx.cwd);
+          ctx.ui?.notify(`decx: initialized ${workspace.root}; install execution skills separately with npx skills (skill layer: ${workspace.skills})`, 'info');
+        } catch (error) { ctx.ui?.notify(failure(error).message, 'error'); }
+        return;
+      }
       if (parts[0] === 'phase') {
         const next = parts[1] as Phase;
         if (!PHASES.includes(next)) {

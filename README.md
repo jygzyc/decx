@@ -11,26 +11,29 @@ Use each analyzer's native interface:
 | APK / DEX analysis | [DroidASC](https://github.com/MG1937/ASC) |
 | Native binary analysis | [Kuna](https://github.com/Noelo-Lab/kuna) |
 | Android framework collection and preprocessing | [AFE](subprojects/decx-afe/README.md) |
-| Analysis methodology, findings, reports and PoCs | [Skills](skills/) |
+| Analysis methodology, findings, reports and PoCs | [Execution skill](skills/decx-tool/) |
 
 ## Install and manage tools
 
-The toolkit manager lives in [`decx/`](decx/README.md) — a Node CLI (Node 22.18+, no build step,
+The toolkit manager lives in [`decx/`](decx/README.md) — a Node CLI (Node 24.21+, no build step,
 no dependencies, one JSON object per command) that installs the tools above and reports what this
 host supports.
 
 ```bash
 decx install kuna        # upstream release for this platform, plus compiled SLEIGH specs
-decx install droidasc    # private venv over the pinned submodule
-decx install afe         # prebuilt tools release, else cargo build of subprojects/decx-afe
-decx -m kuna --help      # runs the tool itself; arguments are never translated
+decx install droidasc    # private venv, pip install droidasc from PyPI
+decx install afe         # prebuilt tools-v release for this platform
+decx kuna --help         # runs the tool itself; arguments are never translated
+decx -m kuna --help      # equivalent explicit form
 decx help install        # usage for the manager or one command
 ```
 
 Tools are declared as data in `subprojects/decx-<id>/decx-<id>.json`, never as code. Executables
 and payloads live under `$DECX_HOME` (`bin/`, `share/<id>/` with a `PROVENANCE` record); the
 manager installs tools, not language runtimes, and each tool keeps its own arguments and output.
-Layout, `--links` and install rules: [`decx/README.md`](decx/README.md).
+Layout, `--links` and install rules: [`decx/README.md`](decx/README.md). Development builds can also
+produce scriptc-built native launchers (`cd decx && npm run build:scriptc`).
+They embed the CLI, but still require Node 24.21+ on PATH; the checked-in CLI remains plain Node.
 
 ### Platform support
 
@@ -40,19 +43,19 @@ there; no Git Bash, `uname` or POSIX tooling is involved.
 
 | Tool | macOS / Linux | Windows |
 | --- | --- | --- |
-| DroidASC | `$PREFIX/bin/droidasc` | `%PREFIX%\bin\droidasc.cmd` (launcher for `%PREFIX%\share\droidasc\.venv\Scripts\python.exe`) |
+| DroidASC | `$PREFIX/bin/droidasc` | `%PREFIX%\bin\droidasc.cmd` (launcher for `%PREFIX%\runtime\droidasc\Scripts\droidasc.exe`) |
 | Kuna | `bin/kuna` (launcher for `share/kuna/bin/kuna`), `specs/` | `bin\kuna.cmd` (launcher for `share\kuna\bin\kuna.exe`), `specs\` |
 | AFE | `bin/afe` | `bin\afe.exe` |
 
 What each platform needs:
 
-- **DroidASC** — Python 3.11/3.12 (64-bit) with `venv`; every pinned dependency ships a
-  `win_amd64` wheel, so no compiler is needed.
+- **DroidASC** — Python >=3.10 with `venv`; DECX installs the published PyPI package
+  and its dependencies using the virtualenv's pip.
 - **Kuna** — installs the upstream release (macOS/Linux arm64+x86_64, Windows x86_64) with the
   compiled SLEIGH specs as a separate asset; the generated launcher exports `KUNA_SPECS`. There is
   no Windows arm64 release, and `decx install kuna` reports that instead of building the reference
   checkout.
-- **AFE** — always built from this repository (`subprojects/decx-afe`, Rust; MSVC on Windows). Its
+- **AFE** — installs a compiled, platform-specific GitHub Release asset (built from `subprojects/decx-afe`; Rust/MSVC on Windows). Its
   ext4/EROFS/ZIP readers are fully native, so no external extractor is needed on any platform.
 
 AFE only prepares artifacts: device collection needs ADB, unsupported image features fail with an
@@ -61,34 +64,43 @@ actionable error, and picking an analyzer for the result stays the caller's job.
 
 ## Skills
 
-The repository has one agent skill, [decx-tool](skills/decx-tool/): it routes between the
+Root [`skills/`](skills/) is the installable source; [decx-tool](skills/decx-tool/) routes between the
 installed tools, and each tool's own commands, output and error contract, and install
 method live in its `references/` file — `droidasc.md`, `kuna.md` (upstream's own skill,
-copied verbatim) and `afe.md`. Point the agent harness at `skills/`. The manager does not
-install skills.
+copied verbatim) and `afe.md`. This skill works with the separately installed DECX CLI
+in any Agent Skills-compatible harness, without the pi extension or a source clone.
+The manager does not install skills. From the target project, install a skill
+with `npx skills add jygzyc/decx --skill <skill-name>` (for example
+`--skill decx-tool`; choose project-level installation
+in `.agents/skills/`). The package installer, not DECX, owns skill installation.
 
-DECX follows [WikiSkill](https://arxiv.org/html/2608.27454) §3: a shared workspace with three
-**sibling** layers, not a wiki inside every skill.
+The pi extension implements the [WikiSkill](https://arxiv.org/html/2608.27454) §3 loop as commands and tools, not as a second agent skill.
 
-Start a new pi session and run `/decx-wiki` to consolidate execution traces, update the wiki and check its structure.
+Download the `decx-pi-<version>.tar.gz` release bundle, unpack it and run
+`pi install /path/to/decx-pi-<version>`; no repository clone is required. In any
+project, `/decx init` creates a fresh `.decxwiki/{raw,wiki}` and an **empty**
+`.agents/skills/` directory; it never downloads or copies a skill. Install
+`decx-tool` separately with `npx skills` as above.
+The extension's `/decx-wiki` command (not a separate skill) then consolidates
+execution traces, updates the wiki and checks its structure.
+Old repository patterns, traces and former skill content are local-only in
+ignored `archive/legacy-knowledge/`; init never imports them. Root `skills/`
+contains the current installable execution skill and is never treated as a wiki.
 
 The pi extension enforces inference/maintenance/proposal tool access and applies candidates with measured-score gating and skill rollback. See [the workflow and access boundary](.pi/extensions/decx/README.md).
 
 ```text
-raw/                         # immutable execution records (private by default)
-  traces/                    # one immutable file per session trace
-wiki/
-  index.md                   # shared pattern catalog
-  patterns/                  # consolidated experience, not execution instructions
-  logs.md                    # maintainer log (seeded; written only with log: true)
-  skill-impact.md            # proposal ledger (seeded; written by decx_propose / decx_gate)
-skills/
-  <name>/
-    SKILL.md                 # complete execution procedure
-    PURPOSE.md               # maintenance-only links to motivating patterns
-    references/              # optional executable reference material
-.pi/extensions/decx/     # pi integration, outside the three knowledge layers
+.decxwiki/                   # initialized in each project
+  raw/traces/                # immutable execution records
+  wiki/                      # pattern catalog, log and proposal ledger
+    patterns/
+    index.md
+    logs.md
+    skill-impact.md
+.agents/skills/              # empty after init; npx skills installs decx-tool here
 ```
+
+The extension is installed in pi separately, not copied into `.decxwiki/`.
 
 Execution reads skills and never the wiki; the maintainer consolidates raw records into the wiki,
 the proposer derives a single-skill change, validation decides whether to keep it, and rejection
@@ -101,26 +113,27 @@ target data; publish only reviewed evidence.
 ```bash
 cd subprojects/decx-afe && cargo build --release && cargo test
 cd decx && npm ci && npm test
-python3 skills/check-skills.py && node --test .pi/extensions/decx/lib.test.ts && node .pi/extensions/decx/cli.ts check
+python3 skills/check-skills.py && node --test .pi/extensions/decx/*.test.ts
+project=$(mktemp -d); node .pi/extensions/decx/cli.ts init --root "$project" && node .pi/extensions/decx/cli.ts check --root "$project"
 ```
 
 AGENTS.md §Validation lists the full gate per area; CI is one workflow per subject under
 `.github/workflows/` — `decx-cli.yml`, `decx-afe.yml`, `decx-droidasc.yml` and
 `decx-kuna.yml` — each scoped to its own paths and carrying both the checks and the
-release for its subject: branch pushes and PRs run the checks, a matching tag push (or a
-dispatch with the `tag` input) publishes. The manager and crate gates run offline
+release for its subject (except DroidASC, published by upstream to PyPI): branch pushes
+and PRs run the checks, and release tags publish manager/AFE/Kuna assets. The manager and crate gates run offline
 (fixture archives, fake toolchains, temp prefixes); the DroidASC and Kuna workflows
 deliberately exercise the real install paths, and the PR workflows never compile the
 vendored upstream checkouts. Releases: `decx-v*` → `decx-<version>.tar.gz` +
-`decx-SHA256SUMS.txt`, `tools-v*` → the six `afe-<version>-<platform>` archives +
+`decx-SHA256SUMS.txt`, four gzip-compressed scriptc launchers (Node required at runtime), and `decx-pi-<version>.tar.gz` +
+`decx-pi-SHA256SUMS.txt`; `tools-v*` → the six `afe-<version>-<platform>` archives +
 `afe-SHA256SUMS.txt`, `kuna-v*` → mirrors upstream's release assets (repacked as zip,
-never built locally) and `droidasc-v*` → the pinned source tarball. Kuna tracks upstream
+never built locally). DroidASC needs no repository release or packaging script. Kuna tracks upstream
 on its own: every 12 hours its workflow compares the pinned tag with upstream's latest
 release and pushes nothing when there is nothing newer — a new release moves the submodule
 pin, re-copies the skill reference and pushes the commit with its `kuna-v<version>` tag,
-which is the release trigger. `decx install kuna` installs from these repository releases
-(the manifest resolves the newest `kuna-v*` tag; the mirror adds the checksums upstream
-does not publish).
+which is the release trigger. `decx install kuna` installs official upstream `v*` archives, verifying GitHub REST
+asset SHA-256 digests; the repository mirrors remain optional.
 
 ## Scope and non-goals
 
@@ -131,7 +144,7 @@ Kuna are upstream tools used as they are. Adapters exist only for a demonstrated
 limitation.
 
 `subprojects/` holds every subproject, and each one is self-contained: its own `README.md`, the
-skill that drives it under `skills/`, and the `decx-<id>.json` manifest the manager reads.
+skill reference under `skills/decx-tool/`, and the `decx-<id>.json` manifest the manager reads.
 `decx-afe/` is DECX's own Rust tool; `decx-droidasc/` and `decx-kuna/` pin the upstream checkout as
 a git submodule under `source/` (see `.gitmodules`).
 

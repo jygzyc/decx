@@ -13,15 +13,17 @@ node_modules/
 # Built CLI package output
 decx/dist/
 decx/artifacts/
+decx/.scriptc-toolchain/
 
 # Install roots the workflows use when they exercise the manager (.ci-home)
 .ci-home/
 
-# Raw execution records may contain target data; publish only reviewed evidence.
-/raw/*
-!/raw/README.md
-# ...and the rule that keeps per-run traces out of the repository
-!/raw/.gitignore
+# Historical knowledge (including target traces) is local-only and never published.
+/archive/
+
+# Initialized project knowledge and copied execution skills are local-only.
+/.decxwiki/
+/.agents/skills/
 
 # IDE / OS
 .idea/

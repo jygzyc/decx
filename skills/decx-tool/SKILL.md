@@ -1,9 +1,6 @@
 ---
 name: decx-tool
-description: Use when driving any installed DECX native tool — DroidASC (DEX decompiling and cross-referencing inside an APK/JAR container), Kuna (native binary and ET_REL decompilation, xrefs, strings, unpacking) or AFE (Android framework collection and preprocessing, live device reads). Routes between the three; each tool's exact commands, identifier forms, output and error contracts and install method live in its reference file. Never a unified command tree: nothing translates one tool's commands into another's.
-metadata:
-  requires:
-    bins: ["decx"]
+description: "Use when driving any installed DECX native tool — DroidASC (DEX decompiling and cross-referencing inside an APK/JAR container), Kuna (native binary and ET_REL decompilation, xrefs, strings, unpacking) or AFE (Android framework collection and preprocessing, live device reads). Routes between the three; each tool's exact commands, identifier forms, output and error contracts and install method live in its reference file. Never a unified command tree: nothing translates one tool's commands into another's."
 ---
 
 # DECX Tools
@@ -41,13 +38,19 @@ that tool is used:
 
 ## Install and Launch
 
+This skill works in any agent that supports `SKILL.md`; it does not depend on the
+pi extension, `decx_*` tools, `.decxwiki`, or a repository checkout. Install the
+standalone Node 24.21+ DECX manager separately (see its bundled README). If
+`decx` is not on PATH, run its release executable as `node /path/to/decx.mjs`
+and replace `decx` with that form below. Check `decx version` and `decx help` before installing anything; do not
+assume tools are already installed.
+
 ```bash
 decx install <tool>             # droidasc | kuna | afe
 decx -m <tool> -- <args...>     # runs the installed launcher; args pass through unchanged
 ```
 
-- `droidasc` installs as a private venv over the pinned upstream checkout when
-  available — see
+- `droidasc` installs the published PyPI package into a private venv — see
   [`references/droidasc.md`](references/droidasc.md) `## Install`.
 - `kuna` installs from the pinned release archive plus the separate compiled SLEIGH
   specs archive. The generated launcher exports `KUNA_SPECS` at the specs directory,
@@ -57,6 +60,6 @@ decx -m <tool> -- <args...>     # runs the installed launcher; args pass through
   `darwin-arm64`, `win-amd64`); a host
   without one fails loudly instead of compiling `source/` (installs never use the
   vendored checkout, and `--from-source` is not offered for kuna).
-- `afe` installs the prebuilt `tools-v*` asset when it carries this platform,
-  otherwise it builds its Rust crate with cargo — see
+- `afe` installs a prebuilt `tools-v*` archive for the platform. A missing
+  platform asset currently fails rather than falling back to cargo — see
   [`references/afe.md`](references/afe.md) `## Install`.

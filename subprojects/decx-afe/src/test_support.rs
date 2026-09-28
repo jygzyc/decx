@@ -198,7 +198,7 @@ pub fn build_ext4_image(files: &[(&str, &[u8])]) -> Vec<u8> {
     write_u32(&mut buffer, superblock + 40, INODES_PER_GROUP);
     write_u16(&mut buffer, superblock + 56, EXT4_MAGIC);
     write_u16(&mut buffer, superblock + 88, INODE_SIZE);
-    write_u16(&mut buffer, superblock + 256, 32);
+    write_u16(&mut buffer, superblock + 254, 32);
     write_u32(&mut buffer, 2 * BLOCK_SIZE + 8, INODE_TABLE_BLOCK as u32);
 
     write_tree(&mut buffer, &root, root.inode);

@@ -3,7 +3,8 @@
  *
  *   <home>/bin/<name>       the installed executables and the launchers that
  *                           wrap them, one file per command
- *   <home>/share/<id>/      per-tool payload: PROVENANCE, venv, specs, archive
+ *   <home>/runtime/<id>/    per-tool runtime environments (e.g. Python venv)
+ *   <home>/share/<id>/      per-tool payload: PROVENANCE, specs, archive payload
  *   <links>/<name>          PATH entry: a symlink to `<home>/bin/<name>` (a
  *                           generated `.cmd` shim on Windows)
  *
@@ -26,6 +27,11 @@ export function binRoot(home: string): string {
 /** `<home>/bin/<name>` -- one installed executable. */
 export function binPath(home: string, name: string): string {
   return path.join(binRoot(home), name);
+}
+
+/** `<home>/runtime/<id>` -- private interpreter environment for a tool. */
+export function runtimePath(home: string, id: string): string {
+  return path.join(home, 'runtime', id);
 }
 
 /** `<home>/share` -- per-tool payloads. */

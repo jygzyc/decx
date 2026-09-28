@@ -26,7 +26,7 @@ await build({
   bundle: true,
   platform: 'node',
   format: 'esm',
-  target: 'node22.18',
+  target: 'node24',
   define: {
     __DECX_VERSION__: JSON.stringify(packageInfo.version),
     __DECX_MANIFESTS__: JSON.stringify(manifests),
@@ -50,14 +50,14 @@ try {
   assert.equal(version.ok, true);
   assert.equal(version.version, packageInfo.version);
   assert.match(run(['help']), /usage: decx/);
-  assert.equal(JSON.parse(run(['list'], 2)).error.code, 'UNKNOWN_COMMAND');
+  assert.equal(JSON.parse(run(['list'], 2)).error.code, 'UNKNOWN_TOOL');
   for (const id of ['afe', 'droidasc', 'kuna']) assert.equal(JSON.parse(run(['-m', id], 1)).error.code, 'NOT_INSTALLED');
   assert.equal(JSON.parse(run(['install'], 2)).error.code, 'USAGE');
   assert.deepEqual(fs.readdirSync(cwd), ['decx.mjs']);
   const override = path.join(cwd, 'custom');
   fs.mkdirSync(path.join(override, 'decx-fixture'), { recursive: true });
   fs.writeFileSync(path.join(override, 'decx-fixture', 'decx-fixture.json'), JSON.stringify({
-    manifest: 2, id: 'fixture', summary: 'Offline fixture', bins: ['fixture'], release: { asset: 'fixture.zip' },
+    manifest: 2, id: 'fixture', summary: 'Offline fixture', install: ['github-release'], launch: { type: 'bin', commands: ['fixture'] }, release: { asset: 'fixture.zip' },
   }));
   assert.equal(JSON.parse(run(['--subprojects', override, '-m', 'fixture'], 1)).error.code, 'NOT_INSTALLED');
   assert.equal(JSON.parse(run(['--subprojects', override, '-m', 'afe'], 2)).error.code, 'UNKNOWN_TOOL');

@@ -8,6 +8,7 @@
  * followed by hand so the bearer token stays bound to the initial origin.
  */
 
+import childProcess from 'node:child_process';
 import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import http from 'node:http';
@@ -64,10 +65,44 @@ export interface ResolvedRelease {
   assetNames: string[];
 }
 
-/** The token the CLI uses, from the two environment variables GitHub itself uses. */
+/** SHA-256 digests published in the GitHub REST release asset metadata. */
+export async function releaseAssetDigests(options: GithubRequestOptions & { repository: string; tag: string }): Promise<Map<string, string>> {
+  const apiBase = (options.apiBase ?? DEFAULT_API_BASE).replace(/\/+$/, '');
+  const url = `${apiBase}/repos/${options.repository}/releases/tags/${encodeURIComponent(options.tag)}`;
+  const json = await getJson<GithubReleaseJson>(url, {
+    userAgent: options.userAgent ?? DEFAULT_USER_AGENT,
+    ...(options.token !== undefined ? { token: options.token } : {}),
+  });
+  const digests = new Map<string, string>();
+  for (const asset of Array.isArray(json.assets) ? json.assets : []) {
+    if (typeof asset !== 'object' || asset === null) continue;
+    const { name, digest } = asset as { name?: unknown; digest?: unknown };
+    if (typeof name === 'string' && typeof digest === 'string' && /^sha256:[0-9a-f]{64}$/i.test(digest)) {
+      digests.set(name, digest.slice('sha256:'.length).toLowerCase());
+    }
+  }
+  return digests;
+}
+
+/** The token the CLI uses, from GitHub environment variables or `gh auth token`. */
 export function githubToken(env: NodeJS.ProcessEnv = process.env): string | undefined {
   const token = env.GITHUB_TOKEN ?? env.GH_TOKEN;
-  return token !== undefined && token.trim() !== '' ? token.trim() : undefined;
+  if (token !== undefined && token.trim() !== '') {
+    return token.trim();
+  }
+  if (env === process.env) {
+    try {
+      const gh = childProcess.execFileSync('gh', ['auth', 'token'], {
+        stdio: ['ignore', 'pipe', 'ignore'],
+        encoding: 'utf-8',
+        timeout: 2000,
+      }).trim();
+      if (gh.length > 0) return gh;
+    } catch {
+      // gh not installed, not authenticated, or errored
+    }
+  }
+  return undefined;
 }
 
 interface RawResponse {

@@ -21,9 +21,8 @@ function demoManifest(): ToolManifest {
   return {
     manifest: 2,
     id: 'demo',
-    kind: 'binary',
+    install: ['github-release'], launch: { type: 'bin', commands: ['demo'] },
     summary: 'demo tool',
-    bins: ['demo'],
     release: { repository: 'acme/demo', tagPrefix: 'v', checksums: 'SHA256SUMS', assets: { 'linux-amd64': 'demo-{version}.tgz' } },
   };
 }
@@ -70,6 +69,7 @@ test('provenanceVersion prefers the release tag and strips a leading v', () => {
 
 test('provenanceBinaries reads the binaries list, falling back to binary', () => {
   assert.deepEqual(provenanceBinaries({ binaries: 'kuna decomp_dbg slacomp' }), ['kuna', 'decomp_dbg', 'slacomp']);
+  assert.deepEqual(provenanceBinaries({ binary: '/home/me/.decx/bin/my tool', binaries: 'my tool other' }), ['my tool', 'other']);
   assert.deepEqual(provenanceBinaries({ binary: '/home/me/.decx/share/kuna/bin/kuna.exe' }), ['kuna.exe']);
   assert.deepEqual(provenanceBinaries({ binaries: '   ', binary: '/opt/kuna' }), ['kuna']);
   assert.deepEqual(provenanceBinaries({}), []);
@@ -89,6 +89,17 @@ test('toolState reads the installed launcher and version from PROVENANCE', () =>
   assert.equal(state.bin, binPath(home, 'demo'));
   assert.equal(state.version, '1.2.3');
   assert.equal(state.provenance?.installer, 'decx install');
+});
+
+test('toolState uses recorded executable if the manifest launch name changes', () => {
+  const home = tempDir();
+  fs.mkdirSync(path.dirname(binPath(home, 'demo')), { recursive: true });
+  fs.writeFileSync(binPath(home, 'demo'), '#!/bin/sh\n', { mode: 0o755 });
+  fs.mkdirSync(toolPrefix(home, 'demo'), { recursive: true });
+  fs.writeFileSync(provenanceFile(home, 'demo'), `tool: demo\nbinary: ${binPath(home, 'demo')}\nbinaries: demo\n`);
+  const renamed = { ...demoManifest(), launch: { type: 'bin' as const, commands: ['next'] } };
+  assert.equal(toolState(home, renamed).bin, binPath(home, 'demo'));
+  assert.equal(toolState(home, renamed).installed, true);
 });
 
 test('toolState reports a tool with no launcher as not installed', () => {

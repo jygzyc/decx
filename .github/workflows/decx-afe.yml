@@ -140,10 +140,14 @@ jobs:
       version: ${{ steps.tag.outputs.version }}
     steps:
       - uses: actions/checkout@v7.0.1
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref }}
       - id: tag
+        env:
+          REQUESTED_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
         run: |
           set -eu
-          tag="${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}"
+          tag="$REQUESTED_TAG"
           case "$tag" in
             tools-v*) version="${tag#tools-v}" ;;
             *) echo "::error::tag '$tag' must look like tools-v<version>"; exit 1 ;;
@@ -200,6 +204,8 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v7.0.1
+        with:
+          ref: ${{ needs.validate.outputs.tag }}
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}

@@ -1,4 +1,5 @@
 {
+  "$schema": "../decx-tool.schema.json",
   "manifest": 2,
   "summary": "Android framework collection and preprocessing: pull framework files, expand them and pack an analyzable jar (AFE)",
   "homepage": "https://github.com/jygzyc/decx",
@@ -15,6 +16,7 @@
       "win-arm64": "afe-{version}-win-arm64.zip"
     }
   },
-  "bins": ["afe"],
+  "install": ["github-release"],
+  "launch": { "type": "bin", "commands": ["afe"] },
   "verify": "--version"
 }

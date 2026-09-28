@@ -1,0 +1,8 @@
+{
+  "manifest": 2,
+  "id": "pyprobe",
+  "summary": "Offline Python virtualenv installer fixture (not a shipped tool)",
+  "install": ["pip", "install", "pyprobe"],
+  "launch": { "type": "python", "commands": ["pyprobe"] },
+  "verify": "--version"
+}

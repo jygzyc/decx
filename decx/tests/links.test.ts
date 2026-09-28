@@ -13,7 +13,7 @@ import test from 'node:test';
 import { launchSpec } from '../src/cli.ts';
 import { binPath, provenanceFile } from '../src/config.ts';
 import { envCmdLauncherText, venvLauncherText } from '../src/install.ts';
-import { createLinks, linkFileName, linkName, shimText } from '../src/links.ts';
+import { createLinks, linkFileName, linkName, removeManagedLink, shimText } from '../src/links.ts';
 
 function tempDir(prefix = 'decx-links-'): string {
   return fs.mkdtempSync(path.join(os.tmpdir(), prefix));
@@ -69,6 +69,18 @@ test('prefers the platform launcher when two staged files share one command', ()
     assert.deepEqual(fs.readdirSync(posixDir), ['droidasc']);
     assert.equal(fs.realpathSync(path.join(posixDir, 'droidasc')), fs.realpathSync(binPath(home, 'droidasc')));
   }
+});
+
+test('stale Windows shims are removed only when they still point to the recorded target', () => {
+  const home = tempDir();
+  const linkDir = tempDir();
+  store(home, 'demo.exe');
+  createLinks({ home, files: ['demo.exe'], linkDir, windows: true });
+  const link = path.join(linkDir, 'demo.cmd');
+  assert.equal(removeManagedLink(linkDir, 'demo.exe', binPath(home, 'other.exe'), true), false);
+  assert.ok(fs.existsSync(link));
+  assert.equal(removeManagedLink(linkDir, 'demo.exe', binPath(home, 'demo.exe'), true), true);
+  assert.equal(fs.existsSync(link), false);
 });
 
 test('createLinks is idempotent', () => {
@@ -207,23 +219,20 @@ test('a script launcher runs correctly through its PATH symlink', { skip: proces
   fs.mkdirSync(path.dirname(binPath(home, 'droidasc')), { recursive: true });
   fs.writeFileSync(
     binPath(home, 'droidasc'),
-    venvLauncherText({ id: 'droidasc', platformOs: 'linux', venvDir: '.venv', venvBin: 'bin', venvPython: 'python', entry: 'main.py' }),
+    venvLauncherText({ id: 'droidasc', platformOs: 'linux', venvBin: 'bin', command: 'droidasc' }),
     { mode: 0o755 },
   );
-  fs.mkdirSync(path.join(home, 'share', 'droidasc', '.venv', 'bin'), { recursive: true });
-  fs.writeFileSync(path.join(home, 'share', 'droidasc', '.venv', 'bin', 'python'), '#!/bin/sh\necho "venv:$*"\n', {
+  fs.mkdirSync(path.join(home, 'runtime', 'droidasc', 'bin'), { recursive: true });
+  fs.writeFileSync(path.join(home, 'runtime', 'droidasc', 'bin', 'droidasc'), '#!/bin/sh\necho "venv:$*"\n', {
     mode: 0o755,
   });
-  fs.writeFileSync(path.join(home, 'share', 'droidasc', 'main.py'), '# entry point\n');
-
   createLinks({ home, files: ['droidasc'], linkDir });
-  const entry = path.join(home, 'share', 'droidasc', 'main.py');
   const run = spawnSync(path.join(linkDir, 'droidasc'), ['getmanifest', 'app.apk'], { encoding: 'utf8' });
   assert.equal(run.status, 0, run.stderr);
-  assert.equal(run.stdout.trim(), `venv:${entry} getmanifest app.apk`);
+  assert.equal(run.stdout.trim(), `venv:getmanifest app.apk`);
 
   // The same launcher still works when called directly from the store.
   const direct = spawnSync(binPath(home, 'droidasc'), ['getclass', 'app.apk', 'com.poc.Main'], { encoding: 'utf8' });
   assert.equal(direct.status, 0, direct.stderr);
-  assert.equal(direct.stdout.trim(), `venv:${entry} getclass app.apk com.poc.Main`);
+  assert.equal(direct.stdout.trim(), `venv:getclass app.apk com.poc.Main`);
 });

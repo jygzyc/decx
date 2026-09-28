@@ -2,6 +2,7 @@
 /**
  * Decx CLI — run the knowledge-base logic without an agent.
  *
+ *   node .pi/extensions/decx/cli.ts init
  *   node .pi/extensions/decx/cli.ts workspaces
  *   node .pi/extensions/decx/cli.ts status [<workspace>] [--workspace <name>]
  *   node .pi/extensions/decx/cli.ts check  [<workspace>] [--workspace <name>] [--json]
@@ -12,7 +13,17 @@
  */
 
 import { join, resolve } from 'node:path';
-import { discoverWorkspaces, describeFinding, describeStatus, ensureWorkspace, isWikiError, readWorkspaceConfig, requireWorkspace, resyncIndex, status } from './lib.ts';
+import {
+  describeFinding,
+  describeStatus,
+  discoverWorkspaces,
+  ensureWorkspace,
+  initLocalWiki,
+  isWikiError,
+  requireWorkspace,
+  resyncIndex,
+  status,
+} from './lib.ts';
 import { nodeFs, withWorkspaceLock } from './node-fs.ts';
 
 interface Options {
@@ -25,6 +36,11 @@ interface Options {
 function parse(argv: string[]): Options {
   const [command = 'status', ...rest] = argv;
   const options: Options = { command, root: process.cwd(), json: false };
+  if (['help', '--help', '-h'].includes(command)) {
+    options.command = 'help';
+    return options;
+  }
+
   for (let index = 0; index < rest.length; index += 1) {
     const arg = rest[index];
     if (arg === '--root') {
@@ -44,17 +60,56 @@ function parse(argv: string[]): Options {
   return options;
 }
 
+async function init(root: string, fs: ReturnType<typeof nodeFs>): Promise<void> {
+  const target = join(root, '.decxwiki');
+  // Reject a symlink before creating the lock directory.
+  await fs.exists(target);
+  const result = await withWorkspaceLock(target, () => initLocalWiki(root, fs));
+  console.log(
+    `${result.workspace.root}: initialized (${result.created.length} new wiki files; ` +
+      `skill layer at ${result.workspace.skills}; install skills separately with npx skills)`,
+  );
+}
+
+const HELP = [
+  'Usage: node .pi/extensions/decx/cli.ts <command> [options]',
+  '',
+  'Commands:',
+  '  init         initialize <root>/.decxwiki and the empty <root>/.agents/skills layer',
+  '  workspaces   list the initialized workspace',
+  '  status       show workspace status (default)',
+  '  check        lint the workspace; exits 1 when errors exist',
+  '  resync       rebuild wiki/index.md from pattern pages',
+  '',
+  'Options:',
+  '  --root <dir>       project directory (default: current directory)',
+  '  --workspace <name> select a workspace by name',
+  '  --json             machine-readable check output',
+].join('\n');
+
 async function main(): Promise<number> {
   const options = parse(process.argv.slice(2));
+  if (options.command === 'help') {
+    console.log(HELP);
+    return 0;
+  }
+
   const fs = nodeFs();
-  // The workspace name and roots come from the same config file the pi extension reads
-  // (pi's CONFIG_DIR_NAME defaults to .pi), so the CLI and the agent agree on the project.
+  // The CLI and extension both discover only this project's initialized wiki.
   const root = resolve(options.root);
-  const configured = await readWorkspaceConfig(join(root, '.pi', 'extensions', 'decx.json'), fs);
-  const all = await discoverWorkspaces(root, fs, configured);
+  if (options.command === 'init') {
+    if (options.workspace !== undefined) {
+      throw new Error('init always targets <root>/.decxwiki; omit --workspace');
+    }
+    await init(root, fs);
+    return 0;
+  }
+  const all = await discoverWorkspaces(root, fs);
   if (options.command === 'workspaces') {
     for (const workspace of all) {
-      console.log(`${workspace.name}\t${workspace.root}\twiki=${workspace.wiki}\traw=${workspace.raw}\tskills=${workspace.skills}`);
+      console.log(
+        `${workspace.name}\t${workspace.root}\twiki=${workspace.wiki}\traw=${workspace.raw}\tskills=${workspace.skills}`,
+      );
     }
     return 0;
   }
@@ -70,7 +125,10 @@ async function main(): Promise<number> {
         await ensureWorkspace(workspace, fs);
         return resyncIndex(workspace, fs);
       });
-      console.log(`${workspace.name}: ${result.total} patterns (added ${result.added.length}, removed ${result.removed.length})`);
+      console.log(
+        `${workspace.name}: ${result.total} patterns ` +
+          `(added ${result.added.length}, removed ${result.removed.length})`,
+      );
     }
     return 0;
   }
@@ -99,13 +157,16 @@ async function main(): Promise<number> {
     }
     return findings.some((finding) => finding.level === 'error') ? 1 : 0;
   }
-  console.error(`unknown command: ${options.command}\ncommands: workspaces, status, check, resync`);
+  console.error(`unknown command: ${options.command}\n\n${HELP}`);
   return 2;
 }
 
 main()
   .then((code) => process.exit(code))
   .catch((error: unknown) => {
-    console.error(isWikiError(error) ? `${error.code}: ${error.message}${error.hint === undefined ? '' : `\nhint: ${error.hint}`}` : String(error instanceof Error ? error.message : error));
+    const message = isWikiError(error)
+      ? `${error.code}: ${error.message}${error.hint === undefined ? '' : `\nhint: ${error.hint}`}`
+      : String(error instanceof Error ? error.message : error);
+    console.error(message);
     process.exit(2);
   });

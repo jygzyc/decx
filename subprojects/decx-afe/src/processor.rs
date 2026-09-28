@@ -16,9 +16,8 @@ use crate::error::{io_error, Error, Result};
 use crate::ext4::Ext4Image;
 use crate::hash::sha256_prefix8;
 use crate::layout::{is_drive_relative_name, mkdtemp, FrameworkLayout};
-use crate::zip::{extract_zip_entry, list_zip_entries};
+use crate::zip::{extract_zip_entry, list_zip_entries, ZipArchive};
 
-const MAX_EXPANDED_ENTRY_BYTES: u64 = 8 * 1024 * 1024 * 1024;
 const SUPPORTED_INPUT_EXTENSIONS: [&str; 5] = [".jar", ".apk", ".dex", ".apex", ".capex"];
 const APEX_CONTENT_EXTENSIONS: [&str; 3] = [".jar", ".apk", ".dex"];
 
@@ -139,8 +138,9 @@ pub fn extract_dex_from_zip(
     std::fs::create_dir_all(target_dir)
         .map_err(|err| io_error(&format!("create '{}'", target_dir.display()), err))?;
     let package = package_path.to_string_lossy().to_string();
+    let archive = ZipArchive::open(&package)?;
     let mut written = Vec::new();
-    for entry in list_zip_entries(&package)? {
+    for entry in archive.names()? {
         if !entry.to_ascii_lowercase().ends_with(".dex") {
             continue;
         }
@@ -160,15 +160,13 @@ pub fn extract_dex_from_zip(
             name = format!("{}_{}", sha256_prefix8(entry.as_bytes()), name);
         }
         let target = target_dir.join(format!("{prefix}_{name}"));
-        let target_string = target.to_string_lossy().to_string();
-        extract_zip_entry(&package, &entry, &target_string)?;
-        let size = std::fs::metadata(&target)
-            .map_err(|err| io_error(&format!("stat '{}'", target.display()), err))?
-            .len();
-        if size > MAX_EXPANDED_ENTRY_BYTES {
-            let _ = std::fs::remove_file(&target);
-            return Err(Error::file("expanded entry exceeds 8 GiB", Some(&package)));
+        if target.exists() {
+            return Err(Error::file(
+                format!("dex output collision at '{}'", target.display()),
+                Some(&package),
+            ));
         }
+        archive.extract_name(&entry, &target)?;
         written.push(target);
     }
     Ok(written)
@@ -233,7 +231,9 @@ fn extract_apex_payload_at(apex_file: &Path, target_dir: &Path, depth: u32) -> R
     let container = apex_file.to_string_lossy().to_string();
     let names = list_zip_entries(&container)?;
     if names.iter().any(|name| name == "original_apex") {
-        let nested = target_dir.join("original.apex");
+        // Distinct paths per level: streaming extraction must never truncate
+        // the archive it is currently reading.
+        let nested = target_dir.join(format!("original-{depth}.apex"));
         extract_zip_entry(&container, "original_apex", &nested.to_string_lossy())?;
         return extract_apex_payload_at(&nested, target_dir, depth + 1);
     }
@@ -305,9 +305,13 @@ pub fn process_apex(apex_file: &Path, work_dir: &Path, prefix: &str) -> Result<(
     extract_payload_image(&payload, &payload_dir, &nested_filter)?;
     for nested in walk_framework_inputs(&payload_dir)? {
         let extension = extension_lower(&nested);
+        // APEX payloads can contain same-named containers in different
+        // directories. Include their relative path in the namespace.
+        let relative = relative_slash(&payload_dir, &nested);
+        let namespace = format!("{prefix}_{}", sha256_prefix8(relative.as_bytes()));
         if extension == ".jar" || extension == ".apk" {
             let stem = file_stem_name(&nested);
-            extract_dex_from_zip(&nested, work_dir, &format!("{prefix}_{stem}"))?;
+            extract_dex_from_zip(&nested, work_dir, &format!("{namespace}_{stem}"))?;
             continue;
         }
         if extension == ".dex" {
@@ -315,7 +319,13 @@ pub fn process_apex(apex_file: &Path, work_dir: &Path, prefix: &str) -> Result<(
                 .file_name()
                 .map(|value| value.to_string_lossy().to_string())
                 .unwrap_or_default();
-            let target = work_dir.join(format!("{prefix}_{name}"));
+            let target = work_dir.join(format!("{namespace}_{name}"));
+            if target.exists() {
+                return Err(Error::file(
+                    format!("dex output collision at '{}'", target.display()),
+                    Some(&nested.to_string_lossy()),
+                ));
+            }
             std::fs::copy(&nested, &target)
                 .map_err(|err| io_error(&format!("copy '{}'", target.display()), err))?;
         }
@@ -766,11 +776,43 @@ mod tests {
             .iter()
             .map(|path| path.file_name().unwrap().to_string_lossy().to_string())
             .collect();
-        assert_eq!(names, vec!["com.android.mod_classes_module_classes.dex"]);
+        assert_eq!(
+            names,
+            vec![format!(
+                "com.android.mod_classes_{}_module_classes.dex",
+                sha256_prefix8(b"javalib/module.jar")
+            )]
+        );
         assert_eq!(
             std::fs::read(layout.out_tmp_dir.join(&names[0])).unwrap(),
             b"module dex"
         );
+    }
+
+    #[test]
+    fn apex_same_named_containers_keep_both_dex_files() {
+        let (root, layout) = test_layout("apex-duplicate-stems");
+        let first = root.join("first.jar");
+        let second = root.join("second.jar");
+        zip_file(&first, &[("classes.dex", b"first")]);
+        zip_file(&second, &[("classes.dex", b"second")]);
+        let first_bytes = std::fs::read(&first).unwrap();
+        let second_bytes = std::fs::read(&second).unwrap();
+        let payload = build_ext4_image(&[
+            ("javalib/module.jar", first_bytes.as_slice()),
+            ("other/module.jar", second_bytes.as_slice()),
+        ]);
+        let apex = layout.source_dir.join("apex/com.android.mod/classes.apex");
+        zip_file(&apex, &[("apex_payload.img", payload.as_slice())]);
+        let result = process_framework(&layout).unwrap();
+        assert_eq!(result.outputs.len(), 2);
+        let mut contents: Vec<Vec<u8>> = result
+            .outputs
+            .iter()
+            .map(|path| std::fs::read(path).unwrap())
+            .collect();
+        contents.sort();
+        assert_eq!(contents, vec![b"first".to_vec(), b"second".to_vec()]);
     }
 
     #[test]

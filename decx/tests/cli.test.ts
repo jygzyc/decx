@@ -31,23 +31,41 @@ function runCli(args: string[], env: NodeJS.ProcessEnv = {}): { status: number |
   return { status: result.status, json, text };
 }
 
-test('the manager installs, runs and reports its version -- and nothing else', () => {
+test('the manager installs, updates, removes, runs and reports its version', () => {
   const { status, json } = runCli(['list'], { PATH: '' });
   assert.equal(status, 2);
   const payload = json as { ok: boolean; error: { code: string; hint?: string } };
   assert.equal(payload.ok, false);
-  assert.equal(payload.error.code, 'UNKNOWN_COMMAND');
-  assert.match(payload.error.hint ?? '', /decx help/);
+  assert.equal(payload.error.code, 'UNKNOWN_TOOL');
+  assert.match(payload.error.hint ?? '', /known tools/);
 
   // Help advertises exactly the commands that still exist.
   const help = runCli(['help']);
   assert.equal(help.status, 0);
-  for (const line of ['install <tool>', '-m, --module <tool>', 'version', 'help [command]']) {
+  for (const line of ['install <tool>', 'update <tool>', 'remove <tool>', '-m, --module <tool>', 'version', 'help [command]']) {
     assert.ok(help.text.includes(line), `help should document ${line}`);
   }
   assert.ok(!help.text.includes('run <tool>'), 'help must not advertise the removed run command');
   assert.ok(!/^\s*list\b/m.test(help.text), 'help must not advertise a list command');
   assert.equal(runCli(['help', 'list']).status, 2);
+});
+
+test('update requires an installed tool before contacting GitHub', () => {
+  const home = tempDir();
+  try {
+    const result = runCli(['update', 'kuna', '--home', home], { PATH: '' });
+    assert.equal(result.status, 1);
+    assert.equal((result.json as { error: { code: string } }).error.code, 'NOT_INSTALLED');
+  } finally { fs.rmSync(home, { recursive: true, force: true }); }
+});
+
+test('remove reports missing installs without touching the real home', () => {
+  const home = tempDir();
+  try {
+    const result = runCli(['remove', 'kuna', '--home', home]);
+    assert.equal(result.status, 1);
+    assert.equal((result.json as { error: { code: string } }).error.code, 'NOT_INSTALLED');
+  } finally { fs.rmSync(home, { recursive: true, force: true }); }
 });
 
 test('the module flag is a usage error without a value or for an unknown tool', () => {
@@ -86,6 +104,9 @@ test('parseArgs keeps the tool argv untouched from the module id on', () => {
   assert.deepEqual(parseArgs(['-m', 'kuna', '-h']).toolArgs, ['-h']);
   const unusual = ['', 'two words', 'a"b', 'trailing\\', '--', '--pretty', '--module'];
   assert.deepEqual(parseArgs(['-m', 'kuna', ...unusual]).toolArgs, unusual);
+  assert.deepEqual(parseArgs(['droidasc', '--help', '--version', ...unusual]).toolArgs,
+    ['--help', '--version', ...unusual]);
+  assert.equal(parseArgs(['--home', '/tmp/example', 'droidasc', '-m', 'getclass']).module, 'droidasc');
 
   // The module flag needs a value and only belongs to a bare invocation.
   assert.equal(parseArgs(['-m']).error, 'missing value for -m');
@@ -101,6 +122,8 @@ test('parseArgs keeps the tool argv untouched from the module id on', () => {
   // `--version` after `install` is the release tag, not the CLI version flag.
   assert.equal(parseArgs(['install', '--version', '1.0.0']).releaseTag, '1.0.0');
   assert.equal(parseArgs(['install', '--version', '1.0.0']).versionFlag, false);
+  assert.equal(parseArgs(['update', 'demo', '--version', '1.0.0']).releaseTag, '1.0.0');
+  assert.equal(parseArgs(['remove', 'demo']).command, 'remove');
 });
 
 test('the install root resolves from --home, --prefix or DECX_HOME', () => {
@@ -114,13 +137,13 @@ test('the install root resolves from --home, --prefix or DECX_HOME', () => {
   assert.equal(resolveHome(undefined, env), path.resolve(fromEnvDir));
 });
 
-test('unknown commands fail with a usage envelope', () => {
+test('unknown tool names fail with a usage envelope', () => {
   const { status, json } = runCli(['frobnicate']);
   assert.equal(status, 2);
   const payload = json as { ok: boolean; error: { code: string; hint?: string } };
   assert.equal(payload.ok, false);
-  assert.equal(payload.error.code, 'UNKNOWN_COMMAND');
-  assert.match(payload.error.hint ?? '', /decx help/);
+  assert.equal(payload.error.code, 'UNKNOWN_TOOL');
+  assert.match(payload.error.hint ?? '', /known tools/);
 });
 
 test('a command without its tool id is a usage error', () => {
@@ -190,7 +213,7 @@ for (const kind of ['native', 'posix launcher', 'Windows cmd launcher'] as const
     fs.mkdirSync(payload, { recursive: true });
     fs.mkdirSync(path.join(subprojects, 'decx-demo'), { recursive: true });
     fs.writeFileSync(path.join(subprojects, 'decx-demo', 'decx-demo.json'), JSON.stringify({
-      manifest: 2, summary: 'offline argv probe', bins: ['demo'],
+      manifest: 2, summary: 'offline argv probe', install: ['github-release'], launch: { type: 'bin', commands: ['demo'] },
       release: { asset: 'demo-{version}-{os}-{arch}.zip' },
     }));
     const script = path.join(payload, 'probe.cjs');

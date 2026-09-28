@@ -1,9 +1,9 @@
 #!/usr/bin/env node
 /**
  * Pack `dist/` into `artifacts/decx-<version>.tar.gz` (single `decx-<version>/`
- * root directory, plus the repo LICENSE and this README) and write
- * `artifacts/decx-SHA256SUMS.txt` in the `sha256  filename` format the
- * manager's checksum parser understands.
+ * root directory, plus the repo LICENSE and this README), a separate
+ * `decx-pi-<version>.tar.gz` extension/skills package, and SHA256SUMS files
+ * in the `sha256  filename` format the manager's parser understands.
  */
 import { createHash } from 'node:crypto';
 import fs from 'node:fs';
@@ -45,3 +45,37 @@ const checksums = path.join(artifactRoot, 'decx-SHA256SUMS.txt');
 fs.writeFileSync(checksums, `${sha256}  ${name}.tar.gz\n`);
 
 console.log(`packed ${path.basename(tarball)} (${sha256})`);
+
+// The pi integration is a separate, self-contained package: it can be unpacked
+// into any project and installed by path, without cloning this repository.
+const piName = `decx-pi-${version}`;
+const piStage = path.join(artifactRoot, piName);
+fs.rmSync(piStage, { recursive: true, force: true });
+fs.mkdirSync(path.join(piStage, 'extensions'), { recursive: true });
+fs.mkdirSync(path.join(piStage, 'skills'), { recursive: true });
+fs.cpSync(path.join(repoRoot, '.pi', 'extensions', 'decx'), path.join(piStage, 'extensions', 'decx'), {
+  recursive: true,
+  filter: (source) => !source.endsWith('.test.ts'),
+});
+for (const entry of fs.readdirSync(path.join(repoRoot, 'skills'), { withFileTypes: true })) {
+  if (entry.isDirectory() && fs.existsSync(path.join(repoRoot, 'skills', entry.name, 'SKILL.md'))) {
+    fs.cpSync(path.join(repoRoot, 'skills', entry.name), path.join(piStage, 'skills', entry.name), { recursive: true });
+  }
+}
+fs.writeFileSync(path.join(piStage, 'package.json'), `${JSON.stringify({
+  name: '@jygzyc/decx-pi', version, private: true, type: 'module',
+  engines: { node: '>=24.21.0' },
+  peerDependencies: { '@earendil-works/pi-coding-agent': '*', typebox: '*' },
+  pi: { extensions: ['./extensions/decx/index.ts'], skills: [] }, // npx skills installs the bundled execution skill separately
+}, null, 2)}\n`);
+fs.copyFileSync(path.join(repoRoot, 'LICENSE'), path.join(piStage, 'LICENSE'));
+const piTarball = path.join(artifactRoot, `${piName}.tar.gz`);
+fs.rmSync(piTarball, { force: true });
+try {
+  run('tar', ['-czf', piTarball, '-C', artifactRoot, piName]);
+} finally {
+  fs.rmSync(piStage, { recursive: true, force: true });
+}
+const piDigest = createHash('sha256').update(fs.readFileSync(piTarball)).digest('hex');
+fs.writeFileSync(path.join(artifactRoot, 'decx-pi-SHA256SUMS.txt'), `${piDigest}  ${piName}.tar.gz\n`);
+console.log(`packed ${path.basename(piTarball)} (${piDigest})`);

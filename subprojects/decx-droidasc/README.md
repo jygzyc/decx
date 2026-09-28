@@ -1,61 +1,29 @@
 # decx-droidasc — APK/DEX analysis (upstream DroidASC)
 
-The subproject around [DroidASC](https://github.com/MG1937/ASC), an APK/DEX
-analysis toolkit written in pure Python (no JVM). DECX vendors the upstream
-checkout and installs it through the toolkit manager; the analysis itself is
-upstream's, and its `--help` is the authority.
+[DroidASC](https://github.com/MG1937/ASC) is published as `droidasc` on PyPI.
+DECX installs the published package and its dependencies directly with pip,
+inside a private Python virtual environment. No source packaging or tool-specific
+installer script is needed.
 
-## In this repository
-
-| Path | What it is |
+| Path | Purpose |
 | --- | --- |
-| `decx-droidasc.json` | the toolkit manifest `decx` reads: install kind (`python-venv`), the pinned checkout, entry point, requirements, payload, launch and verify commands. The tool id is the directory name without the `decx-` prefix. |
-| `skills/decx-tool/` | the agent skill that drives the installed launcher (routing in its `SKILL.md`, the DroidASC contract in `references/droidasc.md`). |
-| `source/` | the vendored upstream checkout, pinned as a git submodule (`git submodule status subprojects/decx-droidasc/source`). |
-
-## Install
+| `decx-droidasc.json` | Declares `pip install droidasc`, the `droidasc` entry point and Python >=3.10. |
+| `source/` | Vendored upstream git submodule for reference, not the install source. |
+| `skills/decx-tool/references/droidasc.md` | Agent usage contract. |
 
 ```sh
-decx install droidasc        # private venv over the pinned checkout
-decx -m droidasc --help     # the tool's own interface, arguments untouched
+decx install droidasc                       # latest published PyPI package
+decx update droidasc --version 0.1.0        # select a published package version
+decx droidasc --help                        # forward arguments to the installed command
 ```
 
-The install copies upstream `main.py`, the `droidasc/` package and
-`requirements.txt` into `$DECX_HOME/share/droidasc/` -- from the pinned
-`subprojects/decx-droidasc/source` checkout when the repository has one, else
-from the `droidasc-v*` source archive -- creates a fresh `.venv`
-there, installs `requirements.txt` (androguard 4.1.3) into it -- with
-`uv pip install` when a `uv` is on `PATH`, otherwise with the venv's own `pip`
--- writes `PROVENANCE`, and generates `$DECX_HOME/bin/droidasc` plus a
-`~/.local/bin` link (a `.cmd` shim on Windows). A checkout install records
-`source` and `source_commit` in PROVENANCE (plus `source_tag` when the checkout
-sits exactly on a tag), so an install can be
-traced to the revision it was built from. The payload is self-contained:
-nothing is imported from the checkout at run time, so a later
-`git submodule update` cannot change what the installed launcher runs.
+DECX owns virtualenv creation and pip execution in
+`$DECX_HOME/runtime/droidasc`; it writes `$DECX_HOME/share/droidasc/PROVENANCE`,
+creates `$DECX_HOME/bin/droidasc` and links the command into `~/.local/bin`
+(`.cmd` on Windows). The provenance records the installed package version,
+Python interpreter and pip command. Python >=3.10 must already be on `PATH`;
+DECX reports the missing runtime instead of installing Python itself.
 
-Python >= 3.10 must already be on `PATH`; the manager reports the shortfall
-instead of installing an interpreter.
-
-## Verify
-
-```sh
-decx install droidasc --home /tmp/decx-home --links /tmp/decx-links
-/tmp/decx-home/share/droidasc/.venv/bin/python -c 'import androguard; print(androguard.__version__)'
-decx --home /tmp/decx-home -m droidasc --help
-```
-
-Run that sequence after every pin move, on each platform, first checking the
-pinned-checkout contract the manifest depends on: `main.py`, `requirements.txt`, the
-`droidasc` package and `from droidasc import main`. It builds a venv and downloads
-packages, so it stays a manual acceptance check — `.github/workflows/decx-droidasc.yml` runs
-it offline in CI and never fetches a release.
-
-## Upstream
-
-- Repository: <https://github.com/MG1937/ASC> (Apache-2.0).
-- Move the pin with `git -C subprojects/decx-droidasc/source checkout <rev>`
-  and commit the subproject gitlink; re-run the acceptance sequence above before
-  trusting the new revision.
-- `source/` is upstream's code. DECX changes belong to this subproject — the
-  manifest, the skill and this README — not to the checkout.
+`.github/workflows/decx-droidasc.yml` verifies a real PyPI installation and
+runs the installed command on Linux, macOS and Windows. Manager unit tests
+use a fake pip runner and never contact PyPI or the real home directory.

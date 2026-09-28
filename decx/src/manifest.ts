@@ -3,32 +3,33 @@
  * describes where the tool comes from, how it is installed and how it is
  * launched.  A manifest is data only: the CLI never grows per-tool code.
  *
- * Most of the recipe is convention, so a manifest states only what deviates.
+ * Installation and launch are explicit; source/release naming defaults are conventions.
  * Defaults, applied when the file loads:
  *   id              the subproject directory (`decx-<id>`)
- *   kind            `python-venv` when a `python` block is present, else `binary`
- *   release.repository  jygzyc/decx (every tool releases into this repository)
- *   release.tagPrefix   `<id>-v`    (releases are tagged `<id>-v<version>`)
+ *   release.repository  jygzyc/decx (only when a release is declared)
+ *   release.tagPrefix   `<id>-v`
  *   release.checksums   `<id>-SHA256SUMS.txt`
- *   python.payload      `[<id>]`
- *   launch          the first `bins` entry, or `<id>` for venv tools
  *
  * `release.asset` names the per-platform asset once — `{os}`/`{arch}` are the
  * host's axes (`win`/`darwin`/`linux`, `arm64`/`amd64`), `{version}` the version
  * resolved from the tag.
  * `release.assets` maps platform keys explicitly (or to `any` for a platform-
  * independent payload) when a tool's names deviate.  The `release` block is
- * otherwise the whole story of a version: GitHub Actions publishes one release
- * per tool version, and the CLI downloads the asset that belongs to the host.
- * How an asset is produced (upstream release, mirror, compiled specs) is the
- * release workflow's business, not the manifest's.
+ * otherwise the whole story of an archive version. Direct PyPI recipes have
+ * no release block: pip selects the latest package or an explicit --version.
  */
 
 import fs from 'node:fs';
 import path from 'node:path';
 import { SUPPORTED_PLATFORMS, type PlatformKey } from './platform.ts';
 
-export type ToolKind = 'binary' | 'python-venv';
+export type LaunchType = 'bin' | 'python' | 'js';
+
+export interface LaunchSpec {
+  type: LaunchType;
+  /** The first command is the tool's default; all commands are installed into bin/. */
+  commands: string[];
+}
 
 /** Where every tool's releases live unless a manifest points elsewhere. */
 export const DEFAULT_RELEASE_REPOSITORY = 'jygzyc/decx';
@@ -43,6 +44,8 @@ export interface ReleaseSpec {
    * `--version <tag|version>` picks one explicitly.
    */
   tagPrefix: string;
+  /** Release tag/version to install by default; `latest` resolves via GitHub REST API. */
+  version?: string;
   /**
    * Asset template naming the payload for every platform: `{os}` and `{arch}`
    * are the host's operating system (`win`, `darwin`, `linux`) and architecture
@@ -55,30 +58,15 @@ export interface ReleaseSpec {
   assets?: Record<string, string>;
   /** Extra assets that belong to every platform, e.g. Kuna's compiled specs. */
   extraAssets?: Record<string, string>;
-  /** Checksum asset carrying `sha256  filename` lines; `<id>-SHA256SUMS.txt` by default. */
-  checksums: string;
-}
-
-/** `kind: "python-venv"` tools: the release's source payload plus a private virtualenv. */
-export interface PythonSpec {
-  /** Entry point started by the launcher. */
-  entry: string;
-  /** Requirements file installed into the virtualenv. */
-  requirements: string;
-  /** Source directories copied into the payload; `[<id>]` by default. */
-  payload: string[];
-  /**
-   * Directory the environment is created in, inside the payload; `.venv` by
-   * default. A bare directory name: an install always creates it fresh and
-   * refuses to reuse an environment it finds there.
-   */
-  venv: string;
+  /** Checksum file by default; null requires a GitHub REST asset digest instead. */
+  checksums: string | null;
 }
 
 export interface ToolManifest {
   manifest: 2;
   id: string;
-  kind: ToolKind;
+  /** Explicit installer recipe; DECX manages staging and the Python virtual environment. */
+  install: string[];
   summary: string;
   homepage?: string;
   license?: string;
@@ -93,14 +81,10 @@ export interface ToolManifest {
    * manifest that declares any gets launcher wrappers in `<home>/bin`.
    */
   env?: Record<string, string>;
-  /** Launcher name inside the install's `bin/`; the first `bins` entry by default. */
-  launch?: string;
-  /** Binaries the install must produce (binary tools). */
-  bins?: string[];
-  /** The release the install downloads. */
-  release: ReleaseSpec;
-  /** How to turn the release's source payload into a virtualenv (also selects kind `python-venv`). */
-  python?: PythonSpec;
+  /** Runtime type and the public commands, including the default first. */
+  launch: LaunchSpec;
+  /** Required for binaries or pip recipes containing {source}; omitted for PyPI packages. */
+  release?: ReleaseSpec;
   /** Command used to verify a fresh install, e.g. `--version`. */
   verify?: string;
 }
@@ -118,12 +102,28 @@ export interface LoadResult {
 
 const PLATFORM_ASSET_KEYS = [...SUPPORTED_PLATFORMS, 'any'];
 
+const TOP_LEVEL_KEYS = new Set([
+  '$schema',
+  'manifest',
+  'id',
+  'summary',
+  'homepage',
+  'license',
+  'notes',
+  'install',
+  'launch',
+  'requires',
+  'release',
+  'env',
+  'verify',
+]);
+const RELEASE_KEYS = new Set(['repository', 'tagPrefix', 'version', 'checksums', 'asset', 'assets', 'extraAssets']);
+const REQUIREMENT_KEYS = new Set(['python']);
+
 /** Keys of manifest 1 that no longer exist; a file carrying one is out of date. */
 const REMOVED_TOP_LEVEL = ['fallbackRelease', 'source'];
 
-const REMOVED_RELEASE = ['version', 'tag', 'allowSourceFallback'];
-
-const REMOVED_PYTHON = ['path', 'archive'];
+const REMOVED_RELEASE = ['tag', 'allowSourceFallback'];
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -135,6 +135,32 @@ function isEnvRecord(value: unknown): value is Record<string, string> {
     isRecord(value) &&
     Object.entries(value).every(([name, item]) => name.trim() !== '' && typeof item === 'string' && item.trim() !== '')
   );
+}
+
+/** Launch metadata owns both the runtime choice and every public command. */
+function validateLaunch(value: unknown, where: string, errors: string[]): LaunchSpec | undefined {
+  if (!isRecord(value)) {
+    errors.push(`${where}: must be an object with type and commands`);
+    return undefined;
+  }
+  for (const key of Object.keys(value)) {
+    if (key !== 'type' && key !== 'commands') errors.push(`${where}: unknown field "${key}"`);
+  }
+  if (value.type !== 'bin' && value.type !== 'python' && value.type !== 'js') {
+    errors.push(`${where}.type must be "bin", "python" or "js"`);
+  }
+  const commands = value.commands;
+  if (!Array.isArray(commands) || commands.length === 0 ||
+    commands.some((command) => !isBareDirectoryName(command)) ||
+    new Set(commands).size !== commands.length) {
+    errors.push(`${where}.commands must be a non-empty list of distinct safe command names`);
+    return undefined;
+  }
+  if (value.type === 'python' && commands.length !== 1) {
+    errors.push(`${where}: Python venv launch currently supports one console command`);
+  }
+  if (value.type !== 'bin' && value.type !== 'python' && value.type !== 'js') return undefined;
+  return { type: value.type, commands };
 }
 
 function requireString(record: Record<string, unknown>, key: string, where: string, errors: string[]): string {
@@ -160,62 +186,87 @@ export function validateManifest(
   if (!isRecord(value)) {
     return { errors: [`${file}: not a JSON object`] };
   }
+  for (const key of Object.keys(value)) {
+    if (REMOVED_TOP_LEVEL.includes(key)) continue;
+    if (key === 'kind' || key === 'python' || key === 'bins') continue;
+    if (!TOP_LEVEL_KEYS.has(key)) {
+      errors.push(`${file}: unknown field "${key}"`);
+    }
+  }
   if (value.manifest !== 2) {
     errors.push(`${file}: unsupported "manifest" version (expected 2)`);
+  }
+  if (value.id !== undefined && (typeof value.id !== 'string' || value.id.trim() === '')) {
+    errors.push(`${file}: id must be a non-empty string`);
   }
   const id = typeof value.id === 'string' && value.id.trim() !== '' ? value.id : idHint ?? '';
   if (id === '') {
     errors.push(`${file}: missing "id" (or a directory whose name provides it)`);
+  } else if (!/^[a-z0-9][a-z0-9-]*$/.test(id)) {
+    errors.push(`${file}: id must be a safe lowercase tool name`);
   } else if (idHint !== undefined && value.id !== undefined && value.id !== idHint) {
     errors.push(`${file}: manifest id "${value.id}" does not match directory "${idHint}"`);
   }
   const summary = requireString(value, 'summary', file, errors);
   if (value.kind !== undefined) {
-    errors.push(`${file}: "kind" is derived -- a "python" block makes a tool "python-venv", its absence "binary"`);
+    errors.push(`${file}: "kind" is derived from launch.type`);
   }
   for (const key of REMOVED_TOP_LEVEL) {
     if (value[key] !== undefined) {
       errors.push(`${file}: "${key}" is not supported any more; every install comes from the release assets`);
     }
   }
-  let kind: ToolKind = 'binary';
-  if (isRecord(value.python)) {
-    kind = 'python-venv';
-    validatePython(value.python, `${file}: python`, errors);
-  } else if (value.python !== undefined) {
-    errors.push(`${file}: "python" must be an object`);
-  }
-  const release = validateRelease(value.release, id, `${file}: release`, errors);
-  if (value.bins !== undefined) {
-    if (!Array.isArray(value.bins) || value.bins.some((bin) => typeof bin !== 'string' || bin.trim() === '')) {
-      errors.push(`${file}: bins must be a list of non-empty strings`);
+  for (const key of ['homepage', 'license', 'notes'] as const) {
+    if (value[key] !== undefined && typeof value[key] !== 'string') {
+      errors.push(`${file}: "${key}" must be a string`);
     }
   }
-  if (kind === 'binary' && !Array.isArray(value.bins)) {
-    errors.push(`${file}: binary tools need a "bins" list naming the executables they install`);
+  const launch = validateLaunch(value.launch, `${file}: launch`, errors);
+  const kind = launch?.type === 'python' ? 'python-venv' : 'binary';
+  const recipe = value.install;
+  if (!Array.isArray(recipe) || recipe.length === 0 ||
+    recipe.some((arg) => typeof arg !== 'string' || arg.trim() === '')) {
+    errors.push(`${file}: install must be a non-empty argv array`);
+  } else if (kind === 'binary' && (recipe.length !== 1 || recipe[0] !== 'github-release')) {
+    errors.push(`${file}: bin/js launch requires install: ["github-release"]`);
+  } else if (kind === 'python-venv' && (recipe.length < 3 || recipe[0] !== 'pip' || recipe[1] !== 'install')) {
+    errors.push(`${file}: python launch requires install: ["pip", "install", ...]`);
   }
-  if (kind === 'python-venv' && value.bins !== undefined) {
-    errors.push(`${file}: "bins" is only supported for binary tools (the venv launcher is generated)`);
+  if (value.python !== undefined) errors.push(`${file}: python is obsolete; declare pip install arguments in "install"`);
+  if (value.bins !== undefined) errors.push(`${file}: "bins" is obsolete; declare commands under "launch"`);
+  const usesSource = kind === 'python-venv' && Array.isArray(recipe) &&
+    recipe.some((arg: unknown) => typeof arg === 'string' && arg.includes('{source}'));
+  const requiresRelease = kind === 'binary' || usesSource;
+  const release = value.release === undefined && !requiresRelease ? undefined : validateRelease(value.release, id, `${file}: release`, errors);
+  if (kind === 'python-venv' && !usesSource && value.release !== undefined) {
+    errors.push(`${file}: PyPI install recipes must not declare release assets`);
+  }
+  if (kind === 'python-venv' && !usesSource && Array.isArray(recipe) &&
+    (typeof recipe[2] !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9_.-]*$/.test(recipe[2]))) {
+    errors.push(`${file}: PyPI install recipes must name a package immediately after install`);
   }
   if (value.env !== undefined) {
     if (!isEnvRecord(value.env)) {
       errors.push(`${file}: env must map variable names to non-empty strings`);
-    } else if (kind === 'python-venv') {
-      errors.push(`${file}: env is only supported for binary tools (the venv launcher is generated)`);
+    } else if (launch?.type !== 'bin') {
+      errors.push(`${file}: env is only supported for bin tools (interpreter launchers are generated)`);
     }
+  }
+  if (kind === 'binary' && value.requires !== undefined) {
+    errors.push(`${file}: requires is only supported for Python tools`);
   }
   if (value.requires !== undefined) {
     if (!isRecord(value.requires)) {
       errors.push(`${file}: requires must be an object`);
-    } else if (value.requires.python !== undefined) {
-      requireString(value.requires, 'python', `${file}: requires`, errors);
-    }
-  }
-  if (value.launch !== undefined) {
-    if (isRecord(value.launch)) {
-      errors.push(`${file}: launch must be the launcher name, e.g. "launch": "kuna"`);
-    } else if (typeof value.launch !== 'string' || value.launch.trim() === '') {
-      errors.push(`${file}: launch must be a non-empty string`);
+    } else {
+      for (const key of Object.keys(value.requires)) {
+        if (!REQUIREMENT_KEYS.has(key)) {
+          errors.push(`${file}: requires has unknown field "${key}"`);
+        }
+      }
+      if (value.requires.python !== undefined) {
+        requireString(value.requires, 'python', `${file}: requires`, errors);
+      }
     }
   }
   if (value.verify !== undefined) {
@@ -231,25 +282,15 @@ export function validateManifest(
   const manifest: ToolManifest = {
     manifest: 2,
     id,
-    kind,
+    install: value.install as string[],
     summary,
     ...(isRecord(value.homepage) ? {} : typeof value.homepage === 'string' ? { homepage: value.homepage } : {}),
     ...(typeof value.license === 'string' ? { license: value.license } : {}),
     ...(typeof value.notes === 'string' ? { notes: value.notes } : {}),
     ...(isRecord(value.requires) ? { requires: value.requires as { python?: string } } : {}),
     ...(isEnvRecord(value.env) ? { env: value.env } : {}),
-    ...(typeof value.launch === 'string' ? { launch: value.launch } : {}),
-    ...(Array.isArray(value.bins) ? { bins: value.bins as string[] } : {}),
-    release: release as ReleaseSpec,
-    ...(isRecord(value.python)
-      ? {
-          python: {
-            ...(value.python as Record<string, unknown>),
-            payload: (value.python as { payload?: string[] }).payload ?? [id],
-            venv: (value.python as { venv?: string }).venv ?? '.venv',
-          } as PythonSpec,
-        }
-      : {}),
+    launch: launch!,
+    ...(release !== undefined ? { release } : {}),
     ...(typeof value.verify === 'string' ? { verify: value.verify } : {}),
   };
   return { manifest, errors: [] };
@@ -270,6 +311,12 @@ function validateRelease(
       errors.push(`${where}.${key} is not supported any more; releases are chosen by --version or the newest tag`);
     }
   }
+  for (const key of Object.keys(value)) {
+    if (REMOVED_RELEASE.includes(key)) continue;
+    if (!RELEASE_KEYS.has(key)) {
+      errors.push(`${where}: unknown field "${key}"`);
+    }
+  }
   let repository = DEFAULT_RELEASE_REPOSITORY;
   if (value.repository !== undefined) {
     if (typeof value.repository !== 'string' || !/^[^/\s]+\/[^/\s]+$/.test(value.repository)) {
@@ -279,7 +326,11 @@ function validateRelease(
     }
   }
   const tagPrefix = typeof value.tagPrefix === 'string' && value.tagPrefix.trim() !== '' ? value.tagPrefix : `${id}-v`;
-  if (value.tagPrefix !== undefined && typeof value.tagPrefix !== 'string') {
+  const version = typeof value.version === 'string' && value.version.trim() !== '' ? value.version : 'latest';
+  if (value.version !== undefined && (typeof value.version !== 'string' || value.version.trim() === '')) {
+    errors.push(`${where}.version must be a non-empty release version or "latest"`);
+  }
+  if (value.tagPrefix !== undefined && (typeof value.tagPrefix !== 'string' || value.tagPrefix.trim() === '')) {
     errors.push(`${where}.tagPrefix must be a non-empty string`);
   }
   if (value.asset !== undefined && value.assets !== undefined) {
@@ -310,12 +361,12 @@ function validateRelease(
   if (value.extraAssets !== undefined && !isEnvRecord(value.extraAssets)) {
     errors.push(`${where}.extraAssets must map names to asset names`);
   }
-  const checksums =
+  const checksums = value.checksums === null ? null :
     typeof value.checksums === 'string' && value.checksums.trim() !== ''
       ? value.checksums
       : `${id}-SHA256SUMS.txt`;
-  if (value.checksums !== undefined && typeof value.checksums !== 'string') {
-    errors.push(`${where}.checksums must be a non-empty string`);
+  if (value.checksums !== undefined && value.checksums !== null && (typeof value.checksums !== 'string' || value.checksums.trim() === '')) {
+    errors.push(`${where}.checksums must be a non-empty string or null for GitHub asset digests`);
   }
   if (errors.length > 0 && (asset === undefined && value.assets === undefined)) {
     return undefined;
@@ -323,33 +374,12 @@ function validateRelease(
   return {
     repository,
     tagPrefix,
+    version,
     ...(asset !== undefined ? { asset } : {}),
     ...(isEnvRecord(value.assets) ? { assets: value.assets } : {}),
     ...(isEnvRecord(value.extraAssets) ? { extraAssets: value.extraAssets } : {}),
     checksums,
   };
-}
-
-function validatePython(value: Record<string, unknown>, where: string, errors: string[]): void {
-  for (const key of REMOVED_PYTHON) {
-    if (value[key] !== undefined) {
-      errors.push(`${where}.${key} is not supported any more; the source payload comes from the release assets`);
-    }
-  }
-  for (const key of ['entry', 'requirements']) {
-    const item = requireString(value, key, where, errors);
-    if (!isSafeRelativePath(item)) {
-      errors.push(`${where}.${key} must be a safe relative path`);
-    }
-  }
-  if (value.payload !== undefined) {
-    if (!Array.isArray(value.payload) || value.payload.some((item) => !isSafeRelativePath(item))) {
-      errors.push(`${where}.payload must be a list of safe relative paths`);
-    }
-  }
-  if (value.venv !== undefined && !isBareDirectoryName(value.venv)) {
-    errors.push(`${where}.venv must be a bare directory name such as ".venv" (no path separators)`);
-  }
 }
 
 /** Portable payload paths, also safe to embed in the generated shell launchers. */
@@ -367,6 +397,7 @@ function isBareDirectoryName(value: unknown): value is string {
     value !== '' &&
     value !== '.' &&
     value !== '..' &&
+    !/\s/.test(value) &&
     !value.includes('/') &&
     isSafeRelativePath(value)
   );
@@ -440,10 +471,10 @@ export function loadManifests(dir: string): LoadResult {
 
 /** Platform keys a manifest can install on, `['any']` for platform-independent payloads. */
 export function supportedPlatforms(manifest: ToolManifest): string[] {
-  if (manifest.kind === 'python-venv') {
+  if (manifest.launch.type === 'python') {
     return ['any'];
   }
-  const { asset, assets } = manifest.release;
+  const { asset, assets } = manifest.release!;
   if (asset !== undefined) {
     return asset.includes('{os}') || asset.includes('{arch}') ? [...SUPPORTED_PLATFORMS] : ['any'];
   }
@@ -457,6 +488,7 @@ export function supportedPlatforms(manifest: ToolManifest): string[] {
  */
 export function releaseAssetFor(manifest: ToolManifest, platform: PlatformKey): string | null {
   const { release } = manifest;
+  if (release === undefined) return null;
   if (release.asset !== undefined) {
     return substitutePlatform(release.asset, platform);
   }

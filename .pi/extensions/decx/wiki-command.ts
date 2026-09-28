@@ -4,7 +4,7 @@ import { requireWorkspace, workspaceListing, type WikiFs, type Workspace } from 
  * Listing paths instead of injecting trace bodies keeps evidence untrusted and lets
  * the maintainer load each record and the relevant patterns on demand. */
 export async function wikiRefreshTask(workspaces: Workspace[], args: string, fs: WikiFs): Promise<string> {
-  if (workspaces.length === 0) throw new Error('No Decx workspace found; run /decx-wiki in a project containing skills/ or wiki/.');
+  if (workspaces.length === 0) throw new Error('No Decx workspace found; use /decx init to initialize .decxwiki in this project.');
   const name = args.trim();
   const targets = name ? [requireWorkspace(workspaces, name)] : workspaces;
   const inventories = await Promise.all(targets.map(async ws => ({

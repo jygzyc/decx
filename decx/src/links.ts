@@ -94,6 +94,24 @@ function isOurs(home: string, linkPath: string, target: string): boolean {
   return false;
 }
 
+/** Remove only an exact link previously created for this executable; foreign entries are untouched. */
+export function removeManagedLink(linkDir: string, fileName: string, target: string, windows: boolean = isWindows()): boolean {
+  const linked = path.join(linkDir, linkFileName(linkName(fileName), windows));
+  try {
+    const stat = fs.lstatSync(linked);
+    const owned = stat.isSymbolicLink()
+      ? path.resolve(path.dirname(linked), fs.readlinkSync(linked)) === path.resolve(target)
+      : windows && stat.isFile() && fs.readFileSync(linked, 'utf8') === shimText(target);
+    if (owned) {
+      fs.unlinkSync(linked);
+      return true;
+    }
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+  }
+  return false;
+}
+
 /** Ownership alone does not mean the entry still points at the desired launcher. */
 function isCurrent(linkPath: string, target: string, windows: boolean): boolean {
   try {

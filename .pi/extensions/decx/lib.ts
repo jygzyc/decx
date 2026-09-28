@@ -1,11 +1,10 @@
 /**
  * Decx core.
  *
- * A decx workspace is a project with WikiSkill's three sibling layers:
- * `raw/traces/` holds immutable execution traces, `wiki/` holds the shared pattern
- * catalog (`index.md`, `patterns/*.md`), the chronological maintenance log
- * (`logs.md`) and the skill-impact ledger (`skill-impact.md`), and `skills/`
- * holds the execution procedures (`<name>/SKILL.md`, `PURPOSE.md`, references).
+ * Each project has `.decxwiki/raw` for immutable execution traces and
+ * `.decxwiki/wiki` for patterns, the maintenance log and the skill-impact
+ * ledger. Independently runnable execution skills live in `.agents/skills`.
+ * Historical repository knowledge is archived locally, not a workspace.
  *
  * The wiki is the maintenance layer and is never rolled back; a rejected
  * proposal rolls back the skill only. Skills stay complete for execution — the
@@ -15,65 +14,42 @@
  * the CLI and the tests share exactly one implementation.
  */
 
-export interface WikiFs {
-  readFile(path: string): Promise<string>;
-  writeFile(path: string, text: string): Promise<void>;
-  createFile(path: string, text: string): Promise<boolean>;
-  exists(path: string): Promise<boolean>;
-  listDir(path: string): Promise<string[]>;
-  mkdirp(path: string): Promise<void>;
-}
+export { WikiError, isWikiError } from './errors.ts';
+export type { WikiFs } from './types.ts';
+export {
+  FILES,
+  INDEX_END,
+  INDEX_ROW,
+  INDEX_START,
+  joinPath,
+  LAYERS,
+  LOCAL_WIKI,
+  normalizeRel,
+  PATTERN_NAME,
+  PATTERN_SECTIONS,
+  PROPOSAL_STATUS,
+  RAW_TRACES,
+  type ProposalStatus,
+  type Workspace,
+} from './workspace.ts';
 
-export const FILES = {
-  index: 'index.md',
-  logs: 'logs.md',
-  impact: 'skill-impact.md',
-  patterns: 'patterns',
-} as const;
-
-/** The three sibling layers of a WikiSkill workspace. */
-export const LAYERS = {
-  raw: 'raw',
-  wiki: 'wiki',
-  skills: 'skills',
-} as const;
-
-/** Inside the raw layer: one file per execution record. `traces/<id>.md` is its read alias. */
-export const RAW_TRACES = 'traces';
-
-export const INDEX_START = '<!-- decx:index:start -->';
-export const INDEX_END = '<!-- decx:index:end -->';
-/** A managed index row: `` - `slug` — trigger `` (rows are grouped by track) */
-export const INDEX_ROW = /^- `([^`]+)` — (.*)$/;
-export const PATTERN_SECTIONS = ['Match', 'Non-obvious', 'Reject'];
-export const PATTERN_NAME = /^[a-z0-9][a-z0-9_-]*$/;
-export const PROPOSAL_STATUS = ['proposed', 'accepted', 'rejected'] as const;
-export type ProposalStatus = (typeof PROPOSAL_STATUS)[number];
-
-export class WikiError extends Error {
-  readonly code: string;
-  readonly hint: string | undefined;
-
-  constructor(code: string, message: string, hint?: string) {
-    super(message);
-    this.name = 'WikiError';
-    this.code = code;
-    this.hint = hint;
-  }
-}
-
-export function isWikiError(error: unknown): error is WikiError {
-  return error instanceof WikiError;
-}
-
-/** One workspace: the project root and its three layer directories. */
-export interface Workspace {
-  name: string;
-  root: string;
-  wiki: string;
-  raw: string;
-  skills: string;
-}
+import { WikiError } from './errors.ts';
+import type { WikiFs } from './types.ts';
+import {
+  FILES,
+  INDEX_END,
+  INDEX_ROW,
+  INDEX_START,
+  joinPath,
+  LAYERS,
+  LOCAL_WIKI,
+  normalizeRel,
+  PATTERN_NAME,
+  PATTERN_SECTIONS,
+  PROPOSAL_STATUS,
+  RAW_TRACES,
+  type Workspace,
+} from './workspace.ts';
 
 export interface PatternPage {
   name: string;
@@ -104,34 +80,13 @@ export interface WorkspaceStatus {
   findings: LintFinding[];
 }
 
-/* ------------------------------------------------------------------ paths */
-
-export function joinPath(...parts: string[]): string {
-  return parts
-    .filter((part) => part !== '')
-    .join('/')
-    .replaceAll(/\/{2,}/g, '/');
-}
-
-/** Rejects anything that is not a plain relative path inside the workspace. */
-export function normalizeRel(rel: string): string {
-  const cleaned = rel.trim().replaceAll('\\', '/').replace(/^\.\//, '');
-  if (cleaned === '' || cleaned.startsWith('/') || /^[a-zA-Z]:/.test(cleaned)) {
-    throw new WikiError('BAD_PATH', `"${rel}" is not a path inside the workspace`, 'paths are relative, e.g. "patterns/android-app-exported_access.md"');
-  }
-  const parts = cleaned.split('/').filter((part) => part !== '' && part !== '.');
-  if (parts.includes('..')) {
-    throw new WikiError('BAD_PATH', `"${rel}" escapes the workspace`, 'paths are relative, e.g. "patterns/android-app-exported_access.md"');
-  }
-  return parts.join('/');
-}
-
 export async function listFiles(fs: WikiFs, dir: string, suffix = '.md'): Promise<string[]> {
   let names: string[];
   try {
     names = await fs.listDir(dir);
-  } catch {
-    return [];
+  } catch (error) {
+    if (['ENOENT', 'ENOTDIR'].includes((error as NodeJS.ErrnoException).code ?? '')) return [];
+    throw error;
   }
   return names.filter((name) => name.endsWith(suffix)).sort();
 }
@@ -239,60 +194,22 @@ async function safeListDirs(fs: WikiFs, dir: string): Promise<string[]> {
 }
 
 export function workspaceAt(name: string, root: string): Workspace {
+  const projectRoot = root.endsWith(`/${LOCAL_WIKI}`) ? root.slice(0, -LOCAL_WIKI.length) : root;
+  const rootIsLocalWiki = root.endsWith(`/${LOCAL_WIKI}`);
+
   return {
     name,
     root,
     wiki: joinPath(root, LAYERS.wiki),
     raw: joinPath(root, LAYERS.raw),
-    skills: joinPath(root, LAYERS.skills),
+    skills: rootIsLocalWiki ? joinPath(projectRoot, '.agents', LAYERS.skills) : joinPath(root, LAYERS.skills),
   };
 }
 
-/** Reads `{ "workspaces": [{ "name", "root" }] }` from a decx config file, ignoring anything malformed. */
-export async function readWorkspaceConfig(path: string, fs: WikiFs): Promise<{ name: string; root: string }[]> {
-  try {
-    const parsed = JSON.parse(await fs.readFile(path)) as { workspaces?: unknown };
-    const list = Array.isArray(parsed?.workspaces) ? parsed.workspaces : [];
-    const out: { name: string; root: string }[] = [];
-    for (const item of list) {
-      const entry = item as { name?: unknown; root?: unknown };
-      if (typeof entry?.name === 'string' && typeof entry.root === 'string') {
-        out.push({ name: entry.name, root: entry.root });
-      }
-    }
-    return out;
-  } catch {
-    return [];
-  }
-}
-
-/**
- * A workspace is the project itself, with its three layers at the root. The
- * optional `.pi/extensions/decx.json` lists them (`{ "workspaces": [{"name",
- * "root"}] }`); without it the current project is the single workspace, provided
- * it already has a `skills/` or `wiki/` layer. A skill-local `skills/<name>/wiki`
- * is deliberately not a workspace: the wiki is shared, not per skill.
- */
-export async function discoverWorkspaces(
-  cwd: string,
-  fs: WikiFs,
-  extra: { name: string; root: string }[] = [],
-): Promise<Workspace[]> {
-  const found = new Map<string, Workspace>();
-  for (const item of extra) {
-    const raw = item.root.trim();
-    const root = raw.startsWith('/') || /^[A-Za-z]:/.test(raw) ? normalizeRoot(raw) : normalizeRoot(joinPath(cwd, raw));
-    found.set(item.name, workspaceAt(item.name, root));
-  }
-  if (found.size === 0) {
-    const root = normalizeRoot(cwd);
-    const hasSkills = (await safeListDirs(fs, joinPath(root, LAYERS.skills))).length > 0;
-    if (hasSkills || (await fs.exists(joinPath(root, LAYERS.wiki)))) {
-      const name = root.split('/').filter((part) => part !== '').at(-1) ?? 'workspace';
-      found.set(name, workspaceAt(name, root));
-    }
-  }
-  return [...found.values()].sort((a, b) => a.name.localeCompare(b.name));
+/** Only an initialized `.decxwiki` is a workspace; old root layers are archives. */
+export async function discoverWorkspaces(cwd: string, fs: WikiFs): Promise<Workspace[]> {
+  const local = joinPath(normalizeRoot(cwd), LOCAL_WIKI);
+  return await fs.exists(local) ? [workspaceAt('decx', local)] : [];
 }
 
 /** Collapse `.` and duplicate segments so configured roots compare and render predictably. */
@@ -320,7 +237,8 @@ async function traceFiles(ws: Workspace, fs: WikiFs): Promise<string[]> {
 export function requireWorkspace(workspaces: Workspace[], name: string): Workspace {
   const found = workspaces.find((workspace) => workspace.name === name);
   if (found === undefined) {
-    throw new WikiError('UNKNOWN_WORKSPACE', `no workspace named "${name}"`, `known workspaces: ${workspaces.map((w) => w.name).join(', ') || '(none)'}`);
+    const known = workspaces.map((workspace) => workspace.name).join(', ') || '(none)';
+    throw new WikiError('UNKNOWN_WORKSPACE', `no workspace named "${name}"`, `known workspaces: ${known}`);
   }
   return found;
 }
@@ -329,6 +247,7 @@ export function requireWorkspace(workspaces: Workspace[], name: string): Workspa
 export async function ensureWorkspace(ws: Workspace, fs: WikiFs): Promise<string[]> {
   const created: string[] = [];
   await fs.mkdirp(joinPath(ws.wiki, FILES.patterns));
+  await fs.mkdirp(ws.skills);
   await fs.mkdirp(ws.raw);
   await fs.mkdirp(joinPath(ws.raw, RAW_TRACES));
   const seeds: [string, string][] = [
@@ -344,6 +263,16 @@ export async function ensureWorkspace(ws: Workspace, fs: WikiFs): Promise<string
     }
   }
   return created;
+}
+
+/** Initialize the current project's isolated knowledge workspace, never its root layers. */
+export async function initLocalWiki(cwd: string, fs: WikiFs): Promise<{ workspace: Workspace; created: string[] }> {
+  const workspace = workspaceAt('decx', joinPath(normalizeRoot(cwd), LOCAL_WIKI));
+  const created = await ensureWorkspace(workspace, fs);
+  // Raw traces can contain target data. Ignore only this local knowledge layer,
+  // without editing the project's existing .gitignore.
+  await fs.createFile(joinPath(workspace.root, '.gitignore'), '/raw/\n');
+  return { workspace, created };
 }
 
 function seedIndex(ws: Workspace): string {
@@ -387,15 +316,16 @@ function impactHeader(): string {
 
 export async function readPage(ws: Workspace, rel: string, fs: WikiFs): Promise<{ path: string; text: string }> {
   const clean = normalizeRel(rel);
-  const path = /^(wiki|raw|skills)\//.test(clean)
-    ? joinPath(ws.root, clean)
-    : clean.startsWith('traces/') ? joinPath(ws.raw, clean)
-    : joinPath(ws.wiki, clean);
-  if (!/^(?:wiki\/(?:index|logs|skill-impact)\.md|wiki\/patterns\/[^/]+\.md|raw\/traces\/[^/]+\.md|skills\/[^/]+\/(?:SKILL\.md|PURPOSE\.md|references\/.+))$/.test(
-    path.slice(ws.root.length + 1),
-  )) {
+  const logical = /^(wiki|raw|skills)\//.test(clean)
+    ? clean
+    : clean.startsWith('traces/') ? `raw/${clean}`
+    : `wiki/${clean}`;
+  if (!/^(?:wiki\/(?:index|logs|skill-impact)\.md|wiki\/patterns\/[^/]+\.md|raw\/traces\/[^/]+\.md|skills\/[^/]+\/(?:SKILL\.md|PURPOSE\.md|references\/.+))$/.test(logical)) {
     throw new WikiError('BAD_PATH', 'read only wiki pages, raw traces or skill resources');
   }
+  const [layer, ...parts] = logical.split('/');
+  const directory = layer === 'raw' ? ws.raw : layer === 'skills' ? ws.skills : ws.wiki;
+  const path = joinPath(directory, ...parts);
   if (await fs.exists(path)) return { path, text: await fs.readFile(path) };
   const available = await workspaceListing(ws, fs);
   throw new WikiError('NOT_FOUND', `no decx page ${clean} in ${ws.name}`, `available: ${available.join(', ') || '(none)'}`);
@@ -531,7 +461,11 @@ function applyEdit(text: string, edit: PatternEdit, where: string): string {
     throw new WikiError('EDIT_TARGET_MISSING', `${where}: target not found: ${JSON.stringify(target.slice(0, 80))}`, 'read the page first');
   }
   if (hits > 1) {
-    throw new WikiError('EDIT_TARGET_AMBIGUOUS', `${where}: target appears ${hits} times: ${JSON.stringify(target.slice(0, 80))}`, 'include more surrounding text so the target is unique');
+    throw new WikiError(
+      'EDIT_TARGET_AMBIGUOUS',
+      `${where}: target appears ${hits} times: ${JSON.stringify(target.slice(0, 80))}`,
+      'include more surrounding text so the target is unique',
+    );
   }
   return edit.op === 'replace'
     ? text.replace(target, edit.content)
@@ -601,7 +535,10 @@ export async function buildIndexBlock(ws: Workspace, fs: WikiFs): Promise<string
   }
   const sections = groups
     .filter((group) => group.rows.length > 0)
-    .map((group) => [`### ${TRACK_TITLES[group.track] ?? group.track} (${group.rows.length})`, ...group.rows.sort((a, b) => a.localeCompare(b))].join('\n'));
+    .map((group) => [
+      `### ${TRACK_TITLES[group.track] ?? group.track} (${group.rows.length})`,
+      ...group.rows.sort((a, b) => a.localeCompare(b)),
+    ].join('\n'));
   if (other.length > 0) {
     sections.push([`### Other (${other.length})`, ...other.sort((a, b) => a.localeCompare(b))].join('\n'));
   }
@@ -612,7 +549,9 @@ function withIndexBlock(index: string, block: string, count: number): string {
   const start = index.indexOf(INDEX_START);
   const end = index.indexOf(INDEX_END);
   const body = `${INDEX_START}\n${block}${block === '' ? '' : '\n'}${INDEX_END}`;
-  const next = start !== -1 && end > start ? `${index.slice(0, start)}${body}${index.slice(end + INDEX_END.length)}` : `${index.replace(/\s*$/, '')}\n\n${body}\n`;
+  const next = start !== -1 && end > start
+    ? `${index.slice(0, start)}${body}${index.slice(end + INDEX_END.length)}`
+    : `${index.replace(/\s*$/, '')}\n\n${body}\n`;
   return next.replace(/^(---\r?\n[\s\S]*?\r?\n---)/, (front) => front.replace(/^patterns:.*$/m, `patterns: ${count}`));
 }
 
@@ -996,15 +935,20 @@ async function linkFindings(fs: WikiFs, area: 'wiki' | 'skill', file: string, te
 
 export async function status(ws: Workspace, fs: WikiFs): Promise<WorkspaceStatus> {
   const pages = await patternPages(ws, fs);
-  const index = (await fs.exists(joinPath(ws.wiki, FILES.index))) ? await fs.readFile(joinPath(ws.wiki, FILES.index)) : '';
+  const indexPath = joinPath(ws.wiki, FILES.index);
+  const impactPath = joinPath(ws.wiki, FILES.impact);
+  const logsPath = joinPath(ws.wiki, FILES.logs);
+  const index = (await fs.exists(indexPath)) ? await fs.readFile(indexPath) : '';
   const listed = indexRows(index);
-  const impact = (await fs.exists(joinPath(ws.wiki, FILES.impact))) ? await fs.readFile(joinPath(ws.wiki, FILES.impact)) : '';
+  const impact = (await fs.exists(impactPath)) ? await fs.readFile(impactPath) : '';
   const openProposals = impact
     .split(/\r?\n/)
     .filter((line) => line.trim().startsWith('|'))
     .map((line) => splitRow(line))
     .filter((cells) => cells[6] === 'proposed').length;
-  const logLines = (await fs.exists(joinPath(ws.wiki, FILES.logs))) ? (await fs.readFile(joinPath(ws.wiki, FILES.logs))).split(/\r?\n/).filter((line) => line.startsWith('- ')) : [];
+  const logLines = (await fs.exists(logsPath))
+    ? (await fs.readFile(logsPath)).split(/\r?\n/).filter((line) => line.startsWith('- '))
+    : [];
   const out: WorkspaceStatus = {
     name: ws.name,
     root: ws.root,
@@ -1027,9 +971,15 @@ export async function status(ws: Workspace, fs: WikiFs): Promise<WorkspaceStatus
 export function describeStatus(state: WorkspaceStatus): string {
   const problems = state.findings.filter((finding) => finding.level === 'error').length;
   const warnings = state.findings.length - problems;
-  const freshness = state.missingRows.length + state.staleRows.length === 0 ? 'index in sync' : `index out of sync (${state.missingRows.length} missing, ${state.staleRows.length} stale)`;
+  const freshness = state.missingRows.length + state.staleRows.length === 0
+    ? 'index in sync'
+    : `index out of sync (${state.missingRows.length} missing, ${state.staleRows.length} stale)`;
   const scope = state.skills.length === 0 ? 'no skills' : `${state.skills.length} skill(s)`;
-  return `${state.name}: ${state.patterns} patterns, ${scope}, ${state.traces} traces, ${state.openProposals} open proposals, ${freshness}, ${problems} error(s)/${warnings} warning(s)`;
+  return [
+    `${state.name}: ${state.patterns} patterns, ${scope}`,
+    `${state.traces} traces, ${state.openProposals} open proposals`,
+    `${freshness}, ${problems} error(s)/${warnings} warning(s)`,
+  ].join(', ');
 }
 
 export function describeFinding(finding: LintFinding): string {

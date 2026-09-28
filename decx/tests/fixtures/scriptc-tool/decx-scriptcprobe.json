@@ -1,0 +1,14 @@
+{
+  "manifest": 2,
+  "id": "scriptcprobe",
+  "summary": "Offline scriptc-compiled TypeScript executable fixture (not a shipped tool)",
+  "install": ["github-release"],
+  "launch": { "type": "bin", "commands": ["scriptcprobe"] },
+  "release": {
+    "repository": "acme/scriptcprobe",
+    "tagPrefix": "v",
+    "asset": "scriptcprobe-{version}-{os}-{arch}.zip",
+    "checksums": "SHA256SUMS"
+  },
+  "verify": "--version"
+}

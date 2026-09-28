@@ -6,6 +6,33 @@ validation → accept or restore. This is a maintenance extension, not a benchma
 runner. Scores and evaluation records must come from actual external evaluations;
 structural checks never count as performance measurements.
 
+## Install once; initialize per project
+
+Download `decx-pi-<version>.tar.gz` and `decx-pi-SHA256SUMS.txt` from a
+`decx-v<version>` release. Verify the archive checksum, unpack it outside the
+project, then run `pi install /absolute/path/to/decx-pi-<version>` (a local pi
+package). No repository clone is needed. The package contains the wiki extension
+(including `/decx-wiki`) and separately installable execution skills. Install a
+skill in the target project with `npx skills add jygzyc/decx --skill <skill-name>`
+(for example `--skill decx-tool` or `--skill antifrida-bypass`; choose
+project-level `.agents/skills/`). The standalone Node CLI is a separate release
+archive; `decx-tool` can drive it without pi or the extension.
+
+From **any** project, `/decx init` creates `.decxwiki/{raw/traces,wiki/patterns}`,
+seeds an empty index/log/ledger, and initializes an **empty** `.agents/skills/`
+layer. It does not install, fetch or overwrite execution skills. Use `npx skills`
+to install an execution skill; after installation an installed skill is a target
+of `decx_propose` and `decx_gate`. The skills run without the extension; wiki
+maintenance runs only in the extension. Init is repeatable and leaves existing
+skill files alone. The portable wiki CLI
+`node <package>/extensions/decx/cli.ts init --root <project>` initializes the
+same directories without installing skills. `/decx-wiki` also initializes an
+empty project on first use. Only the current project's `.decxwiki/` is discovered: legacy
+root-level knowledge is not imported or used as a workspace. Historical repository
+knowledge lives under ignored `archive/legacy-knowledge/`; do not publish it or
+use it as an initialization template. Keep the unpacked pi package available at
+its installed location.
+
 ## Update the wiki with one command
 
 Start a new pi session in the project and run:
@@ -15,13 +42,13 @@ Start a new pi session in the project and run:
 ```
 
 The command enters maintenance mode and starts the agent automatically. It discovers
-configured workspaces and trace/page paths from disk, asks the maintainer to inspect
+the current project's `.decxwiki` and trace/page paths from disk, asks the maintainer to inspect
 the evidence and existing wiki, consolidate new findings, synchronize the index and
 run the structural check. The final response summarizes the changes in English.
 No manual phase selection or tool-by-tool instructions are needed.
 
-`/decx-wiki decx` restricts the pass to one configured workspace; without an argument
-it processes all configured workspaces. Repeated runs compare the traces with the
+`/decx-wiki decx` explicitly selects the current project workspace; without an
+argument it processes the same wiki. Repeated runs compare the traces with the
 existing patterns rather than blindly appending them. There is no consumed-trace
 cursor: the maintainer reviews the available evidence each time. With no new evidence
 it reports that fact and checks structure without inventing new patterns. The command
@@ -31,7 +58,7 @@ offline compiler. It does not modify skills or run their evaluations.
 ## Run the loop
 
 1. Start an **inference** session (the default). Use the skills to run the task.
-   `decx_trace` records exact commands, observations and outcomes under `raw/traces/`.
+   `decx_trace` records exact commands, observations and outcomes under `.decxwiki/raw/traces/`.
    It does not create or update wiki files. Record failed runs too.
 2. Start a separate session and run `/decx-wiki`. The agent reads traces and
    patterns, consolidates findings and checks the wiki automatically. The advanced
@@ -77,7 +104,7 @@ Do not run unrelated analysis against a workspace while a candidate is applied.
 
 | Surface | Inference | Maintain | Propose |
 | --- | --- | --- | --- |
-| Native read/search | Skills and task files; no raw/wiki/PURPOSE | Blocked | Blocked |
+| Native read/search | Installed skills and task files; no raw/wiki/PURPOSE | Blocked | Blocked |
 | Native edit/write | Task files; no knowledge-layer edits | Blocked | Blocked |
 | `decx_trace` | Exclusive creation in raw | Blocked | Blocked |
 | `decx_read` | Blocked | Wiki, traces, skill resources | Same |
@@ -114,7 +141,9 @@ it does not independently verify the truth of submitted scores or trace contents
 
 ```sh
 node --test .pi/extensions/decx/lib.test.ts
-node .pi/extensions/decx/cli.ts check
+project=$(mktemp -d)
+node .pi/extensions/decx/cli.ts init --root "$project"
+node .pi/extensions/decx/cli.ts check --root "$project"
 python3 skills/check-skills.py
 ```
 

@@ -91,6 +91,15 @@ struct Extent {
     unwritten: bool,
 }
 
+/// ext4 reserves 0x8000 for an initialized 32768-block extent.
+fn extent_length(encoded: u16) -> (u64, bool) {
+    if encoded > 0x8000 {
+        ((encoded - 0x8000) as u64, true)
+    } else {
+        (encoded as u64, false)
+    }
+}
+
 struct Geometry {
     block_size: u64,
     inodes_per_group: u64,
@@ -274,13 +283,13 @@ impl Ext4Image {
                 )));
             }
             if depth == 0 {
-                let len = u16le(header, at + 4);
+                let (block_count, unwritten) = extent_length(u16le(header, at + 4));
                 result.push(Extent {
                     logical_block: u32le(header, at) as u64,
                     physical_block: u32le(header, at + 8) as u64
                         + u16le(header, at + 6) as u64 * (1u64 << 32),
-                    block_count: (len & 0x7fff) as u64,
-                    unwritten: (len & 0x8000) != 0,
+                    block_count,
+                    unwritten,
                 });
             } else {
                 let child_block =
@@ -590,17 +599,10 @@ fn read_geometry(file: &mut fs::File) -> Result<Geometry, Ext4Error> {
     }
     let block_size = 1024u64 << log_block_size;
     let first_data_block = u32le(&sb, 20) as u64;
-    // Field offsets ported as-is from the TS reader (including the u32 read
-    // at 40 for s_inodes_per_group and the desc-size read at 256).
-    let desc_size_field: u64 = if block_size > 1024 {
-        let value = u16le(&sb, 256);
-        if value == 0 {
-            32
-        } else {
-            value as u64
-        }
-    } else {
-        32
+    // s_desc_size is at superblock offset 0xfe (254), not 0x100.
+    let desc_size_field: u64 = match u16le(&sb, 254) {
+        0 => 32,
+        value => value as u64,
     };
     let group_desc_size = if desc_size_field == 32 || desc_size_field == 64 {
         desc_size_field
@@ -822,6 +824,27 @@ mod tests {
         image.close();
 
         fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn reads_descriptor_size_at_superblock_offset_254_for_one_kib_blocks() {
+        let (dir, path) = synthesized_image("descriptor-size", &[("test.jar", b"dex")]);
+        let mut bytes = fs::read(&path).unwrap();
+        bytes[1024 + 254..1024 + 256].copy_from_slice(&64u16.to_le_bytes());
+        bytes[1024 + 256..1024 + 258].copy_from_slice(&32u16.to_le_bytes());
+        fs::write(&path, bytes).unwrap();
+        let image = Ext4Image::open(path.to_str().unwrap()).unwrap();
+        assert_eq!(image.geometry.group_desc_size, 64);
+        assert_eq!(image.read_file("/test.jar").unwrap(), b"dex");
+        image.close();
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn extent_length_boundary_is_initialized() {
+        assert_eq!(extent_length(0x7fff), (32767, false));
+        assert_eq!(extent_length(0x8000), (32768, false));
+        assert_eq!(extent_length(0x8001), (1, true));
     }
 
     #[test]

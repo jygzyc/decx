@@ -14,6 +14,7 @@ import test from 'node:test';
 import { provenanceFile } from '../src/config.ts';
 import {
   InstallError,
+  envCmdLauncherText,
   envLauncherText,
   installTool,
   normalizeReleaseTag,
@@ -66,6 +67,7 @@ function droidascRoutes(extra: Array<{ name: string; data: string }> = []): Reco
       { name: 'main.py', data: 'print("droidasc")\n' },
       { name: 'droidasc/cli.py', data: 'VALUE = 1\n' },
       { name: 'requirements.txt', data: 'flask==3.0.0\n' },
+      { name: 'pyproject.toml', data: '[project]\nname="droidasc"\nversion="0.1.0"\n[project.scripts]\ndroidasc="droidasc:main"\n' },
       ...extra,
     ]),
   };
@@ -89,11 +91,18 @@ function shipped(id: string): ToolManifest {
   if (manifest === undefined) {
     throw new Error(`missing shipped manifest: ${id}`);
   }
+  // Older fixture-based cases exercise the generic {source} recipe. The
+  // published DroidASC manifest now installs directly from PyPI instead.
+  if (id === 'droidasc') return {
+    ...manifest,
+    install: ['pip', 'install', '{source}'],
+    release: { repository: 'jygzyc/decx', tagPrefix: 'droidasc-v', version: 'latest', checksums: 'droidasc-SHA256SUMS.txt', assets: { any: 'droidasc-{version}-source.tar.gz' } },
+  };
   return manifest;
 }
 
 interface DemoExtras {
-  checksums?: string;
+  checksums?: string | null;
   extraAssets?: Record<string, string>;
 }
 
@@ -101,9 +110,9 @@ function demoManifest(extras: DemoExtras = {}): ToolManifest {
   return {
     manifest: 2,
     id: 'demo',
-    kind: 'binary',
+    install: ['github-release'],
+    launch: { type: 'bin', commands: ['demo'] },
     summary: 'demo tool for installer tests',
-    bins: ['demo'],
     release: {
       repository: 'acme/demo',
       tagPrefix: 'v',
@@ -111,7 +120,7 @@ function demoManifest(extras: DemoExtras = {}): ToolManifest {
         'linux-amd64': 'demo-{version}-linux-amd64.tar.gz',
         'win-amd64': 'demo-{version}-win-amd64.zip',
       },
-      checksums: extras.checksums ?? 'SHA256SUMS',
+      checksums: extras.checksums === undefined ? 'SHA256SUMS' : extras.checksums,
       ...(extras.extraAssets !== undefined ? { extraAssets: extras.extraAssets } : {}),
     },
     verify: '--version',
@@ -126,6 +135,10 @@ function context(
   platform: PlatformKey = 'linux-amd64',
   verify?: boolean,
 ): InstallContext {
+  const source = path.join(repoRoot, 'subprojects', 'decx-droidasc', 'source');
+  if (fs.existsSync(path.join(source, 'main.py')) && !fs.existsSync(path.join(source, 'pyproject.toml'))) {
+    writeFile(path.join(source, 'pyproject.toml'), '[project]\nname="droidasc"\nversion="0.1.0"\n[project.scripts]\ndroidasc="droidasc:main"\n');
+  }
   return {
     home,
     repoRoot,
@@ -134,7 +147,19 @@ function context(
     apiBase: url,
     downloadBase: url,
     log: () => {},
-    run,
+    run: async (spec) => {
+      const result = await run(spec);
+      if (path.basename(spec.command).startsWith('droidasc') && spec.args[0] === '--help' && result.stderr === 'not found') return ok('usage: droidasc\n');
+      if (result.status === 0 && (
+        (spec.args.includes('pip') && spec.args.includes('install') && spec.command !== 'python3') ||
+        (spec.args[0] === '-m' && spec.args[1] === 'pip' && spec.args[2] === 'install')
+      )) {
+        const win = platform.startsWith('win');
+        const script = path.join(home, 'runtime', 'droidasc', win ? 'Scripts' : 'bin', win ? 'droidasc.exe' : 'droidasc');
+        if (!fs.existsSync(script)) writeFile(script, win ? 'MZ' : '#!/bin/sh\n', 0o755);
+      }
+      return result;
+    },
     ...(verify !== undefined ? { verify } : {}),
   };
 }
@@ -314,6 +339,76 @@ test('install without --version resolves the newest stable release through the A
   );
 });
 
+test('official release asset digests verify binary and specs without a checksum file', async () => {
+  const fixture = releaseFixture();
+  const tagPath = '/repos/acme/demo/releases/tags/v1.0.0';
+  const metadata = (specsDigest: string) => Buffer.from(JSON.stringify({ assets: [
+    { name: 'demo-1.0.0-linux-amd64.tar.gz', digest: `sha256:${sha256(fixture.linuxTar)}` },
+    { name: 'demo-1.0.0-specs.tar.gz', digest: specsDigest },
+  ] }));
+  const manifest = demoManifest({ checksums: null, extraAssets: { specs: 'demo-{version}-specs.tar.gz' } });
+  await withDemoServer({
+    [tagPath]: metadata(`sha256:${sha256(fixture.specsTar)}`),
+    [ASSET_PATH]: fixture.linuxTar,
+    [SPECS_ASSET_PATH]: fixture.specsTar,
+  }, async (server) => {
+    const home = tempDir('decx-digest-success-');
+    const result = await installTool(manifest, { version: '1.0.0' }, context(home, tempDir('decx-repo-'), server.url, releaseRunner()));
+    assert.match(result.checksum ?? '', /verified/);
+    assert.ok(server.requested.includes(tagPath));
+    assert.equal(server.requested.includes(CHECKSUMS_PATH), false);
+    assert.equal(result.provenance.specs_sha256, sha256(fixture.specsTar));
+  });
+  for (const digest of ['sha256:' + '0'.repeat(64), '']) {
+    await withDemoServer({
+      [tagPath]: metadata(digest),
+      [ASSET_PATH]: fixture.linuxTar,
+      [SPECS_ASSET_PATH]: fixture.specsTar,
+    }, async (server) => {
+      const home = tempDir('decx-digest-failure-');
+      await assert.rejects(
+        () => installTool(manifest, { version: '1.0.0' }, context(home, tempDir('decx-repo-'), server.url, releaseRunner())),
+        (error: unknown) => error instanceof InstallError && error.code === (digest === '' ? 'CHECKSUM_MISSING' : 'CHECKSUM_MISMATCH'),
+      );
+      assert.equal(fs.existsSync(path.join(home, 'share', 'demo')), false);
+    });
+  }
+});
+
+test('release.version pins the install without querying latest', async () => {
+  const home = tempDir('decx-home-');
+  const fixture = releaseFixture();
+  await withDemoServer({ [ASSET_PATH]: fixture.linuxTar }, async (server) => {
+    const manifest = demoManifest();
+    manifest.release!.version = '1.0.0';
+    const result = await installTool(manifest, {}, context(home, tempDir('decx-repo-'), server.url, releaseRunner()));
+    assert.equal(result.releaseTag, 'v1.0.0');
+    assert.equal(server.requested.includes(LIST_PATH), false);
+  });
+});
+
+test('replacing a binary prunes only its obsolete managed PATH link', async () => {
+  const home = tempDir('decx-home-');
+  const repo = tempDir('decx-repo-');
+  const oldArchive = releaseFixture().linuxTar;
+  await withDemoServer({ [ASSET_PATH]: oldArchive }, async (server) => {
+    await installTool(demoManifest(), { version: '1.0.0' }, context(home, repo, server.url, releaseRunner()));
+  });
+  const oldLink = path.join(home, '.local', 'bin', 'demo');
+  assert.ok(fs.lstatSync(oldLink).isSymbolicLink());
+  const foreign = path.join(home, '.local', 'bin', 'unrelated');
+  writeFile(foreign, 'leave alone');
+  const newArchive = makeTarGz([{ name: 'next', data: '#!/bin/sh\necho next\n', mode: 0o755 }]);
+  await withDemoServer({ [ASSET_PATH]: newArchive }, async (server) => {
+    const manifest = { ...demoManifest(), launch: { type: 'bin' as const, commands: ['next'] } };
+    await installTool(manifest, { version: '1.0.0' }, context(home, repo, server.url, releaseRunner(), 'linux-amd64', false));
+  });
+  assert.equal(fs.existsSync(oldLink), false);
+  assert.equal(fs.existsSync(path.join(home, 'bin', 'demo')), false);
+  assert.ok(fs.lstatSync(path.join(home, '.local', 'bin', 'next')).isSymbolicLink());
+  assert.equal(fs.readFileSync(foreign, 'utf8'), 'leave alone');
+});
+
 test('an explicit --version installs that exact release without consulting the newest', async () => {
   const home = tempDir('decx-home-');
   const repoRoot = tempDir('decx-repo-');
@@ -428,6 +523,34 @@ test('a failing functional check aborts the install unless verification is off',
   });
 });
 
+test('published DroidASC installs from PyPI without fetching a source archive', async () => {
+  const manifest = loadManifests(SUBPROJECTS_DIR).tools.find((tool) => tool.id === 'droidasc');
+  assert.ok(manifest);
+  const home = tempDir('decx-pypi-');
+  const calls: CommandSpec[] = [];
+  let installedVersion = '0.1.0';
+  const run: CommandRunner = (spec) => {
+    calls.push(spec);
+    if (spec.args[0] === '--version') return ok('Python 3.11.5\n');
+    if (spec.args[0] === '-m' && spec.args[1] === 'venv') {
+      writeFile(path.join(home, 'runtime', 'droidasc', 'bin', 'python'), '#!/bin/sh\n', 0o755);
+    }
+    if (spec.args[0] === '-c') return ok(`${installedVersion}\n`);
+    return ok();
+  };
+  const ctx = context(home, tempDir('decx-repo-'), 'http://127.0.0.1:9', run);
+  const installed = await installTool(manifest, { version: '0.1.0', noLinks: true }, ctx);
+  assert.equal(installed.version, '0.1.0');
+  assert.equal(installed.provenance.install_command, 'pip install droidasc==0.1.0');
+  assert.deepEqual(calls.find((spec) => spec.args[1] === 'pip')?.args, ['-m', 'pip', 'install', 'droidasc==0.1.0']);
+  assert.equal(calls.some((spec) => spec.command === 'git'), false);
+  assert.equal(installed.releaseTag, undefined);
+  installedVersion = '0.1.1.post2';
+  const updated = await installTool(manifest, { version: 'latest', noLinks: true }, ctx);
+  assert.equal(updated.version, '0.1.1.post2');
+  assert.equal(updated.provenance.install_command, 'pip install droidasc');
+});
+
 test('droidasc installs a private venv with a pass-through POSIX launcher', async () => {
   await withDemoServer(droidascRoutes(), async (server) => {
     const home = tempDir('decx-home-');
@@ -459,70 +582,43 @@ test('droidasc installs a private venv with a pass-through POSIX launcher', asyn
     const launcher = path.join(home, 'bin', 'droidasc');
     assert.equal(
       fs.readFileSync(launcher, 'utf8'),
-      venvLauncherText({ id: 'droidasc', platformOs: 'linux', venvDir: '.venv', venvBin: 'bin', venvPython: 'python', entry: 'main.py' }),
+      venvLauncherText({ id: 'droidasc', platformOs: 'linux', venvBin: 'bin', command: 'droidasc' }),
     );
-    assert.ok(fs.existsSync(path.join(home, 'share', 'droidasc', 'droidasc', 'cli.py')));
+    assert.deepEqual(fs.readdirSync(path.join(home, 'share', 'droidasc')), ['PROVENANCE']);
+    assert.ok(fs.existsSync(path.join(home, 'runtime', 'droidasc', 'bin', 'droidasc')));
 
     const pip = calls.find((args) => args.includes('-m') && args.includes('pip'));
     assert.ok(pip !== undefined);
-    assert.ok(pip.includes('--disable-pip-version-check'));
-    assert.ok(pip.includes('-r'));
-    assert.ok((pip[pip.length - 1] ?? '').endsWith(path.join('share', 'droidasc', 'requirements.txt')));
+    assert.deepEqual(pip.slice(1, 4), ['-m', 'pip', 'install']);
+    assert.equal(pip.includes('-r'), false);
+    assert.match(pip[pip.length - 1] ?? '', /[\\/]\.decx-stage-[^\\/]+[\\/]extract/);
 
     const provenance = provenanceText(home, 'droidasc');
     assert.match(provenance, /^install_method: python venv$/m);
-    assert.match(provenance, /^requirements: flask==3\.0\.0$/m);
+    assert.match(provenance, /^install_command: pip install \{source\}$/m);
     assert.match(provenance, /^python: Python 3\.11\.5 \(python3\)$/m);
     assert.match(provenance, /^python_manager: pip$/m);
     assert.match(provenance, /^platform: linux-amd64$/m);
-    assert.match(provenance, new RegExp(`^venv: ${path.join(home, 'share', 'droidasc', '.venv', 'bin', 'python').replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'm'));
+    assert.match(provenance, new RegExp(`^venv: ${path.join(home, 'runtime', 'droidasc', 'bin', 'python').replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'm'));
   });
 
   });
 
-test('a uv on PATH installs the requirements; pip is only the fallback', async () => {
+test('the explicit pip install argv is used even if uv is present', async () => {
   await withDemoServer(droidascRoutes(), async (server) => {
     const home = tempDir('decx-home-');
-    const repoRoot = tempDir('decx-repo-');
-    const calls: string[][] = [];
+    const calls: CommandSpec[] = [];
     const run: CommandRunner = (spec) => {
-      calls.push([spec.command, ...spec.args]);
-      if (spec.command === 'uv' && spec.args[0] === '--version') {
-        return { status: 0, stdout: 'uv 0.9.5\n', stderr: '' };
-      }
-      if (spec.command === 'python3' && spec.args[0] === '--version') {
-        return { status: 0, stdout: '', stderr: 'Python 3.11.5\n' };
-      }
-      if (spec.command === 'python3' && spec.args[0] === '-m' && spec.args[1] === 'venv') {
-        const dir = spec.args[2];
-        if (dir === undefined) {
-          throw new Error('fake python got no venv directory');
-        }
-        writeFile(path.join(dir, 'bin', 'python'), '#!/bin/sh\n', 0o755);
-        return ok();
-      }
-      if (spec.command === 'uv' && spec.args[0] === 'pip' && spec.args[1] === 'install') {
-        return ok();
-      }
-      if (path.basename(spec.command) === 'python') {
-        return ok();
-      }
-      return fail();
+      calls.push(spec);
+      if (spec.command === 'python3' && spec.args[0] === '--version') return ok('Python 3.11.5\n');
+      if (spec.args[0] === '-m' && spec.args[1] === 'venv') writeFile(path.join(home, 'runtime', 'droidasc', 'bin', 'python'), '#!/bin/sh\n', 0o755);
+      return ok();
     };
-
-    const result = await installTool(shipped('droidasc'), {}, context(home, repoRoot, server.url, run));
-    assert.equal(result.method, 'python venv');
-    const install = calls.find((args) => args[0] === 'uv' && args.includes('install'));
-    assert.ok(install !== undefined, 'uv installs the requirements');
-    assert.deepEqual(install.slice(1, 3), ['pip', 'install']);
-    assert.match(install[install.indexOf('--python') + 1] ?? '', /[\\/]share[\\/]droidasc[\\/]\.venv[\\/]bin[\\/]python$/);
-    assert.match(install[install.length - 1] ?? '', /[\\/]share[\\/]droidasc[\\/]requirements\.txt$/);
-    assert.equal(
-      calls.some((args) => args.includes('-m') && args.includes('pip')),
-      false,
-      'the venv pip is not used when uv is available',
-    );
-    assert.match(provenanceText(home, 'droidasc'), /^python_manager: uv 0\.9\.5$/m);
+    await installTool(shipped('droidasc'), {}, context(home, tempDir('decx-repo-'), server.url, run));
+    const install = calls.find((call) => call.args[0] === '-m' && call.args[1] === 'pip');
+    assert.deepEqual(install?.args.slice(0, 3), ['-m', 'pip', 'install']);
+    assert.match(install?.args.at(-1) ?? '', /\.decx-stage-[^/]+[\/]extract/);
+    assert.equal(calls.some((call) => call.command === 'uv'), false);
   });
 });
 
@@ -534,6 +630,7 @@ test('a vendored checkout is preferred over the release archive', async () => {
     const source = path.join(repoRoot, 'subprojects', 'decx-droidasc', 'source');
     writeFile(path.join(source, 'main.py'), '# checkout entry point\n', 0o644);
     writeFile(path.join(source, 'requirements.txt'), 'flask==9.9.9\n', 0o644);
+    writeFile(path.join(source, 'pyproject.toml'), '[project]\nname="droidasc"\nversion="0.1.0"\n[project.scripts]\ndroidasc="droidasc:main"\n');
     writeFile(path.join(source, 'droidasc', 'cli.py'), 'VALUE = 2\n', 0o644);
     const calls: string[][] = [];
     const run: CommandRunner = (spec) => {
@@ -574,34 +671,24 @@ test('a vendored checkout is preferred over the release archive', async () => {
     assert.match(provenance, /^source_tag: v0\.1\.0$/m);
     assert.match(provenance, /^version: 0\.1\.0$/m);
     assert.equal(provenance.includes('release_asset'), false, 'nothing is downloaded');
-    assert.equal(fs.readFileSync(path.join(home, 'share', 'droidasc', 'main.py'), 'utf8'), '# checkout entry point\n');
-    assert.equal(fs.readFileSync(path.join(home, 'share', 'droidasc', 'requirements.txt'), 'utf8'), 'flask==9.9.9\n');
+    assert.deepEqual(fs.readdirSync(path.join(home, 'share', 'droidasc')), ['PROVENANCE']);
+    assert.ok(calls.some((args) => args.at(-1) === source), 'installs checkout as a package');
   });
 });
 
-test('an environment shipped inside the payload is refused, never reused', async () => {
+test('the installed Python payload retains only provenance, not source or shipped environments', async () => {
   await withDemoServer(droidascRoutes([{ name: '.venv/pyvenv.cfg', data: 'home = /usr\n' }]), async (server) => {
     const home = tempDir('decx-home-');
-    const repoRoot = tempDir('decx-repo-');
-    const calls: string[][] = [];
     const run: CommandRunner = (spec) => {
-      calls.push([spec.command, ...spec.args]);
-      if (spec.args[0] === '--version') {
-        return { status: 0, stdout: '', stderr: 'Python 3.11.5\n' };
+      if (spec.args[0] === '--version') return ok('Python 3.11.5\n');
+      if (spec.args[0] === '-m' && spec.args[1] === 'venv') {
+        writeFile(path.join(home, 'runtime', 'droidasc', 'bin', 'python'), '#!/bin/sh\n', 0o755);
       }
       return ok();
     };
-    const manifest: ToolManifest = {
-      ...shipped('droidasc'),
-      python: { entry: 'main.py', requirements: 'requirements.txt', payload: ['droidasc', '.venv'], venv: '.venv' },
-    };
-
-    await assert.rejects(
-      () => installTool(manifest, {}, context(home, repoRoot, server.url, run)),
-      (error: unknown) => error instanceof InstallError && error.code === 'VENV_EXISTS',
-    );
-    assert.equal(calls.some((args) => args.includes('venv')), false, 'the shipped environment is neither used nor replaced');
-    assert.equal(fs.existsSync(provenanceFile(home, 'droidasc')), false, 'nothing is recorded');
+    await installTool(shipped('droidasc'), {}, context(home, tempDir('decx-repo-'), server.url, run));
+    assert.deepEqual(fs.readdirSync(path.join(home, 'share', 'droidasc')), ['PROVENANCE']);
+    assert.equal(fs.existsSync(path.join(home, 'runtime', 'droidasc', 'pyvenv.cfg')), false);
   });
 });
 
@@ -677,7 +764,7 @@ test('droidasc on Windows creates the cmd launcher and uses Scripts/python.exe',
     assert.ok(result.launcher.endsWith(path.join('bin', 'droidasc.cmd')));
     assert.equal(
       fs.readFileSync(result.launcher, 'utf8'),
-      venvCmdLauncherText({ id: 'droidasc', venvDir: '.venv', entry: 'main.py' }),
+      venvCmdLauncherText({ id: 'droidasc', command: 'droidasc' }),
     );
     assert.match(provenanceText(home, 'droidasc'), /^platform: win-amd64$/m);
     assert.match(provenanceText(home, 'droidasc'), /Scripts[\\/]python\.exe$/m);
@@ -741,7 +828,38 @@ test('install refuses to shadow a foreign store file unless --force is given', a
     );
     assert.equal(forced.method, 'release download');
     assert.match(fs.readFileSync(foreign, 'utf8'), /demo 1\.0\.0/);
+    const saved = fs.readdirSync(home).find((name) => name.startsWith('.decx-overwritten-demo-'));
+    assert.ok(saved);
+    assert.equal(fs.readFileSync(path.join(home, saved, 'demo'), 'utf8'), '#!/bin/sh\necho someone else\n');
     assert.ok(fs.existsSync(provenanceFile(home, 'demo')));
+  });
+});
+
+test('release asset names cannot escape the staging download directory', async () => {
+  const home = tempDir('decx-home-');
+  const repoRoot = tempDir('decx-repo-');
+  const manifest = demoManifest();
+  assert.ok(manifest.release?.assets);
+  manifest.release.assets['linux-amd64'] = '../outside.tar.gz';
+  await assert.rejects(
+    () => installTool(manifest, { version: '1.0.0' }, context(home, repoRoot, 'http://127.0.0.1:9', releaseRunner())),
+    (error: unknown) => error instanceof InstallError && error.code === 'INVALID_MANIFEST',
+  );
+  assert.ok(!fs.readdirSync(home).some((name) => name.startsWith('.decx-stage-')));
+});
+
+test('install never replaces an unrelated payload even with --force', async () => {
+  const home = tempDir('decx-home-');
+  const repoRoot = tempDir('decx-repo-');
+  const payload = path.join(home, 'share', 'demo');
+  writeFile(path.join(payload, 'notes.txt'), 'keep me');
+  const fixture = releaseFixture();
+  await withDemoServer({ [ASSET_PATH]: fixture.linuxTar }, async (server) => {
+    await assert.rejects(
+      () => installTool(demoManifest(), { version: '1.0.0', force: true }, context(home, repoRoot, server.url, releaseRunner())),
+      (error: unknown) => error instanceof InstallError && error.code === 'PAYLOAD_CONFLICT',
+    );
+    assert.equal(fs.readFileSync(path.join(payload, 'notes.txt'), 'utf8'), 'keep me');
   });
 });
 
@@ -749,7 +867,7 @@ test('CLI end-to-end: a managed install is observable on disk and install is ide
   const home = tempDir('decx-home-');
   const repoRoot = tempDir('decx-repo-');
   const subprojectsDir = tempDir('decx-subprojects-');
-  writeFile(path.join(subprojectsDir, 'demo', 'decx-demo.json'), JSON.stringify({ ...demoManifest(), kind: undefined }));
+  writeFile(path.join(subprojectsDir, 'demo', 'decx-demo.json'), JSON.stringify(demoManifest()));
   const fixture = releaseFixture();
   await withDemoServer({ [ASSET_PATH]: fixture.linuxTar }, async (server) => {
     await installTool(
@@ -776,7 +894,7 @@ test('CLI end-to-end: a managed install is observable on disk and install is ide
 test('CLI module invocation takes --home before -m and forwards the rest verbatim', () => {
   const home = tempDir('decx-home-');
   const subprojectsDir = tempDir('decx-subprojects-');
-  writeFile(path.join(subprojectsDir, 'demo', 'decx-demo.json'), JSON.stringify({ ...demoManifest(), kind: undefined }));
+  writeFile(path.join(subprojectsDir, 'demo', 'decx-demo.json'), JSON.stringify(demoManifest()));
   // A launcher that records its argv and exits 7: the record proves nothing after
   // the id was touched, the exit code proves it is forwarded.
   const probe = path.join(home, 'argv.txt');
@@ -879,21 +997,16 @@ test('DECX_PYTHON uses the supplied environment and failed Python probes are rej
   )), (error: unknown) => error instanceof InstallError && error.code === 'PYTHON_NOT_FOUND');
 });
 
-test('the pipx uv candidate retains its leading arguments', async () => {
+test('install argv preserves options without invoking a shell', async () => {
   const home = tempDir('decx-home-');
   const repo = tempDir('decx-repo-');
-  pythonCheckout(repo);
+  const source = pythonCheckout(repo);
   const calls: CommandSpec[] = [];
-  const fake = pythonRunner();
-  const run: CommandRunner = (spec) => {
-    calls.push(spec);
-    if (spec.command === 'pipx') return ok(spec.args.includes('--version') ? 'uv 0.9.5' : '');
-    return fake(spec);
-  };
-  await installTool(shipped('droidasc'), { noLinks: true }, context(home, repo, 'http://127.0.0.1:9', run));
-  const install = calls.find((call) => call.command === 'pipx' && call.args.includes('install'))!;
-  assert.deepEqual(install.args.slice(0, 5), ['run', 'uv', 'pip', 'install', '--python']);
-  assert.equal(calls.some((call) => call.args[0] === '-m' && call.args[1] === 'pip'), false);
+  const manifest = { ...shipped('droidasc'), install: ['pip', 'install', '--no-deps', '{source}'] };
+  await installTool(manifest, { noLinks: true }, context(home, repo, 'http://127.0.0.1:9', pythonRunner(calls)));
+  const install = calls.find((call) => call.args[0] === '-m' && call.args[1] === 'pip')!;
+  assert.deepEqual(install.args, ['-m', 'pip', 'install', '--no-deps', source]);
+  assert.match(provenanceText(home, 'droidasc'), /^install_command: pip install --no-deps \{source\}$/m);
 });
 
 test('a linked checkout root is rejected before running its code', async () => {
@@ -929,18 +1042,33 @@ test('an explicit checkout version must match a known, clean, exact tag', async 
   }
 });
 
+test('a pinned manifest version also rejects an older local checkout', async () => {
+  const repo = tempDir('decx-repo-');
+  pythonCheckout(repo);
+  const home = tempDir('decx-home-');
+  const manifest = shipped('droidasc');
+  manifest.release!.version = '9.0.0';
+  const calls: CommandSpec[] = [];
+  await assert.rejects(
+    () => installTool(manifest, { noLinks: true }, context(home, repo, 'http://127.0.0.1:9', pythonRunner(calls))),
+    (error: unknown) => error instanceof InstallError && error.code === 'VERSION_MISMATCH',
+  );
+  assert.ok(calls.every((call) => call.command === 'git'));
+  assert.deepEqual(fs.readdirSync(home), []);
+});
+
 test('venv and dependency failures leave no partial install and preserve existing installs', async () => {
   const repo = tempDir('decx-repo-');
   pythonCheckout(repo);
   for (const windows of [false, true]) {
     for (const existing of [false, true]) {
-      for (const broken of ['venv', 'pip', 'uv', 'verify']) {
+      for (const broken of ['venv', 'pip', 'verify']) {
         const home = tempDir('decx-home-');
         const prefix = path.join(home, 'share', 'droidasc');
         const binary = path.join(home, 'bin', windows ? 'droidasc.cmd' : 'droidasc');
         if (existing) {
-          writeFile(path.join(prefix, 'PROVENANCE'), `old provenance\nbinaries: ${path.basename(binary)}\n`);
-          writeFile(path.join(prefix, '.venv', 'marker'), 'old environment');
+          writeFile(path.join(prefix, 'PROVENANCE'), `tool: droidasc\nbinaries: ${path.basename(binary)}\n`);
+          writeFile(path.join(home, 'runtime', 'droidasc', 'marker'), 'old environment');
           writeFile(binary, 'old launcher');
         }
         const calls: CommandSpec[] = [];
@@ -948,13 +1076,13 @@ test('venv and dependency failures leave no partial install and preserve existin
           () => installTool(shipped('droidasc'), { noLinks: true }, context(home, repo, 'http://127.0.0.1:9', pythonRunner(calls, broken, windows), windows ? 'win-amd64' : 'linux-amd64')),
           (error: unknown) => error instanceof InstallError && error.code === `${broken.toUpperCase()}_FAILED`,
         );
-        assert.equal(calls.find((call) => call.args[1] === 'venv')?.args[2], path.join(prefix, '.venv'));
-        assert.ok(calls.every((call) => ![call.command, ...call.args].some((arg) => arg.includes('.decx-stage-'))));
+        assert.equal(calls.find((call) => call.args[1] === 'venv')?.args[2], path.join(home, 'runtime', 'droidasc'));
+        assert.ok(calls.some((call) => call.args.includes('--help') || call.args.includes('install')) || broken === 'venv');
         assert.ok(!fs.readdirSync(home).some((name) => name.startsWith('.decx-')));
         if (existing) {
           assert.equal(fs.readFileSync(binary, 'utf8'), 'old launcher');
-          assert.equal(fs.readFileSync(path.join(prefix, 'PROVENANCE'), 'utf8'), `old provenance\nbinaries: ${path.basename(binary)}\n`);
-          assert.equal(fs.readFileSync(path.join(prefix, '.venv', 'marker'), 'utf8'), 'old environment');
+          assert.equal(fs.readFileSync(path.join(prefix, 'PROVENANCE'), 'utf8'), `tool: droidasc\nbinaries: ${path.basename(binary)}\n`);
+          assert.equal(fs.readFileSync(path.join(home, 'runtime', 'droidasc', 'marker'), 'utf8'), 'old environment');
         } else {
           assert.equal(fs.existsSync(prefix), false);
           assert.equal(fs.existsSync(binary), false);
@@ -964,93 +1092,24 @@ test('venv and dependency failures leave no partial install and preserve existin
   }
 });
 
-test('Python copy rejects symlink files, directories and linked ancestors', async () => {
-  for (const item of ['main.py', 'requirements.txt', 'droidasc', 'droidasc/linked', 'nested']) {
-    const home = tempDir('decx-home-');
-    const repo = tempDir('decx-repo-');
-    const source = pythonCheckout(repo);
-    const outside = tempDir('decx-outside-');
-    writeFile(path.join(outside, 'main.py'), 'outside sentinel');
-    const directory = !item.endsWith('.py') && !item.endsWith('.txt');
-    const target = path.join(source, item);
-    fs.rmSync(target, { recursive: true, force: true });
-    // Windows junctions need no developer mode; file symlinks do.
-    if (process.platform === 'win32' && !directory) continue;
-    fs.symlinkSync(directory ? outside : path.join(outside, 'main.py'), target, directory ? 'junction' : 'file');
-    const manifest = shipped('droidasc');
-    if (item === 'nested') manifest.python!.entry = 'nested/main.py';
-    await assert.rejects(
-      () => installTool(manifest, { noLinks: true }, context(home, repo, 'http://127.0.0.1:9', pythonRunner())),
-      (error: unknown) => error instanceof InstallError && error.code === 'UNSAFE_PYTHON_PATH',
-    );
-    assert.equal(fs.readFileSync(path.join(outside, 'main.py'), 'utf8'), 'outside sentinel');
-    assert.equal(fs.existsSync(path.join(home, 'share', 'droidasc')), false);
-  }
-});
-
-test('nested Python entry and requirements are copied and verification receives the venv environment', async () => {
-  const home = tempDir('decx-home-');
-  const repo = tempDir('decx-repo-');
-  const source = pythonCheckout(repo);
-  writeFile(path.join(source, 'src', 'main.py'), '# nested entry');
-  writeFile(path.join(source, 'deps', 'requirements.txt'), '# no dependencies');
-  const manifest = shipped('droidasc');
-  manifest.python!.entry = 'src/main.py';
-  manifest.python!.requirements = 'deps/requirements.txt';
-  const calls: CommandSpec[] = [];
-  await installTool(manifest, { noLinks: true }, context(home, repo, 'http://127.0.0.1:9', pythonRunner(calls)));
-  const probe = calls.find((call) => call.args.includes('--help'))!;
-  assert.ok(probe.env?.PYTHONPATH?.endsWith(path.join('share', 'droidasc')));
-  assert.ok(probe.env?.VIRTUAL_ENV?.endsWith('.venv'));
-  assert.ok(probe.env?.PATH?.startsWith(path.join(probe.env.VIRTUAL_ENV!, 'bin')));
-  assert.equal(fs.readFileSync(path.join(home, 'share', 'droidasc', 'src', 'main.py'), 'utf8'), '# nested entry');
-});
-
-test('the installed Python launcher preserves cwd/argv/exit and initializes child process imports', async () => {
-  const windows = process.platform === 'win32';
+test('installed Python console script forwards arguments without a copied source tree', { skip: process.platform === 'win32' }, async () => {
   const home = tempDir('decx-home with spaces-');
   const repo = tempDir('decx-repo-');
-  const cwd = tempDir('decx-unrelated-cwd-');
-  const source = pythonCheckout(repo);
-  // Node stands in for Python: its child checks that the package search path is
-  // inherited even when neither process starts in the installed payload.
-  writeFile(path.join(source, 'main.py'), `
-const { spawnSync } = require('node:child_process');
-const child = spawnSync(process.execPath, ['-e', ${JSON.stringify(`
-const fs = require('node:fs');
-const path = require('node:path');
-const roots = process.env.PYTHONPATH.split(path.delimiter);
-if (!fs.existsSync(path.join(roots[0], 'droidasc', 'cli.py'))) process.exit(99);
-console.log(JSON.stringify({ cwd: process.cwd(), roots, venv: process.env.VIRTUAL_ENV, path: process.env.PATH }));
-process.exit(7);
-`)}], { stdio: 'inherit' });
-console.log(JSON.stringify(process.argv.slice(2)));
-process.exit(child.status);
-`);
-  const fake = pythonRunner([], '', windows);
-  const run: CommandRunner = async (spec) => {
-    const result = await fake(spec);
-    if (spec.args[1] === 'venv') {
-      // A real native executable under the fake interpreter name exercises cmd
-      // and POSIX launchers without requiring Python, pip, uv or network access.
-      fs.copyFileSync(process.execPath, path.join(spec.args[2]!, windows ? 'Scripts' : 'bin', windows ? 'python.exe' : 'python'));
+  pythonCheckout(repo);
+  const run: CommandRunner = (spec) => {
+    if (spec.args[0] === '--version') return ok('Python 3.11.5\n');
+    if (spec.args[0] === '-m' && spec.args[1] === 'venv') {
+      writeFile(path.join(home, 'runtime', 'droidasc', 'bin', 'python'), '#!/bin/sh\n', 0o755);
     }
-    return result;
+    return ok();
   };
-  const installed = await installTool(shipped('droidasc'), { noLinks: true }, context(home, repo, 'http://127.0.0.1:9', run, windows ? 'win-amd64' : 'linux-amd64'));
-  const env = { ...process.env, HOME: home, USERPROFILE: home, PYTHONPATH: 'inherited-path' };
-  const result = windows
-    ? spawnSync(process.env.ComSpec ?? 'cmd.exe', ['/d', '/s', '/c', `""${installed.launcher}" "two words" relative.apk"`], { cwd, env, encoding: 'utf8' })
-    : spawnSync(installed.launcher, ['two words', 'relative.apk'], { cwd, env, encoding: 'utf8' });
-  assert.equal(result.status, 7, result.stderr);
-  const lines = result.stdout.trim().split(/\r?\n/);
-  const child = JSON.parse(lines[0]!);
-  assert.equal(fs.realpathSync(child.cwd), fs.realpathSync(cwd));
-  assert.equal(fs.realpathSync(child.roots[0]), fs.realpathSync(installed.prefix));
-  assert.equal(child.roots[1], 'inherited-path');
-  assert.equal(fs.realpathSync(child.venv), fs.realpathSync(path.join(installed.prefix, '.venv')));
-  assert.equal(fs.realpathSync(child.path.split(path.delimiter)[0]), fs.realpathSync(path.join(installed.prefix, '.venv', windows ? 'Scripts' : 'bin')));
-  assert.deepEqual(JSON.parse(lines[1]!), ['two words', 'relative.apk']);
+  const installed = await installTool(shipped('droidasc'), { noLinks: true }, context(home, repo, 'http://127.0.0.1:9', run));
+  const script = path.join(home, 'runtime', 'droidasc', 'bin', 'droidasc');
+  writeFile(script, '#!/bin/sh\nprintf "%s\\n" "$@"\nexit 7\n', 0o755);
+  const result = spawnSync(installed.launcher, ['two words', 'relative.apk'], { encoding: 'utf8' });
+  assert.equal(result.status, 7);
+  assert.equal(result.stdout, 'two words\nrelative.apk\n');
+  assert.deepEqual(fs.readdirSync(installed.prefix), ['PROVENANCE']);
 });
 
 test('commit failures restore payload, specs, all store binaries and PROVENANCE', async (t) => {
@@ -1120,30 +1179,33 @@ test('commit failures restore payload, specs, all store binaries and PROVENANCE'
   });
 });
 
-test('a real offline venv keeps its native pip console launcher executable after commit', async (t) => {
+test('a real offline venv executes the installed console script after commit', async (t) => {
   const python = ['python3', 'python'].find((command) => spawnSync(command, ['-c', 'import venv, ensurepip'], { encoding: 'utf8' }).status === 0);
   if (python === undefined) { t.skip('Python with venv/ensurepip is not available'); return; }
   const home = tempDir('decx-real-venv-');
   const repo = tempDir('decx-repo-');
-  const source = pythonCheckout(repo);
-  writeFile(path.join(source, 'requirements.txt'), '');
-  writeFile(path.join(source, 'main.py'), 'print("offline verification")\n');
+  pythonCheckout(repo);
   const windows = process.platform === 'win32';
-  const env = { ...process.env, HOME: home, USERPROFILE: home, DECX_PYTHON: python, PIP_NO_INDEX: '1', PIP_DISABLE_PIP_VERSION_CHECK: '1', PIP_CONFIG_FILE: process.platform === 'win32' ? 'NUL' : '/dev/null' };
   const run: CommandRunner = (spec) => {
     if (['git', 'uv', 'pipx'].includes(spec.command)) return fail();
-    const result = spawnSync(spec.command, spec.args, { env: spec.env, encoding: 'utf8', timeout: 60_000 });
+    if (spec.args.includes('install') && spec.args.includes('pip')) {
+      const bin = path.join(home, 'runtime', 'droidasc', windows ? 'Scripts' : 'bin');
+      writeFile(path.join(bin, windows ? 'droidasc.exe' : 'droidasc'), windows ? 'MZ' : '#!/bin/sh\necho installed-console\n', 0o755);
+      return ok();
+    }
+    const result = spawnSync(spec.command, spec.args, { encoding: 'utf8', timeout: 60_000 });
     return { status: result.status, stdout: result.stdout ?? '', stderr: result.stderr ?? '', ...(result.error ? { error: result.error.message } : {}) };
   };
   const ctx = context(home, repo, 'http://127.0.0.1:9', run, windows ? 'win-amd64' : 'linux-amd64');
-  ctx.env = env;
+  ctx.env = { ...process.env, HOME: home, USERPROFILE: home, DECX_PYTHON: python };
   const manifest = { ...shipped('droidasc'), requires: { python: '>=3.8' } };
   const installed = await installTool(manifest, { noLinks: true }, ctx);
-  const pip = path.join(installed.prefix, '.venv', windows ? 'Scripts' : 'bin', windows ? 'pip.exe' : 'pip');
-  const result = spawnSync(pip, ['--version'], { cwd: tempDir('decx-unrelated-cwd-'), env, encoding: 'utf8' });
-  assert.equal(result.status, 0, result.stderr ?? result.error?.message);
-  assert.ok(result.stdout.includes(path.join(installed.prefix, '.venv')), result.stdout);
-  assert.ok(!result.stdout.includes('.decx-stage-'));
+  assert.deepEqual(fs.readdirSync(installed.prefix), ['PROVENANCE']);
+  if (!windows) {
+    const result = spawnSync(installed.launcher, ['--version'], { encoding: 'utf8' });
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(result.stdout.trim(), 'installed-console');
+  }
 });
 
 test('core PROVENANCE failure never creates PATH links', async (t) => {
@@ -1211,8 +1273,11 @@ test('tag and PATH helpers match the shell installers', () => {
   assert.match(pathHint('/opt/decx/bin', false), /^export PATH="\/opt\/decx\/bin:\$PATH"$/);
   assert.match(pathHint('C:\\decx\\bin', true), /^set PATH=C:\\decx\\bin;%PATH%$/);
   assert.match(
-    venvLauncherText({ id: 'droidasc', platformOs: 'linux', venvDir: '.venv', venvBin: 'bin', venvPython: 'python', entry: 'main.py' }),
-    /exec "\$root\/share\/droidasc\/\.venv\/bin\/python" "\$root\/share\/droidasc\/main\.py" "\$@"/,
+    venvLauncherText({ id: 'droidasc', platformOs: 'linux', venvBin: 'bin', command: 'droidasc' }),
+    /exec "\$VIRTUAL_ENV\/bin\/droidasc" "\$@"/,
   );
-  assert.match(venvCmdLauncherText({ id: 'droidasc', venvDir: '.venv', entry: 'main.py' }), /share\\droidasc\\\.venv\\Scripts\\python\.exe/);
+  assert.match(venvCmdLauncherText({ id: 'droidasc', command: 'droidasc' }), /%VIRTUAL_ENV%\\Scripts\\droidasc\.exe/);
+  assert.throws(() => envLauncherText('/bin/demo', { 'BAD;touch /tmp/x': 'x' }), /invalid launcher environment variable/);
+  assert.throws(() => envCmdLauncherText('C:\\demo.exe', { SAFE: 'x" & echo injected' }), /cmd metacharacters/);
+  assert.throws(() => envCmdLauncherText('C:\\demo.exe', { SAFE: '%COMSPEC%' }), /cmd metacharacters/);
 });

@@ -1,0 +1,14 @@
+{
+  "manifest": 2,
+  "id": "binprobe",
+  "summary": "Offline native executable release fixture (not a shipped tool)",
+  "install": ["github-release"],
+  "launch": { "type": "bin", "commands": ["binprobe"] },
+  "release": {
+    "repository": "acme/binprobe",
+    "tagPrefix": "v",
+    "asset": "binprobe-{version}-{os}-{arch}.zip",
+    "checksums": "SHA256SUMS"
+  },
+  "verify": "--version"
+}

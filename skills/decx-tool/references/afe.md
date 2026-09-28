@@ -50,15 +50,11 @@ droidasc getclass "framework_<oem>_<vendor>.jar" "<class>"
 
 ```bash
 decx install afe                  # prebuilt tools-v* asset when it carries this platform
-decx install afe --from-source    # force a local cargo build
 decx -m afe process
 ```
 
-- `install` prefers the release: it looks for the `tools-v*` asset of the host platform (tag
-  prefix `tools-v`; the release carries `afe-SHA256SUMS.txt`, so the download is
-  checksum-verified). When no asset carries the platform, or with `--from-source`, the
-  manager runs `cargo build --release` in the local AFE crate and installs its
-  release binary; only that path needs Rust on PATH.
+- `install` looks for the `tools-v*` asset of the host platform (tag prefix
+  `tools-v`; the release carries `afe-SHA256SUMS.txt`, so the download is
+  checksum-verified). A missing asset currently produces an error; this manager
+  release does not implement a cargo fallback or `--from-source`.
 - One launcher (`afe`); the payload lives in `<DECX_HOME>/share/afe/`.
-- `--from-source` forces the local crate build and requires Rust/cargo; without it,
-  cargo is needed only when the release has no asset for the host platform.

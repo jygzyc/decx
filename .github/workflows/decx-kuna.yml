@@ -4,9 +4,9 @@ name: Kuna
 # and the superproject gitlink. `decx install kuna` downloads the release
 # archive for the host platform plus the separate compiled SLEIGH specs
 # archive, and the generated launcher exports `KUNA_SPECS` so the binary finds
-# its languages without any shell setup. This workflow guards the install and
-# the upstream-skill-copy contract, and mirrors upstream's releases as this
-# repository's `kuna-v*` releases (below).
+# its languages without any shell setup. This workflow guards the official
+# upstream install and the upstream-skill-copy contract. It also publishes
+# optional zip mirrors under this repository's `kuna-v*` tags.
 #
 # The release-install check touches the network (two archives per platform), so
 # it also runs weekly and on demand; every change to the pin, the
@@ -20,9 +20,8 @@ name: Kuna
 # jobs below publish under. Manual pin moves still work the same way: move the
 # submodule, commit, tag `kuna-v<version>`, push.
 #
-# Publishing the release assets the kuna manifest installs from happens in the
-# same
-# workflow: a `kuna-v*` tag push (or a dispatch with the `tag` input set) runs
+# Publishing optional mirror assets happens in this workflow: a `kuna-v*`
+# tag push (or a dispatch with the `tag` input set) runs
 # the validate/mirror/publish jobs instead of the checks. Those jobs only
 # mirror. Noelo-Lab/kuna publishes every platform archive plus the
 # platform-independent compiled SLEIGH specs under tag v{version}, so the jobs
@@ -30,9 +29,7 @@ name: Kuna
 # source: an upstream release that cannot be fetched, or that is missing an
 # asset, fails the run instead of substituting a locally built binary.
 #
-# The published assets are zips whose names follow the manifest's release
-# contract (subprojects/decx-kuna/decx-kuna.json) verbatim --
-# the manager reads those names, so they are not up for design:
+# The optional mirror assets are uniformly repacked zips:
 #   kuna-v{version}-linux-x86_64.zip    kuna-v{version}-macos-arm64.zip
 #   kuna-v{version}-linux-arm64.zip     kuna-v{version}-windows-x86_64.zip
 #   kuna-v{version}-macos-x86_64.zip    (kuna, decomp_dbg, slacomp)
@@ -127,11 +124,9 @@ jobs:
           node -e '
             const manifest = require("./subprojects/decx-kuna/decx-kuna.json");
             const keys = ["linux-amd64", "linux-arm64", "darwin-amd64", "darwin-arm64", "win-amd64"];
-            const { tagPrefix, assets, checksums } = manifest.release;
-            // The version comes from the resolved kuna-v* tag at install time;
-            // only the templates are pinned here.
-            if (tagPrefix !== "kuna-v") {
-              throw new Error("release.tagPrefix must be kuna-v -- this workflow triggers and publishes kuna-v* tags");
+            const { repository, tagPrefix, assets, checksums } = manifest.release;
+            if (repository !== "Noelo-Lab/kuna" || tagPrefix !== "v") {
+              throw new Error("Kuna must install from the official v* release tags");
             }
             for (const key of keys) {
               const name = assets[key];
@@ -142,13 +137,13 @@ jobs:
               if (resolved.includes("{")) throw new Error(key + " has an unresolved placeholder: " + name);
               console.log(key.padEnd(12) + name);
             }
-            if (checksums !== "kuna-SHA256SUMS.txt") {
-              throw new Error("release.checksums must be kuna-SHA256SUMS.txt -- the mirror publishes exactly that file");
+            if (checksums !== null) {
+              throw new Error("official Kuna assets use GitHub REST SHA-256 digests");
             }
             if (manifest.env?.KUNA_SPECS !== "{prefix}/specs") {
               throw new Error("env.KUNA_SPECS must point the launcher at the specs tree");
             }
-            console.log("bin:", manifest.launch.bin, "| bins:", manifest.bins.join(", "));
+            console.log("launch:", manifest.launch, "| bins:", manifest.bins.join(", "));
           '
 
   release-install:
@@ -196,12 +191,10 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           cat "$DECX_HOME/share/kuna/PROVENANCE"
-          # The manager resolves the newest stable kuna-v* release of this
-          # repository at install time; the record must name exactly that tag.
-          tag="$(gh api "repos/${{ github.repository }}/releases?per_page=100" \
-            --jq '[.[] | select(.draft != true and .prerelease != true and (.tag_name | startswith("kuna-v")))][0].tag_name')"
-          echo "newest kuna-v* release: $tag"
-          grep -q "release_tag=$tag" "$DECX_HOME/share/kuna/PROVENANCE"
+          # The manifest resolves official upstream stable v* releases.
+          tag="$(gh api repos/Noelo-Lab/kuna/releases/latest --jq .tag_name)"
+          echo "official Kuna release: $tag"
+          grep -qx "release_tag: $tag" "$DECX_HOME/share/kuna/PROVENANCE"
 
   sync-pin:
     name: Sync the pin to upstream's latest
@@ -212,6 +205,7 @@ jobs:
     timeout-minutes: 15
     permissions:
       contents: write
+      actions: write
     defaults:
       run:
         shell: bash
@@ -284,12 +278,15 @@ jobs:
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git add subprojects/decx-kuna/source skills/decx-tool/references/kuna.md
           git commit -m "pin kuna to $UPSTREAM_TAG"
-          # One atomic push: the branch commit and its tag land together, and
-          # the tag push is what starts the validate/mirror/publish chain. A
-          # refused push (someone raced the sync) fails visibly instead of
-          # force-anything; the next tick retries.
+          # One atomic push: the branch commit and its tag land together.
+          # GITHUB_TOKEN tag pushes do not start new workflows; dispatch below.
+          # A refused push (someone raced the sync) fails visibly.
           branch="${{ github.event.repository.default_branch }}"
+          git tag "$mirror_tag"
           git push --atomic origin "HEAD:refs/heads/$branch" "refs/tags/$mirror_tag"
+          # Pushes made with GITHUB_TOKEN do not trigger push workflows. Dispatch
+          # the release explicitly after both refs are visible on the remote.
+          gh workflow run decx-kuna.yml --ref "$branch" -f "tag=$mirror_tag"
 
   validate:
     name: Validate the tag against the pin
@@ -302,6 +299,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7.0.1
         with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref }}
           submodules: recursive
           # Upstream's minor version is a commit count over full history; the
           # submodule carries its own tags, so `git describe` resolves the
@@ -309,13 +307,15 @@ jobs:
           fetch-depth: 0
 
       - id: meta
+        env:
+          REQUESTED_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
         run: |
           set -eu
           # The checkout action may clone the submodule shallowly; the release
           # tag on the pinned commit must be resolvable, so fetch it fully.
           git -C subprojects/decx-kuna/source fetch --tags --force origin 2>/dev/null || \
             git -C subprojects/decx-kuna/source fetch --unshallow --tags origin 2>/dev/null || true
-          tag="${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}"
+          tag="$REQUESTED_TAG"
           case "$tag" in
             kuna-v*) version="${tag#kuna-v}" ;;
             *) echo "::error::tag '$tag' must look like kuna-v<major.minor>"; exit 1 ;;

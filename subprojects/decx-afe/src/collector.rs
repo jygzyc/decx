@@ -19,11 +19,12 @@ use crate::layout::{absolute, mkdtemp, FrameworkLayout};
 
 /// Scanned in this order; `/apex` covers activated modules before
 /// `/system/apex`.
-pub const FRAMEWORK_REMOTE_ROOTS: [&str; 5] = [
+pub const FRAMEWORK_REMOTE_ROOTS: [&str; 6] = [
     "/system/framework",
     "/apex",
     "/vendor/framework",
     "/system_ext/framework",
+    "/product/framework",
     "/system/apex",
 ];
 
