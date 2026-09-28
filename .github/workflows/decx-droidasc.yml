@@ -45,6 +45,10 @@ jobs:
         with:
           submodules: recursive
 
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+
       - uses: actions/setup-python@v7.0.0
         with:
           python-version: ${{ matrix.python }}
