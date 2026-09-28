@@ -12,6 +12,7 @@ Upstream 0.1.0 renamed the project **ASC → DroidASC** and repackaged the tree 
 
 ```text
 droidasc getclass <container> <dalvik-class> [--threads N] [--debug] [-o FILE]
+droidasc listclass <container> [--prefix PREFIX] [--threads N] [--debug] [-o FILE]
 droidasc getmanifest <container> [--debug] [-o FILE]
 droidasc findrefs <container> [--threads N] [--debug] <string|type|method|field> ...
 droidasc <container> --gui [--threads N] [--debug]
@@ -21,6 +22,8 @@ droidasc <container> --gui [--threads N] [--debug]
 |---|---|
 | `droidasc getclass "<container>" "<class>"` | Locate one class, extract its DEX in memory, decompile to stdout |
 | `droidasc getclass "<container>" "<class>" -o "<file>"` | Same, also writing the source to `<file>` |
+| `droidasc listclass "<container>" [--prefix "<prefix>"]` | Class names across all DEX entries, one per line, optional prefix filter |
+| `droidasc listclass "<container>" -o "<file>"` | Same, writing the class list to `<file>` |
 | `droidasc getmanifest "<container>" [-o "<file>"]` | Decode `AndroidManifest.xml` as XML |
 | `droidasc findrefs "<container>" string "<value>"` | References to a fuzzy string across all DEX entries |
 | `droidasc findrefs "<container>" type "<value>"` | References to a fuzzy type descriptor/name |
@@ -31,8 +34,9 @@ droidasc <container> --gui [--threads N] [--debug]
 - Argument order is fixed: `getclass` takes `<container>` then `<class>`; `findrefs`
   takes `<container>`, then `--threads N` / `--debug` if used, then the kind, then the
   name and `--class` / `--fuzzy-class`. `-o FILE` writes the same text that goes to stdout.
-- `--threads N` (alias `--thread`, default 8) is defined on `getclass` and `findrefs`;
-  `--debug` and `-o` / `--output` are defined on all three subcommands — place them on the
+- `--threads N` (alias `--thread`, default 8) is defined on `getclass`, `listclass` and
+  `findrefs`;
+  `--debug` and `-o` / `--output` are defined on all four subcommands — place them on the
   subcommand, before the `findrefs` kind, not after it.
 - `string` and `type` take exactly one `<value>`; `method` and `field` take an optional
   `<name>` and require at least one of name or `--class`.
@@ -41,6 +45,9 @@ droidasc <container> --gui [--threads N] [--debug]
   value is a pattern rather than one exact class. A class-only query is valid.
 - `findrefs` searches all DEX entries and streams matching lines grouped by entry.
   No matching lines with exit 0 means no references were found; it is not an error.
+- `listclass` prints one class name per line in Dalvik descriptor form (`Lcom/poc/Main;`)
+  across every DEX entry. `--prefix` accepts a dotted or descriptor prefix and normalizes
+  it (`com.poc` → `Lcom/poc`); an empty prefix after stripping is a usage error.
 - `--fuzzy-class` switches `--class` from an exact class (normalized Dalvik form) to a
   fuzzy pattern such as `MainActivity` or `poc`.
 - `--gui` is intercepted before argparse, so it may sit anywhere in the argument list,
