@@ -211,7 +211,7 @@ describe('index', () => {
     await assert.rejects(resyncIndex(workspace, {
       ...fs,
       listDir: async (dir) => {
-        if (dir === join(workspace.wiki, 'patterns').replaceAll('\\', '/')) throw denied;
+        if (join(dir) === join(workspace.wiki, 'patterns')) throw denied;
         return fs.listDir(dir);
       },
     }), (error: unknown) => error === denied);
