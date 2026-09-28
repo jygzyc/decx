@@ -17,7 +17,7 @@ const distRoot = path.join(packageRoot, 'dist');
 const artifactRoot = path.join(packageRoot, 'artifacts');
 const packageInfo = JSON.parse(fs.readFileSync(path.join(packageRoot, 'package.json'), 'utf8'));
 function run(command, args) {
-  const result = spawnSync(command, args, { encoding: 'utf8' });
+  const result = spawnSync(command, args, { encoding: 'utf8', cwd: artifactRoot });
   if (result.error || result.status !== 0) throw new Error(`${command} ${args.join(' ')} failed (${result.status}): ${result.error?.message ?? ''}\n${result.stdout ?? ''}${result.stderr ?? ''}`);
 }
 if (!fs.existsSync(path.join(distRoot, 'decx.mjs'))) {
@@ -36,8 +36,8 @@ fs.copyFileSync(path.join(packageRoot, 'README.md'), path.join(stage, 'README.md
 
 const tarball = path.join(artifactRoot, `${name}.tar.gz`);
 fs.rmSync(tarball, { force: true });
-// bsdtar on Windows and GNU tar on Linux/macOS both support -czf/-C.
-run('tar', ['-czf', tarball, '-C', artifactRoot, name]);
+// Use relative archive paths: Windows tar treats the colon in C:\\ as a remote host separator.
+run('tar', ['-czf', path.basename(tarball), name]);
 fs.rmSync(stage, { recursive: true, force: true });
 
 const sha256 = createHash('sha256').update(fs.readFileSync(tarball)).digest('hex');
@@ -72,7 +72,7 @@ fs.copyFileSync(path.join(repoRoot, 'LICENSE'), path.join(piStage, 'LICENSE'));
 const piTarball = path.join(artifactRoot, `${piName}.tar.gz`);
 fs.rmSync(piTarball, { force: true });
 try {
-  run('tar', ['-czf', piTarball, '-C', artifactRoot, piName]);
+  run('tar', ['-czf', path.basename(piTarball), piName]);
 } finally {
   fs.rmSync(piStage, { recursive: true, force: true });
 }

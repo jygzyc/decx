@@ -363,7 +363,8 @@ export function launcherEnv(
   }
   const resolved: Record<string, string> = {};
   for (const [name, value] of Object.entries(env)) {
-    resolved[name] = value.replaceAll('{prefix}', prefix).replaceAll('{version}', version);
+    const expanded = value.replaceAll('{prefix}', prefix).replaceAll('{version}', version);
+    resolved[name] = value.includes('{prefix}') ? path.normalize(expanded) : expanded;
   }
   return Object.keys(resolved).length === 0 ? undefined : resolved;
 }

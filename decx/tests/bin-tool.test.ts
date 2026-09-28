@@ -60,7 +60,7 @@ test('binary fixture downloads a verified native executable and runs through dec
     assert.equal(result.provenance.reported_version, process.version);
     assert.equal(path.basename(result.launcher), entryName);
     assert.ok(fs.existsSync(result.launcher));
-    const linked = path.join(linkDir, entryName);
+    const linked = path.join(linkDir, process.platform === 'win32' ? 'binprobe.cmd' : entryName);
     assert.ok(fs.existsSync(linked));
     if (process.platform !== 'win32') {
       const viaLink = spawnSync(linked, ['-e', argvProgram, '--', 'from PATH'], { encoding: 'utf8' });

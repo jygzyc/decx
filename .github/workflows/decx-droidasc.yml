@@ -37,9 +37,10 @@ jobs:
     defaults:
       run:
         shell: bash
-    env:
-      DECX_HOME: ${{ runner.temp }}/decx-home
     steps:
+      - name: Set temporary install home
+        shell: bash
+        run: echo "DECX_HOME=$RUNNER_TEMP/decx-home" >> "$GITHUB_ENV"
       - uses: actions/checkout@v7.0.1
         with:
           submodules: recursive

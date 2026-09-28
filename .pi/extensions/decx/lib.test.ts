@@ -101,7 +101,7 @@ describe('workspaces', () => {
     const found = await discoverWorkspaces(archived.root, fs);
     assert.equal(found.length, 1);
     assert.equal(found[0].root, local.workspace.root);
-    assert.equal(found[0].skills, join(archived.root, '.agents', 'skills'));
+    assert.equal(found[0].skills, join(archived.root, '.agents', 'skills').replaceAll('\\', '/'));
     assert.notEqual(found[0].skills, archived.skills);
   });
 
@@ -110,7 +110,7 @@ describe('workspaces', () => {
     roots.push(project);
     assert.deepEqual(await discoverWorkspaces(project, fs), []);
     const first = await initLocalWiki(project, fs);
-    assert.equal(first.workspace.root, join(project, '.decxwiki'));
+    assert.equal(first.workspace.root, join(project, '.decxwiki').replaceAll('\\', '/'));
     assert.deepEqual(first.created, ['index.md', 'logs.md', 'skill-impact.md']);
     assert.equal(await readFile(join(project, '.decxwiki', '.gitignore'), 'utf8'), '/raw/\n');
     assert.deepEqual(await fs.listDir(join(project, '.agents', 'skills')), []);
@@ -211,7 +211,7 @@ describe('index', () => {
     await assert.rejects(resyncIndex(workspace, {
       ...fs,
       listDir: async (dir) => {
-        if (dir === join(workspace.wiki, 'patterns')) throw denied;
+        if (dir === join(workspace.wiki, 'patterns').replaceAll('\\', '/')) throw denied;
         return fs.listDir(dir);
       },
     }), (error: unknown) => error === denied);

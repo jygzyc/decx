@@ -74,7 +74,9 @@ jobs:
       - name: Build and smoke the scriptc launcher
         if: ${{ matrix.os == 'ubuntu-latest' && matrix.node == '24' }}
         working-directory: decx
-        run: npm run build:scriptc
+        run: |
+          npm run setup:scriptc
+          npm run build:scriptc
 
       - name: Wiki extension and portable skill checks
         if: ${{ matrix.os == 'ubuntu-latest' && matrix.node == '24' }}

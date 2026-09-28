@@ -127,9 +127,9 @@ contract is the portable `decx-tool` skill plus the one pi extension that owns t
 (`.pi/extensions/decx/`); nothing else may register into an agent harness. GitHub runs
 workflows only from the repository root, so each subproject and area has its own file
 there, scoped to its own `paths:` — keep them in sync when the crate, manifests, skills,
-wiki or managed paths change. Each file carries both that area's checks and its release
-publishing: branch pushes, pull requests and schedules run the checks, while a matching
-tag push (or a `workflow_dispatch` with the `tag` input) runs the release jobs instead,
+wiki or managed paths change. The manager and AFE workflows carry both checks and release publishing:
+branch pushes and pull requests run checks, while a matching tag push (or a
+`workflow_dispatch` with the `tag` input) runs release jobs instead,
 each refusing to build when its tag does not match the pinned version. `decx-cli.yml`
 (`cd decx && npm ci && npm run typecheck &&
 npm test`, plus the JSON-envelope and usage-error smoke runs, on Linux, macOS and Windows
@@ -148,14 +148,12 @@ no source archive is published) and
 upstream-skill-copy contract on every change; release install on Linux, macOS and Windows
 weekly and on demand; every 12 hours a scheduled job compares the pinned tag with upstream's
 latest release and pushes nothing when there is nothing newer — a new release moves the
-submodule gitlink, re-copies the skill reference and pushes the commit together with its
-`kuna-v<version>` tag; that tag, checked against the pinned gitlink's tag, mirrors
-upstream's own release assets repacked uniformly as zip, never built locally).
+submodule gitlink, re-copies the skill reference and pushes the commit. No local Kuna
+release mirror is published because installs use the official upstream assets directly).
 The manager and crate jobs are offline — the manager's install tests use fixture
 archives, fake toolchains and temporary prefixes — while the two tool workflows
 deliberately exercise the real install paths (`pip install` into the tool's venv, the Kuna
 release and specs archives); no workflow compiles the vendored upstream checkouts.
 The kuna manifest installs from official upstream releases — manifest 2 resolves the
-newest stable `v*` tag and verifies each asset against its GitHub REST SHA-256 digest;
-the repository mirror adds a checksum file for its optional zip assets.
+newest stable `v*` tag and verifies each asset against its GitHub REST SHA-256 digest.
 Keep README.md and README_zh.md aligned with the actual tools and launcher runtime requirements; do not document removed `decx` commands as current functionality.

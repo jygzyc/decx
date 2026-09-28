@@ -119,21 +119,19 @@ project=$(mktemp -d); node .pi/extensions/decx/cli.ts init --root "$project" && 
 
 AGENTS.md §Validation lists the full gate per area; CI is one workflow per subject under
 `.github/workflows/` — `decx-cli.yml`, `decx-afe.yml`, `decx-droidasc.yml` and
-`decx-kuna.yml` — each scoped to its own paths and carrying both the checks and the
-release for its subject (except DroidASC, published by upstream to PyPI): branch pushes
-and PRs run the checks, and release tags publish manager/AFE/Kuna assets. The manager and crate gates run offline
+`decx-kuna.yml` — each scoped to its own paths: branch pushes and PRs run checks, while release tags
+publish manager and AFE assets. DroidASC and Kuna use upstream distributions directly. The manager and crate gates run offline
 (fixture archives, fake toolchains, temp prefixes); the DroidASC and Kuna workflows
 deliberately exercise the real install paths, and the PR workflows never compile the
 vendored upstream checkouts. Releases: `decx-v*` → `decx-<version>.tar.gz` +
 `decx-SHA256SUMS.txt`, four gzip-compressed scriptc launchers (Node required at runtime), and `decx-pi-<version>.tar.gz` +
 `decx-pi-SHA256SUMS.txt`; `tools-v*` → the six `afe-<version>-<platform>` archives +
-`afe-SHA256SUMS.txt`, `kuna-v*` → mirrors upstream's release assets (repacked as zip,
-never built locally). DroidASC needs no repository release or packaging script. Kuna tracks upstream
-on its own: every 12 hours its workflow compares the pinned tag with upstream's latest
-release and pushes nothing when there is nothing newer — a new release moves the submodule
-pin, re-copies the skill reference and pushes the commit with its `kuna-v<version>` tag,
-which is the release trigger. `decx install kuna` installs official upstream `v*` archives, verifying GitHub REST
-asset SHA-256 digests; the repository mirrors remain optional.
+`afe-SHA256SUMS.txt`. Neither DroidASC nor Kuna needs a repository release.
+Kuna tracks upstream on its own: every 12 hours its workflow compares the pinned tag
+with upstream's latest release and pushes nothing when there is nothing newer — a new
+release moves the submodule pin, re-copies the skill reference and pushes the commit.
+`decx install kuna` installs official upstream `v*` archives, verifying GitHub REST
+asset SHA-256 digests.
 
 ## Scope and non-goals
 

@@ -59,6 +59,7 @@ test('Python fixture installs a local wheel into a real private venv and runs th
     PIP_FIND_LINKS: wheelhouse,
     PIP_DISABLE_PIP_VERSION_CHECK: '1',
     PYTHONPATH: '',
+    PYTHONIOENCODING: 'utf-8',
   };
   const linkDir = path.join(home, 'links');
   const result = await installTool(pythonManifest(), { version: '1.0.0', links: linkDir }, {

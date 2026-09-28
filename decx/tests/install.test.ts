@@ -245,7 +245,7 @@ test('release install downloads, verifies the checksum and stages bin + PROVENAN
       assert.deepEqual(result.binaries, ['demo']);
       assert.equal(result.launcher, path.join(home, 'bin', 'demo'));
       assert.ok(fs.existsSync(result.launcher));
-      assert.ok(calls.some((call) => call.endsWith('bin/demo --version')));
+      assert.ok(calls.some((call) => call.endsWith(`${path.join('bin', 'demo')} --version`)));
       assert.ok(server.requested.includes(ASSET_PATH));
       assert.ok(server.requested.includes(CHECKSUMS_PATH));
 
@@ -394,8 +394,9 @@ test('replacing a binary prunes only its obsolete managed PATH link', async () =
   await withDemoServer({ [ASSET_PATH]: oldArchive }, async (server) => {
     await installTool(demoManifest(), { version: '1.0.0' }, context(home, repo, server.url, releaseRunner()));
   });
-  const oldLink = path.join(home, '.local', 'bin', 'demo');
-  assert.ok(fs.lstatSync(oldLink).isSymbolicLink());
+  const windows = process.platform === 'win32';
+  const oldLink = path.join(home, '.local', 'bin', windows ? 'demo.cmd' : 'demo');
+  assert.ok(windows ? fs.existsSync(oldLink) : fs.lstatSync(oldLink).isSymbolicLink());
   const foreign = path.join(home, '.local', 'bin', 'unrelated');
   writeFile(foreign, 'leave alone');
   const newArchive = makeTarGz([{ name: 'next', data: '#!/bin/sh\necho next\n', mode: 0o755 }]);
@@ -405,7 +406,8 @@ test('replacing a binary prunes only its obsolete managed PATH link', async () =
   });
   assert.equal(fs.existsSync(oldLink), false);
   assert.equal(fs.existsSync(path.join(home, 'bin', 'demo')), false);
-  assert.ok(fs.lstatSync(path.join(home, '.local', 'bin', 'next')).isSymbolicLink());
+  const nextLink = path.join(home, '.local', 'bin', windows ? 'next.cmd' : 'next');
+  assert.ok(windows ? fs.existsSync(nextLink) : fs.lstatSync(nextLink).isSymbolicLink());
   assert.equal(fs.readFileSync(foreign, 'utf8'), 'leave alone');
 });
 
@@ -617,7 +619,7 @@ test('the explicit pip install argv is used even if uv is present', async () => 
     await installTool(shipped('droidasc'), {}, context(home, tempDir('decx-repo-'), server.url, run));
     const install = calls.find((call) => call.args[0] === '-m' && call.args[1] === 'pip');
     assert.deepEqual(install?.args.slice(0, 3), ['-m', 'pip', 'install']);
-    assert.match(install?.args.at(-1) ?? '', /\.decx-stage-[^/]+[\/]extract/);
+    assert.match(install?.args.at(-1) ?? '', /\.decx-stage-[^\\/]+[\\/]extract/);
     assert.equal(calls.some((call) => call.command === 'uv'), false);
   });
 });
@@ -907,7 +909,7 @@ test('CLI module invocation takes --home before -m and forwards the rest verbati
 
   const forwarded = runCli(['--home', home, '--subprojects', subprojectsDir, '-m', 'demo', '--home', '/tmp/elsewhere']);
   assert.equal(forwarded.status, 7);
-  assert.match(fs.readFileSync(probe, 'utf8'), /--home \/tmp\/elsewhere/);
+  assert.match(fs.readFileSync(probe, 'utf8'), /"?--home"?\s+"?\/tmp\/elsewhere"?/);
 });
 
 test('CLI help covers the installer commands', () => {
@@ -1180,32 +1182,32 @@ test('commit failures restore payload, specs, all store binaries and PROVENANCE'
 });
 
 test('a real offline venv executes the installed console script after commit', async (t) => {
+  // This test substitutes a POSIX shell script for pip's console entry point.
+  // The real Windows .exe entry point is exercised by python-tool.test.ts.
+  if (process.platform === 'win32') { t.skip('POSIX shell console script fixture'); return; }
   const python = ['python3', 'python'].find((command) => spawnSync(command, ['-c', 'import venv, ensurepip'], { encoding: 'utf8' }).status === 0);
   if (python === undefined) { t.skip('Python with venv/ensurepip is not available'); return; }
   const home = tempDir('decx-real-venv-');
   const repo = tempDir('decx-repo-');
   pythonCheckout(repo);
-  const windows = process.platform === 'win32';
   const run: CommandRunner = (spec) => {
     if (['git', 'uv', 'pipx'].includes(spec.command)) return fail();
     if (spec.args.includes('install') && spec.args.includes('pip')) {
-      const bin = path.join(home, 'runtime', 'droidasc', windows ? 'Scripts' : 'bin');
-      writeFile(path.join(bin, windows ? 'droidasc.exe' : 'droidasc'), windows ? 'MZ' : '#!/bin/sh\necho installed-console\n', 0o755);
+      const bin = path.join(home, 'runtime', 'droidasc', 'bin');
+      writeFile(path.join(bin, 'droidasc'), '#!/bin/sh\necho installed-console\n', 0o755);
       return ok();
     }
     const result = spawnSync(spec.command, spec.args, { encoding: 'utf8', timeout: 60_000 });
     return { status: result.status, stdout: result.stdout ?? '', stderr: result.stderr ?? '', ...(result.error ? { error: result.error.message } : {}) };
   };
-  const ctx = context(home, repo, 'http://127.0.0.1:9', run, windows ? 'win-amd64' : 'linux-amd64');
+  const ctx = context(home, repo, 'http://127.0.0.1:9', run, 'linux-amd64');
   ctx.env = { ...process.env, HOME: home, USERPROFILE: home, DECX_PYTHON: python };
   const manifest = { ...shipped('droidasc'), requires: { python: '>=3.8' } };
   const installed = await installTool(manifest, { noLinks: true }, ctx);
   assert.deepEqual(fs.readdirSync(installed.prefix), ['PROVENANCE']);
-  if (!windows) {
-    const result = spawnSync(installed.launcher, ['--version'], { encoding: 'utf8' });
-    assert.equal(result.status, 0, result.stderr);
-    assert.equal(result.stdout.trim(), 'installed-console');
-  }
+  const result = spawnSync(installed.launcher, ['--version'], { encoding: 'utf8' });
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(result.stdout.trim(), 'installed-console');
 });
 
 test('core PROVENANCE failure never creates PATH links', async (t) => {

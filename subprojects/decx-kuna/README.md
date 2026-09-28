@@ -51,7 +51,6 @@ use local fixture releases with both valid and invalid asset digests.
 
 Every 12 hours, `sync-pin` compares the vendored gitlink with the latest Kuna
 release. On a change it updates the pin, re-copies the upstream skill reference,
-and publishes a repository `kuna-v<version>` mirror tag. The mirror workflow
-still repacks archives as zip and publishes a checksum file, but the manager
-now prefers and installs official upstream releases. DECX does not modify the
-vendored checkout or the copied upstream skill.
+and pushes the updated commit. There is no repository mirror: the manager
+installs only the verified official upstream release. DECX does not modify
+the vendored checkout or the copied upstream skill.
