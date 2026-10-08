@@ -18,9 +18,10 @@
     "test": "node --test \"tests/**/*.test.ts\" \"tests/*.test.mjs\"",
     "typecheck": "tsc --noEmit",
     "build": "node scripts/build.mjs",
-    "setup:scriptc": "npm install --prefix .scriptc-toolchain --no-save --package-lock=false --ignore-scripts --no-audit --no-fund scriptc@0.1.7",
-    "compile:ts-tool": "node .scriptc-toolchain/node_modules/scriptc/dist/bootstrap.js build",
+    "setup:scriptc": "node scripts/setup-scriptc.mjs",
+    "compile:ts-tool": "node scripts/compile-ts-tool.mjs",
     "build:scriptc": "node scripts/build-scriptc.mjs",
+    "test:native": "node scripts/test-native.mjs",
     "prepack": "npm run build",
     "pack": "node scripts/pack.mjs",
     "decx": "node src/cli.ts"

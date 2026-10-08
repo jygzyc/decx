@@ -14,6 +14,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { extractArchive } from './archive.ts';
+import { lstatIfPresent } from './fs.ts';
 import { binRoot, resolveLinkDir, runtimePath, toolPrefix } from './config.ts';
 import { createLinks, removeManagedLink, type LinkOutcome } from './links.ts';
 import {
@@ -37,9 +38,11 @@ export type InstallMethod = 'release download' | 'python venv';
 export interface CommandSpec {
   command: string;
   args: string[];
-  /** `capture` (default) keeps output for the caller; `stream` also forwards it to stderr. */
-  mode?: 'capture' | 'stream';
+  /** `capture` keeps output; `stream` also logs it; `inherit` connects the terminal. */
+  mode?: 'capture' | 'stream' | 'inherit';
   env?: NodeJS.ProcessEnv;
+  windowsHide?: boolean;
+  windowsVerbatimArguments?: boolean;
 }
 
 export interface CommandResult {
@@ -49,7 +52,7 @@ export interface CommandResult {
   error?: string;
 }
 
-export type CommandRunner = (spec: CommandSpec) => CommandResult | Promise<CommandResult>;
+export type CommandRunner = (spec: CommandSpec) => Promise<CommandResult>;
 
 export interface InstallContext {
   /** DECX_HOME root; the tool prefix is `<home>/share/<id>`. */
@@ -129,7 +132,7 @@ interface ResolvedContext {
 
 interface StagedOutcome {
   /** Runs after the payload reaches its permanent path, while backups still exist. */
-  initialize?: () => Promise<Record<string, string>>;
+  initialize?: () => Promise<void>;
   provenance: Record<string, string>;
   binaries: string[];
   launcherName: string;
@@ -157,9 +160,19 @@ function resolveContext(context: InstallContext): ResolvedContext {
   };
 }
 
-async function defaultRunner(spec: CommandSpec): Promise<CommandResult> {
+export async function defaultRunner(spec: CommandSpec): Promise<CommandResult> {
   return new Promise((resolve) => {
-    const child = spawn(spec.command, spec.args, { env: spec.env ?? process.env, windowsHide: true });
+    const child = spec.mode === 'inherit'
+      ? spawn(spec.command, spec.args, {
+        env: spec.env ?? process.env, stdio: 'inherit',
+        windowsHide: spec.windowsHide !== false,
+        windowsVerbatimArguments: spec.windowsVerbatimArguments === true,
+      })
+      : spawn(spec.command, spec.args, {
+        env: spec.env ?? process.env, stdio: 'pipe',
+        windowsHide: spec.windowsHide !== false,
+        windowsVerbatimArguments: spec.windowsVerbatimArguments === true,
+      });
     let stdout = '';
     let stderr = '';
     child.stdout?.on('data', (chunk: Buffer) => {
@@ -184,14 +197,19 @@ async function runCommand(
   command: string,
   args: string[],
   mode: 'capture' | 'stream' = 'capture',
-  extraEnv?: NodeJS.ProcessEnv,
+  extraEnv?: Record<string, string>,
 ): Promise<CommandResult> {
-  return await ctx.run({ command, args, mode, env: extraEnv === undefined ? ctx.env : { ...ctx.env, ...extraEnv } });
+  const env: NodeJS.ProcessEnv = {};
+  for (const [key, value] of Object.entries(ctx.env)) env[key] = value;
+  if (extraEnv !== undefined) {
+    for (const [key, value] of Object.entries(extraEnv)) env[key] = value;
+  }
+  return await ctx.run({ command, args, mode, env });
 }
 
 function assertInstallRoot(home: string): string {
   const resolved = path.resolve(home);
-  if (resolved === path.parse(resolved).root) {
+  if (resolved === path.dirname(resolved)) {
     throw new InstallError('UNSAFE_PREFIX', `refusing to install directly into ${resolved}`, { exitCode: 2 });
   }
   if (resolved === path.resolve(os.homedir())) {
@@ -286,7 +304,8 @@ export function venvLauncherText(input: VenvLauncherInput): string {
     '  link=$(readlink "$self")',
     '  case $link in /*) self=$link ;; *) self=$(dirname -- "$self")/$link ;; esac',
     'done',
-    'root=$(CDPATH= cd -- "$(dirname -- "$self")/.." && pwd)',
+    'case $self in */*) dir=${self%/*} ;; *) dir=. ;; esac',
+    'root=$(CDPATH= cd -- "$dir/.." && pwd)',
     `export VIRTUAL_ENV="$root/runtime/${input.id}"`,
     `export PATH="$VIRTUAL_ENV/${input.venvBin}:$PATH"`,
     `exec "$VIRTUAL_ENV/${input.venvBin}/${input.command}" "$@"`,
@@ -504,7 +523,20 @@ function findSpecsDir(extract: string): string | null {
 }
 
 function copyTree(source: string, dest: string): void {
-  fs.cpSync(source, dest, { recursive: true });
+  const entry = fs.lstatSync(source);
+  if (entry.isSymbolicLink()) {
+    // Match cpSync's default: resolve the target relative to the source link.
+    fs.symlinkSync(path.resolve(path.dirname(source), fs.readlinkSync(source)), dest);
+  } else if (entry.isDirectory()) {
+    fs.mkdirSync(dest, { recursive: true });
+    for (const name of fs.readdirSync(source)) {
+      copyTree(path.join(source, name), path.join(dest, name));
+    }
+  } else if (entry.isFile()) {
+    fs.copyFileSync(source, dest);
+  } else {
+    throw new InstallError('UNSAFE_ENTRY', `unsupported filesystem entry: ${source}`);
+  }
 }
 
 function applyExecutableMode(file: string): void {
@@ -531,7 +563,7 @@ function isExecutable(file: string): boolean {
 
 function pickLauncher(manifest: ToolManifest, binaries: readonly string[]): string {
   const wanted = manifest.launch.commands[0] as string;
-  const found = binaries.find((name) => path.parse(name).name === wanted);
+  const found = binaries.find((name) => path.basename(name, path.extname(name)) === wanted);
   if (found !== undefined) {
     return found;
   }
@@ -628,7 +660,7 @@ async function findPython(
     if (!output.startsWith('Python 3')) {
       continue;
     }
-    const found = { ...candidate, output };
+    const found = { command: candidate.command, args: candidate.args, label: candidate.label, output };
     fallback ??= found;
     const version = firstVersion(output);
     if (requirement === undefined || version === undefined || meetsRequirement(version, requirement)) {
@@ -977,8 +1009,9 @@ function pythonArchiveRoot(extract: string): string {
     return extract;
   }
   const children = listDirEntries(extract);
-  if (children.length === 1 && children[0]?.isDirectory()) {
-    const directory = path.join(extract, children[0].name);
+  const child = children[0];
+  if (children.length === 1 && child !== undefined && child.isDirectory()) {
+    const directory = path.join(extract, child.name);
     if (fs.existsSync(path.join(directory, marker))) {
       return directory;
     }
@@ -1037,13 +1070,15 @@ async function checkoutRevision(ctx: ResolvedContext, checkout: LocalCheckout): 
   const commit = await git(['rev-parse', 'HEAD']);
   const tag = await git(['describe', '--tags', '--exact-match', 'HEAD']);
   const status = await git(['status', '--porcelain']);
-  return {
-    ...checkout,
-    ...(commit !== null && commit !== '' ? { commit } : {}),
-    ...(tag !== null && tag !== '' ? { tag } : {}),
-    dirty: status !== null && status !== '',
-    clean: status === '',
+  const revision: LocalCheckout = {
+    directory: checkout.directory, relative: checkout.relative,
+    dirty: status !== null && status !== '', clean: status === '',
   };
+  if (checkout.commit !== undefined) revision.commit = checkout.commit;
+  if (checkout.tag !== undefined) revision.tag = checkout.tag;
+  if (commit !== null && commit !== '') revision.commit = commit;
+  if (tag !== null && tag !== '') revision.tag = tag;
+  return revision;
 }
 
 /**
@@ -1074,17 +1109,15 @@ async function pythonSource(
     if (checkout.dirty) {
       ctx.log(`warning: ${checkout.relative} has uncommitted changes; the install records what is there, not the pinned revision`);
     }
+    const provenance: Record<string, string> = { source: checkout.relative };
+    if (checkout.commit !== undefined) provenance.source_commit = checkout.commit;
+    if (checkout.tag !== undefined) provenance.source_tag = checkout.tag;
+    if (checkout.dirty) provenance.source_dirty = 'true';
+    if (version !== undefined) provenance.version = version;
     return {
-      directory: checkout.directory,
+      directory: checkout.directory, provenance,
       ...(version !== undefined ? { version } : {}),
       ...(checkout.tag !== undefined ? { releaseTag: checkout.tag } : {}),
-      provenance: {
-        source: checkout.relative,
-        ...(checkout.commit !== undefined ? { source_commit: checkout.commit } : {}),
-        ...(checkout.tag !== undefined ? { source_tag: checkout.tag } : {}),
-        ...(checkout.dirty ? { source_dirty: 'true' } : {}),
-        ...(version !== undefined ? { version } : {}),
-      },
     };
   }
   const tag = await resolveInstallTag(ctx, release, options);
@@ -1231,7 +1264,7 @@ async function stageVenv(
           `${path.join(binRoot(ctx.home), launcherName)} -> ${consoleScript}`,
         ],
       ];
-      return fromEntries(entries);
+      for (const [key, value] of entries) sourceProvenance[key] = value;
     },
   };
 }
@@ -1288,7 +1321,7 @@ async function commitStage(
 ): Promise<CommittedStage> {
   const binDir = binRoot(home);
   const payload = toolPrefix(home, id);
-  const existingPayload = fs.lstatSync(payload, { throwIfNoEntry: false });
+  const existingPayload = lstatIfPresent(payload);
   if (existingPayload !== undefined && readProvenance(path.join(payload, 'PROVENANCE'))?.tool !== id) {
     throw new InstallError('PAYLOAD_CONFLICT', `${payload} exists without a valid ${id} PROVENANCE; refusing to replace unrelated files`);
   }
@@ -1300,7 +1333,7 @@ async function commitStage(
   const storeNames = names.map((name) => (wrap === undefined ? name : launcherStoreName(name)));
   for (const name of storeNames) {
     const target = path.join(binDir, name);
-    if (fs.lstatSync(target, { throwIfNoEntry: false }) !== undefined && !previous.includes(name) && !force) {
+    if (lstatIfPresent(target) !== undefined && !previous.includes(name) && !force) {
       throw new InstallError(
         'BIN_CONFLICT',
         `${target} already exists and is not part of the current ${id} install; installing would shadow another tool`,
@@ -1325,7 +1358,7 @@ async function commitStage(
   let committed: CommittedStage;
   try {
     fs.mkdirSync(path.join(backupRoot, 'bin'));
-    if (fs.lstatSync(payload, { throwIfNoEntry: false }) !== undefined) {
+    if (lstatIfPresent(payload) !== undefined) {
       fs.renameSync(payload, backup);
       payloadSaved = true;
     }
@@ -1336,7 +1369,7 @@ async function commitStage(
     if (fs.existsSync(stagedSpecs)) {
       fs.renameSync(stagedSpecs, path.join(payload, 'specs'));
     }
-    if (replaceRuntime && fs.lstatSync(runtime, { throwIfNoEntry: false }) !== undefined) {
+    if (replaceRuntime && lstatIfPresent(runtime) !== undefined) {
       fs.renameSync(runtime, runtimeBackup);
       runtimeSaved = true;
     }
@@ -1344,7 +1377,7 @@ async function commitStage(
     // Save every overwritten or stale executable before modifying the store.
     for (const name of new Set([...storeNames, ...previous])) {
       const target = path.join(binDir, name);
-      if (fs.lstatSync(target, { throwIfNoEntry: false }) !== undefined) {
+      if (lstatIfPresent(target) !== undefined) {
         fs.renameSync(target, path.join(backupRoot, 'bin', name));
         savedBins.push(name);
       }
@@ -1438,7 +1471,7 @@ export async function installTool(
   const ctx = resolveContext({ ...context, home });
   const prefix = toolPrefix(home, manifest.id);
   const previousRecord = readProvenance(path.join(prefix, 'PROVENANCE'));
-  if (fs.lstatSync(prefix, { throwIfNoEntry: false }) !== undefined && previousRecord?.tool !== manifest.id) {
+  if (lstatIfPresent(prefix) !== undefined && previousRecord?.tool !== manifest.id) {
     throw new InstallError('PAYLOAD_CONFLICT', `${prefix} exists without a valid ${manifest.id} PROVENANCE; refusing to replace unrelated files`);
   }
   if (manifest.launch.type === 'js') {
@@ -1483,18 +1516,15 @@ export async function installTool(
     let storeLauncher = outcome.launcherName;
     let provenance: Record<string, string> = {};
     const committed = await commitStage(stage, home, manifest.id, options.force === true, ctx.log, async () => {
-      if (outcome.initialize !== undefined) {
-        outcome.provenance = { ...outcome.provenance, ...await outcome.initialize() };
-      }
+      const initialize = outcome.initialize;
+      if (initialize !== undefined) await initialize();
     }, (committed) => {
       storeLauncher = committed.launcher ?? outcome.launcherName;
-      provenance = {
-        ...outcome.provenance,
-        binary: path.join(binDir, storeLauncher),
-        binaries: committed.bins.join(' '),
-        bin_dir: binDir,
-        ...(launcherVariables !== undefined ? { env: formatEnv(launcherVariables) } : {}),
-      };
+      provenance = fromEntries(Object.entries(outcome.provenance));
+      provenance.binary = path.join(binDir, storeLauncher);
+      provenance.binaries = committed.bins.join(' ');
+      provenance.bin_dir = binDir;
+      if (launcherVariables !== undefined) provenance.env = formatEnv(launcherVariables);
       fs.writeFileSync(path.join(prefix, 'PROVENANCE'), formatProvenance(provenance));
     }, wrap, method === 'python venv');
     // A successful swap may have removed old executable names or moved links to
@@ -1516,11 +1546,9 @@ export async function installTool(
       try {
         links = createLinks({ home, files: committed.bins, linkDir, force: options.force === true, log: ctx.log });
         const linked = links.filter((link) => link.status !== 'conflict');
-        const linkedProvenance = {
-          ...provenance,
-          link_dir: linkDir,
-          ...(linked.length > 0 ? { links: linked.map((link) => link.path).join(' ') } : {}),
-        };
+        const linkedProvenance = fromEntries(Object.entries(provenance));
+        linkedProvenance.link_dir = linkDir;
+        if (linked.length > 0) linkedProvenance.links = linked.map((link) => link.path).join(' ');
         // An atomic replacement leaves the core record valid if recording links fails.
         const record = path.join(stage, 'PROVENANCE.links');
         try {
@@ -1556,8 +1584,8 @@ export async function installTool(
       ...(outcome.checksum !== undefined ? { checksum: outcome.checksum } : {}),
       provenance,
       pathHint: pathHint(pathDir, isWindows()),
-      ...(options.noLinks === true ? {} : { links, linkDir }),
     };
+    if (options.noLinks !== true) { result.links = links; result.linkDir = linkDir; }
     ctx.log(`installed ${manifest.id} (${outcome.method})`);
     ctx.log(`  launcher: ${result.launcher}`);
     if (committed.removed.length > 0) {

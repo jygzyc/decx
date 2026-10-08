@@ -198,6 +198,7 @@ export function makeZip(entries: readonly ZipEntry[]): Buffer {
 export interface FixtureServer {
   url: string;
   requested: string[];
+  authorizations: Array<string | undefined>;
   close(): Promise<void>;
 }
 
@@ -205,11 +206,14 @@ export interface FixtureServer {
 export async function startFixtureServer(
   routes: Record<string, Buffer | string>,
   statuses: Record<string, number> = {},
+  headers: Record<string, Record<string, string>> = {},
 ): Promise<FixtureServer> {
   const requested: string[] = [];
+  const authorizations: Array<string | undefined> = [];
   const server = http.createServer((request, response) => {
     const url = new URL(request.url ?? '/', 'http://127.0.0.1');
     requested.push(url.pathname);
+    authorizations.push(request.headers.authorization);
     const body = routes[url.pathname];
     if (body === undefined) {
       response.writeHead(404, { 'content-type': 'text/plain' });
@@ -218,6 +222,7 @@ export async function startFixtureServer(
     }
     response.writeHead(statuses[url.pathname] ?? 200, {
       'content-type': url.pathname.endsWith('.json') ? 'application/json' : 'application/octet-stream',
+      ...headers[url.pathname],
     });
     response.end(body);
   });
@@ -231,6 +236,7 @@ export async function startFixtureServer(
   return {
     url: `http://127.0.0.1:${address.port}`,
     requested,
+    authorizations,
     close: () =>
       new Promise<void>((resolve, reject) => {
         server.close((error) => {

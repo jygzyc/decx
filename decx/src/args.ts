@@ -79,7 +79,11 @@ export function parseArgs(argv: readonly string[]): CliArgs {
       return args;
     }
     if (boolKey !== undefined) {
-      args[boolKey] = true;
+      switch (boolKey) {
+        case 'force': args.force = true; break;
+        case 'noLinks': args.noLinks = true; break;
+        case 'pretty': args.pretty = true; break;
+      }
       continue;
     }
     const value = argv[index + 1];
@@ -88,8 +92,13 @@ export function parseArgs(argv: readonly string[]): CliArgs {
       return args;
     }
     index += 1;
-    if (globalKey !== undefined) args[globalKey] = value;
-    else if (releaseKey !== undefined) args[releaseKey] = value;
+    switch (globalKey) {
+      case 'home': args.home = value; break;
+      case 'subprojects': args.subprojects = value; break;
+      case 'links': args.links = value; break;
+      default:
+        if (releaseKey === 'releaseTag') args.releaseTag = value;
+    }
   }
   return args;
 }

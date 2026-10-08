@@ -149,18 +149,22 @@ function validateLaunch(value: unknown, where: string, errors: string[]): Launch
   if (value.type !== 'bin' && value.type !== 'python' && value.type !== 'js') {
     errors.push(`${where}.type must be "bin", "python" or "js"`);
   }
-  const commands = value.commands;
-  if (!Array.isArray(commands) || commands.length === 0 ||
-    commands.some((command) => !isBareDirectoryName(command)) ||
-    new Set(commands).size !== commands.length) {
+  const commands: unknown[] | undefined = Array.isArray(value.commands) ? value.commands as unknown[] : undefined;
+  if (commands === undefined || commands.length === 0 ||
+    commands.some((command) => !isBareDirectoryName(command))) {
     errors.push(`${where}.commands must be a non-empty list of distinct safe command names`);
     return undefined;
   }
-  if (value.type === 'python' && commands.length !== 1) {
+  const names = commands as string[];
+  if (new Set<string>(names).size !== names.length) {
+    errors.push(`${where}.commands must be a non-empty list of distinct safe command names`);
+    return undefined;
+  }
+  if (value.type === 'python' && names.length !== 1) {
     errors.push(`${where}: Python venv launch currently supports one console command`);
   }
   if (value.type !== 'bin' && value.type !== 'python' && value.type !== 'js') return undefined;
-  return { type: value.type, commands };
+  return { type: value.type, commands: names };
 }
 
 function requireString(record: Record<string, unknown>, key: string, where: string, errors: string[]): string {
@@ -216,15 +220,16 @@ export function validateManifest(
       errors.push(`${file}: "${key}" is not supported any more; every install comes from the release assets`);
     }
   }
-  for (const key of ['homepage', 'license', 'notes'] as const) {
+  const optionalTextKeys: string[] = ['homepage', 'license', 'notes'];
+  for (const key of optionalTextKeys) {
     if (value[key] !== undefined && typeof value[key] !== 'string') {
       errors.push(`${file}: "${key}" must be a string`);
     }
   }
   const launch = validateLaunch(value.launch, `${file}: launch`, errors);
   const kind = launch?.type === 'python' ? 'python-venv' : 'binary';
-  const recipe = value.install;
-  if (!Array.isArray(recipe) || recipe.length === 0 ||
+  const recipe: unknown[] | undefined = Array.isArray(value.install) ? value.install as unknown[] : undefined;
+  if (recipe === undefined || recipe.length === 0 ||
     recipe.some((arg) => typeof arg !== 'string' || arg.trim() === '')) {
     errors.push(`${file}: install must be a non-empty argv array`);
   } else if (kind === 'binary' && (recipe.length !== 1 || recipe[0] !== 'github-release')) {
@@ -234,14 +239,14 @@ export function validateManifest(
   }
   if (value.python !== undefined) errors.push(`${file}: python is obsolete; declare pip install arguments in "install"`);
   if (value.bins !== undefined) errors.push(`${file}: "bins" is obsolete; declare commands under "launch"`);
-  const usesSource = kind === 'python-venv' && Array.isArray(recipe) &&
+  const usesSource = kind === 'python-venv' && recipe !== undefined &&
     recipe.some((arg: unknown) => typeof arg === 'string' && arg.includes('{source}'));
   const requiresRelease = kind === 'binary' || usesSource;
   const release = value.release === undefined && !requiresRelease ? undefined : validateRelease(value.release, id, `${file}: release`, errors);
   if (kind === 'python-venv' && !usesSource && value.release !== undefined) {
     errors.push(`${file}: PyPI install recipes must not declare release assets`);
   }
-  if (kind === 'python-venv' && !usesSource && Array.isArray(recipe) &&
+  if (kind === 'python-venv' && !usesSource && recipe !== undefined &&
     (typeof recipe[2] !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9_.-]*$/.test(recipe[2]))) {
     errors.push(`${file}: PyPI install recipes must name a package immediately after install`);
   }
@@ -284,7 +289,7 @@ export function validateManifest(
     id,
     install: value.install as string[],
     summary,
-    ...(isRecord(value.homepage) ? {} : typeof value.homepage === 'string' ? { homepage: value.homepage } : {}),
+    ...(typeof value.homepage === 'string' ? { homepage: value.homepage } : {}),
     ...(typeof value.license === 'string' ? { license: value.license } : {}),
     ...(typeof value.notes === 'string' ? { notes: value.notes } : {}),
     ...(isRecord(value.requires) ? { requires: value.requires as { python?: string } } : {}),

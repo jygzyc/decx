@@ -11,6 +11,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import zlib from 'node:zlib';
+import { lstatIfPresent } from './fs.ts';
 
 export class ArchiveError extends Error {
   readonly code = 'ARCHIVE_ERROR';
@@ -58,7 +59,7 @@ function assertNoSymlinkPath(root: string, target: string): void {
       continue;
     }
     current = path.join(current, part);
-    const entry = fs.lstatSync(current, { throwIfNoEntry: false });
+    const entry = lstatIfPresent(current);
     if (entry === undefined) {
       // No descendant can exist yet; mkdir will create it below a checked parent.
       return;
@@ -102,8 +103,8 @@ function assertLinkInside(root: string, linkPath: string, linkName: string, targ
       continue;
     }
     current = path.join(current, part);
-    const entry = fs.lstatSync(current, { throwIfNoEntry: false });
-    if (entry?.isSymbolicLink()) {
+    const entry = lstatIfPresent(current);
+    if (entry !== undefined && entry.isSymbolicLink()) {
       if (++followed > 40) {
         throw new ArchiveError(`archive symlink chain is cyclic or too deep: ${linkPath}`);
       }
@@ -176,9 +177,11 @@ export function extractTarGz(archive: string, dest: string): void {
   let longName: string | null = null;
   while (offset + 512 <= buffer.length) {
     const header = buffer.subarray(offset, offset + 512);
-    if (header.every((byte) => byte === 0)) {
-      break;
+    let empty = true;
+    for (let index = 0; index < header.length; index += 1) {
+      if (header[index] !== 0) { empty = false; break; }
     }
+    if (empty) break;
     const size = readOctal(header, 124, 12);
     const typeflag = String.fromCharCode(header[156] ?? 0);
     const dataStart = offset + 512;

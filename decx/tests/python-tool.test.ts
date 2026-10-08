@@ -7,7 +7,8 @@ import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { installTool } from '../src/install.ts';
 import { validateManifest, type ToolManifest } from '../src/manifest.ts';
-import { makeZip, runCli, tempDir } from './fixtures.ts';
+import { runCli, tempDir } from './fixtures.ts';
+import { writePythonWheel } from './python-wheel.ts';
 
 const fixtureDir = fileURLToPath(new URL('./fixtures/python-tool/', import.meta.url));
 const manifestFile = path.join(fixtureDir, 'decx-pyprobe.json');
@@ -17,20 +18,6 @@ function pythonManifest(): ToolManifest {
   assert.deepEqual(errors, []);
   assert.ok(manifest);
   return manifest;
-}
-
-/** A minimal pure-Python wheel, built in memory; pip only sees this local wheelhouse. */
-function writeWheel(wheelhouse: string): void {
-  const info = 'pyprobe-1.0.0.dist-info';
-  const files = [
-    { name: 'pyprobe/__init__.py', data: fs.readFileSync(path.join(fixtureDir, 'pyprobe', '__init__.py')) },
-    { name: 'pyprobe/cli.py', data: fs.readFileSync(path.join(fixtureDir, 'pyprobe', 'cli.py')) },
-    { name: `${info}/METADATA`, data: 'Metadata-Version: 2.1\nName: pyprobe\nVersion: 1.0.0\n' },
-    { name: `${info}/WHEEL`, data: 'Wheel-Version: 1.0\nGenerator: decx-test\nRoot-Is-Purelib: true\nTag: py3-none-any\n' },
-    { name: `${info}/entry_points.txt`, data: '[console_scripts]\npyprobe = pyprobe.cli:main\n' },
-  ];
-  const record = [...files.map(({ name }) => `${name},,`), `${info}/RECORD,,`].join('\n') + '\n';
-  fs.writeFileSync(path.join(wheelhouse, 'pyprobe-1.0.0-py3-none-any.whl'), makeZip([...files, { name: `${info}/RECORD`, data: record }]));
 }
 
 test('Python fixture installs a local wheel into a real private venv and runs through decx -m', async (t) => {
@@ -44,7 +31,7 @@ test('Python fixture installs a local wheel into a real private venv and runs th
   const subproject = path.join(subprojects, 'decx-pyprobe');
   fs.mkdirSync(subproject, { recursive: true });
   fs.copyFileSync(manifestFile, path.join(subproject, 'decx-pyprobe.json'));
-  writeWheel(wheelhouse);
+  writePythonWheel(wheelhouse);
 
   // These are pip's offline switches, not an installer shortcut: DECX still
   // creates the venv, invokes its pip and verifies its generated console script.

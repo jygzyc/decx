@@ -166,7 +166,7 @@ function context(
 
 /** Runner for release installs: answers the launcher verification only. */
 function releaseRunner(calls: string[] = [], verifyResult: CommandResult = ok('demo 1.0.0\n')): CommandRunner {
-  return (spec) => {
+  return async (spec) => {
     calls.push(`${spec.command} ${spec.args.join(' ')}`.trim());
     if (path.parse(spec.command).name === 'demo' && spec.args[0] === '--version') {
       return verifyResult;
@@ -531,7 +531,7 @@ test('published DroidASC installs from PyPI without fetching a source archive', 
   const home = tempDir('decx-pypi-');
   const calls: CommandSpec[] = [];
   let installedVersion = '0.1.0';
-  const run: CommandRunner = (spec) => {
+  const run: CommandRunner = async (spec) => {
     calls.push(spec);
     if (spec.args[0] === '--version') return ok('Python 3.11.5\n');
     if (spec.args[0] === '-m' && spec.args[1] === 'venv') {
@@ -558,7 +558,7 @@ test('droidasc installs a private venv with a pass-through POSIX launcher', asyn
     const home = tempDir('decx-home-');
     const repoRoot = tempDir('decx-repo-');
     const calls: string[][] = [];
-    const run: CommandRunner = (spec) => {
+    const run: CommandRunner = async (spec) => {
       calls.push([spec.command, ...spec.args]);
       if (spec.command === 'python3' && spec.args[0] === '--version') {
         return { status: 0, stdout: '', stderr: 'Python 3.11.5\n' };
@@ -610,7 +610,7 @@ test('the explicit pip install argv is used even if uv is present', async () => 
   await withDemoServer(droidascRoutes(), async (server) => {
     const home = tempDir('decx-home-');
     const calls: CommandSpec[] = [];
-    const run: CommandRunner = (spec) => {
+    const run: CommandRunner = async (spec) => {
       calls.push(spec);
       if (spec.command === 'python3' && spec.args[0] === '--version') return ok('Python 3.11.5\n');
       if (spec.args[0] === '-m' && spec.args[1] === 'venv') writeFile(path.join(home, 'runtime', 'droidasc', 'bin', 'python'), '#!/bin/sh\n', 0o755);
@@ -635,7 +635,7 @@ test('a vendored checkout is preferred over the release archive', async () => {
     writeFile(path.join(source, 'pyproject.toml'), '[project]\nname="droidasc"\nversion="0.1.0"\n[project.scripts]\ndroidasc="droidasc:main"\n');
     writeFile(path.join(source, 'droidasc', 'cli.py'), 'VALUE = 2\n', 0o644);
     const calls: string[][] = [];
-    const run: CommandRunner = (spec) => {
+    const run: CommandRunner = async (spec) => {
       calls.push([spec.command, ...spec.args]);
       if (spec.command === 'git' && spec.args.includes('rev-parse')) {
         return ok(`${sha}\n`);
@@ -681,7 +681,7 @@ test('a vendored checkout is preferred over the release archive', async () => {
 test('the installed Python payload retains only provenance, not source or shipped environments', async () => {
   await withDemoServer(droidascRoutes([{ name: '.venv/pyvenv.cfg', data: 'home = /usr\n' }]), async (server) => {
     const home = tempDir('decx-home-');
-    const run: CommandRunner = (spec) => {
+    const run: CommandRunner = async (spec) => {
       if (spec.args[0] === '--version') return ok('Python 3.11.5\n');
       if (spec.args[0] === '-m' && spec.args[1] === 'venv') {
         writeFile(path.join(home, 'runtime', 'droidasc', 'bin', 'python'), '#!/bin/sh\n', 0o755);
@@ -703,7 +703,7 @@ test('a too-old default python3 is skipped in favour of a versioned interpreter'
       'python3.12': 'Python 3.12.4\n',
     };
     const calls: string[][] = [];
-    const run: CommandRunner = (spec) => {
+    const run: CommandRunner = async (spec) => {
       calls.push([spec.command, ...spec.args]);
       const version = versions[spec.command];
       if (spec.args[0] === '--version') {
@@ -729,7 +729,7 @@ test('a too-old default python3 is skipped in favour of a versioned interpreter'
     // Nothing new enough on PATH: stop with an actionable error instead of a
     // venv the tool cannot run in.
     const stale = tempDir('decx-home-');
-    const staleRun: CommandRunner = (spec) =>
+    const staleRun: CommandRunner = async (spec) =>
       spec.args[0] === '--version' ? { status: 0, stdout: 'Python 3.9.6\n', stderr: '' } : fail();
     await assert.rejects(
       () => installTool(shipped('droidasc'), {}, context(stale, repoRoot, server.url, staleRun)),
@@ -744,7 +744,7 @@ test('droidasc on Windows creates the cmd launcher and uses Scripts/python.exe',
   await withDemoServer(droidascRoutes(), async (server) => {
     const home = tempDir('decx-home-');
     const repoRoot = tempDir('decx-repo-');
-    const run: CommandRunner = (spec) => {
+    const run: CommandRunner = async (spec) => {
       if (spec.command === 'python3' && spec.args[0] === '--version') {
         return { status: 0, stdout: 'Python 3.11.5\n', stderr: '' };
       }
@@ -963,7 +963,7 @@ function pythonCheckout(repo: string): string {
 }
 
 function pythonRunner(calls: CommandSpec[] = [], broken = '', windows = false): CommandRunner {
-  return (spec) => {
+  return async (spec) => {
     calls.push(spec);
     if (spec.command === 'git') {
       if (broken === 'git') return fail();
@@ -989,12 +989,12 @@ test('DECX_PYTHON uses the supplied environment and failed Python probes are rej
   pythonCheckout(repo);
   const calls: CommandSpec[] = [];
   const fake = pythonRunner(calls);
-  const ctx = context(home, repo, 'http://127.0.0.1:9', (spec) => spec.command === 'chosen-python' && spec.args[0] === '--version' ? ok('Python 3.12.0') : fake(spec));
+  const ctx = context(home, repo, 'http://127.0.0.1:9', async (spec) => spec.command === 'chosen-python' && spec.args[0] === '--version' ? ok('Python 3.12.0') : fake(spec));
   ctx.env = { ...homeEnv(home), DECX_PYTHON: 'chosen-python' };
   await installTool(shipped('droidasc'), { noLinks: true }, ctx);
   assert.equal(calls.find((call) => call.args[1] === 'venv')?.command, 'chosen-python');
   const failedHome = tempDir('decx-home-');
-  await assert.rejects(() => installTool(shipped('droidasc'), { noLinks: true }, context(failedHome, repo, 'http://127.0.0.1:9', (spec) =>
+  await assert.rejects(() => installTool(shipped('droidasc'), { noLinks: true }, context(failedHome, repo, 'http://127.0.0.1:9', async (spec) =>
     spec.args[0] === '--version' ? { status: 1, stdout: 'Python 3.12.0', stderr: '' } : fail(),
   )), (error: unknown) => error instanceof InstallError && error.code === 'PYTHON_NOT_FOUND');
 });
@@ -1098,7 +1098,7 @@ test('installed Python console script forwards arguments without a copied source
   const home = tempDir('decx-home with spaces-');
   const repo = tempDir('decx-repo-');
   pythonCheckout(repo);
-  const run: CommandRunner = (spec) => {
+  const run: CommandRunner = async (spec) => {
     if (spec.args[0] === '--version') return ok('Python 3.11.5\n');
     if (spec.args[0] === '-m' && spec.args[1] === 'venv') {
       writeFile(path.join(home, 'runtime', 'droidasc', 'bin', 'python'), '#!/bin/sh\n', 0o755);
@@ -1190,7 +1190,7 @@ test('a real offline venv executes the installed console script after commit', a
   const home = tempDir('decx-real-venv-');
   const repo = tempDir('decx-repo-');
   pythonCheckout(repo);
-  const run: CommandRunner = (spec) => {
+  const run: CommandRunner = async (spec) => {
     if (['git', 'uv', 'pipx'].includes(spec.command)) return fail();
     if (spec.args.includes('install') && spec.args.includes('pip')) {
       const bin = path.join(home, 'runtime', 'droidasc', 'bin');

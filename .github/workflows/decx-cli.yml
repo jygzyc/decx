@@ -71,13 +71,6 @@ jobs:
       - run: npm test
         working-directory: decx
 
-      - name: Build and smoke the scriptc launcher
-        if: ${{ matrix.os == 'ubuntu-latest' && matrix.node == '24' }}
-        working-directory: decx
-        run: |
-          npm run setup:scriptc
-          npm run build:scriptc
-
       - name: Wiki extension and portable skill checks
         if: ${{ matrix.os == 'ubuntu-latest' && matrix.node == '24' }}
         run: |
@@ -118,6 +111,41 @@ jobs:
           code=$?
           set -e
           test "$code" -eq 2 || { echo "expected exit 2, got $code"; exit 1; }
+
+  native-check:
+    name: Native manager (${{ matrix.platform }})
+    if: ${{ !(github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')) && (github.event_name != 'workflow_dispatch' || !inputs.tag) }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: ubuntu-latest, platform: linux-x64 }
+          - { os: ubuntu-24.04-arm, platform: linux-arm64 }
+          - { os: macos-15-arm64, platform: darwin-arm64 }
+          - { os: windows-latest, platform: windows-x64 }
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+          check-latest: true
+          cache: npm
+          cache-dependency-path: decx/package-lock.json
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.11'
+      - uses: ilammy/msvc-dev-cmd@v1
+        if: runner.os == 'Windows'
+      - name: Compile and test the native manager without Node on its PATH
+        working-directory: decx
+        run: |
+          npm ci
+          npm run setup:scriptc
+          node --test tests/scriptc-tool.test.ts
+          npm run build:scriptc
+          npm run test:native
 
   pack:
     name: build and pack the CLI
@@ -170,7 +198,7 @@ jobs:
           retention-days: 7
 
   native:
-    name: scriptc launcher (${{ matrix.platform }})
+    name: scriptc manager (${{ matrix.platform }})
     if: ${{ (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')) || (github.event_name == 'workflow_dispatch' && inputs.tag != '') }}
     needs: pack
     runs-on: ${{ matrix.os }}
@@ -192,7 +220,12 @@ jobs:
           check-latest: true
           cache: npm
           cache-dependency-path: decx/package-lock.json
-      - name: Build native launcher and verify version/help
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.11'
+      - uses: ilammy/msvc-dev-cmd@v1
+        if: runner.os == 'Windows'
+      - name: Build native manager and verify offline tool lifecycles
         shell: bash
         working-directory: decx
         run: |
@@ -200,6 +233,7 @@ jobs:
           npm run setup:scriptc
           node --test tests/scriptc-tool.test.ts
           npm run build:scriptc
+          npm run test:native
           gzip -9 "dist/decx-${{ matrix.platform }}${{ matrix.platform == 'windows-x64' && '.exe' || '' }}"
       - uses: actions/upload-artifact@v7
         with:

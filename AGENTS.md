@@ -21,10 +21,11 @@ It is not a decompiler, unified analysis CLI, plugin runtime, or analysis server
 - The portable execution skills live in root `skills/`; read `skills/AGENTS.md`
   before editing it. The wiki-maintenance process is built into the extension,
   not a separate skill.
-- `decx/` is the toolkit installer and manager: a Node CLI that discovers the tools in
+- `decx/` is the toolkit installer and manager: a TypeScript CLI that discovers the tools in
   `subprojects/decx-<id>/decx-<id>.json`, installs, locates and runs them, and reports what is
   installed and what this host supports. Development runs TypeScript directly on
-  Node 24.21+; releases ship compiled JavaScript with bundled tool manifests. It prints
+  Node 24.21+; releases ship bundled JavaScript and scriptc-native executables with
+  embedded tool manifests. Native executables require no external Node. It prints
   JSON on stdout and keeps no runtime dependencies. It is the only
   install path — installs are declared as data, never as per-platform scripts.
 
@@ -57,7 +58,7 @@ Installation prefers upstream distribution; repository release assets are fallba
 Integrity failures must stop installation, not silently switch sources.
 
 Windows support is part of the contract: installing, using and compiling must work there
-as well as on macOS and Linux. The manager is plain Node, so it runs natively in
+as well as on macOS and Linux. Both the Node CLI and compiled native manager run directly in
 PowerShell or cmd — never require Git Bash, `uname`, `bash` or POSIX tools at install
 time — and it installs `.exe`/`.cmd` names there. Keep the Windows branches covered by
 tests. Rust code must build and pass tests under MSVC (no POSIX-only APIs, no `/bin/sh`
@@ -103,8 +104,12 @@ ledger lives under the pi agent directory, outside the three knowledge layers.
 - Manager: `cd decx && npm ci && npm run typecheck && npm test && npm run build`; `node src/cli.ts version` must keep printing one JSON
   envelope. Run `npm run setup:scriptc` before `npm run build:scriptc` or the independent TS-tool test;
   it installs the pinned compiler under the ignored `.scriptc-toolchain/`, outside `npm ci`.
-  `build:scriptc` embeds the Node bundle in a scriptc-compiled native launcher
-  for the host (four platforms, excluding Windows arm64 and macOS x64); the launcher requires Node 24.21+ on PATH. Install tests are offline — fixture archives served locally, a local wheel installed
+  `build:scriptc` compiles the typed manager with scriptc 0.2.3 and its embedded
+  dynamic engine, not an external Node launcher. Run `npm run test:native` after
+  compiling: native release and Python-wheel lifecycle tests remove Node from PATH.
+  Four hosts are release-gated (Linux x64/arm64, macOS arm64, Windows x64);
+  Windows arm64 is unsupported by scriptc and macOS x64 is outside the release matrix.
+  Windows compilation links an in-binary Win32 cmd bridge using Clang and the SDK. Install tests are offline — fixture archives served locally, a local wheel installed
   with real Python/pip into a private venv, and fake toolchains for other branches — and must never touch the real home
   directory or the network; pass `--home`/`DECX_HOME` with temp dirs.
 - Skills: `python3 skills/check-skills.py` verifies frontmatter, names and relative
@@ -134,7 +139,8 @@ each refusing to build when its tag does not match the pinned version. `decx-cli
 (`cd decx && npm ci && npm run typecheck &&
 npm test`, plus the JSON-envelope and usage-error smoke runs, on Linux, macOS and Windows
 on the latest Node 24 release; tag `decx-v*`, checked against `decx/package.json`, builds
-`dist/`, installs the pinned scriptc compiler separately and tests an independently compiled TS tool, then builds four native launchers on their target hosts (Node required at runtime), packs `decx-<version>.tar.gz` plus `decx-SHA256SUMS.txt` and a separate
+`dist/`, installs the pinned scriptc compiler separately and tests an independently compiled TS tool, then builds the complete native manager on four target hosts and gates release on
+  offline native lifecycle tests with Node absent from PATH (no external Node at runtime), packs `decx-<version>.tar.gz` plus `decx-SHA256SUMS.txt` and a separate
 `decx-pi-<version>.tar.gz` plus `decx-pi-SHA256SUMS.txt` (extension and execution
 skills), and smokes the bundles and launchers on all four architectures before publishing), `decx-afe.yml` (crate fmt/clippy on Linux; test,
 release build and

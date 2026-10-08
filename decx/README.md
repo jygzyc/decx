@@ -221,27 +221,42 @@ Direct source execution (`node src/cli.ts …`) still reads package.json and the
 repository's `subprojects/`. In either mode, `--subprojects <dir>` replaces the
 default manifest set with that directory's manifests; it does not merge them.
 
-## scriptc native launcher
+## scriptc native manager
 
-On Node 24.21+, first run `npm run setup:scriptc` to install the pinned
-scriptc 0.1.7 toolchain into the ignored `.scriptc-toolchain/` directory. This
-is a build-time dependency, not part of the manager's `npm ci` or shipped
-runtime. Then `npm run build:scriptc` bundles the manager with esbuild, embeds
-that bundle in a small TypeScript launcher compiled with scriptc, and tests
-`version` and `help`. The output is `dist/decx-<platform>` (or `.exe` on Windows).
-Releases build four native targets on their respective hosts: macOS arm64,
-Linux x64/arm64 and Windows x64. Windows arm64 is not supported by scriptc
-0.1.7. macOS x64 is excluded because its scriptc 0.1.7 LLVM helper and runtime
-pack were not published on npm. Regular `npm test` skips the native TS fixture
-until `setup:scriptc` runs; the release jobs run setup and that test explicitly.
+On Node 24.21+, run `npm run setup:scriptc` to install scriptc 0.2.3 into
+`.scriptc-toolchain/`. Its complete dependency graph is locked separately in
+`toolchains/scriptc/package-lock.json`; setup uses `npm ci` with lifecycle
+scripts disabled, then explicitly runs scriptc's native compiler setup.
+It is a build-time dependency, separate from the manager's `npm ci`.
 
-**The manager launcher requires Node 24.21+ on PATH at runtime.** It extracts
-the embedded single-file Node CLI into a private temporary directory, invokes
-Node with the original arguments and inherited stdio, and deletes the file when
-it exits. It does not require the repository, package.json or node_modules.
-The manager uses Node APIs (notably process spawning with custom environments,
-streaming downloads and filesystem links) that scriptc 0.1.7 cannot compile
-directly; the launcher avoids claiming it is a standalone native runtime.
+`npm run build:scriptc` stages the typed manager sources, embeds the version
+and manifests, and invokes the native compiler with `--dynamic`. It does not
+compile erased esbuild output or launch an external Node interpreter. Successful
+builds must pass smoke checks with Node absent from PATH outside the checkout.
+
+`npm run test:native` tests the resulting manager with Node absent from its
+PATH: verified tar.gz/zip installation, cross-origin redirect authentication,
+environment launchers and argument preservation, update, checksum failure and
+rollback, removal, and a real Python venv installing a local wheel. All prefixes,
+links and caches are temporary; pip cannot use the network. These tests have
+passed locally on macOS arm64. Branch and release CI run compilation and the
+same native tests on Linux x64/arm64, macOS arm64 and Windows x64; a platform
+must pass before its native artifact is published.
+
+Source adaptations are build-only: namespace imports, native fetch with shared
+redirect/download verification policy, explicit filesystem copy/link handling,
+and typed callbacks. Node source execution retains its HTTP adapter. Windows
+links a small `CreateProcessW` FFI implementation into the same executable so
+`.cmd` arguments retain their existing escaping; building that bridge requires
+Clang and the Windows SDK (CI initializes the MSVC environment). No bridge binary,
+Node interpreter or JavaScript sidecar is needed at runtime. `--dynamic` embeds
+scriptc's own dynamic engine for unsupported static operations, not Node.
+
+```console
+$ npm run setup:scriptc
+$ npm run build:scriptc
+$ npm run test:native
+```
 
 ## Independent TypeScript tools (scriptc)
 
@@ -251,12 +266,11 @@ executable as a verified release asset and declare `launch.type: "bin"` in the
 tool manifest. DECX installs and invokes that native binary without Node at
 runtime. `tests/scriptc-tool.test.ts` compiles a real TS fixture, serves a
 checksum-protected archive locally, then installs and executes it through
-`decx -m` without network access. DECX builds TS tools for macOS arm64,
-Linux x64/arm64 and Windows x64 only. scriptc documents macOS x64 support,
-but the matching 0.1.7 npm packages are missing. Because scriptc is installed
-separately for builds, the manager's lockfile and `npm ci` do not depend on
-these optional platform packages. Do not use a scriptc 0.1.0 override: those
-published packages contain placeholders, not a working LLVM helper.
+`decx -m` without network access. scriptc 0.2.3 publishes native compilers
+for macOS x64/arm64, Linux x64/arm64 and Windows x64; Windows arm64 remains
+unsupported. CI tests independent tool compilation on the same four hosts as
+the native manager; macOS x64 is not part of the release matrix. Because scriptc is installed separately for builds,
+the manager's lockfile and `npm ci` do not depend on its platform packages.
 
 Adding a tool: create `subprojects/decx-<id>/` with its own `README.md` and the
 `decx-<id>.json` manifest (the tool id is the subproject directory name without the

@@ -11,13 +11,12 @@
  * (usage error).
  */
 
-import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { KNOWN_COMMANDS, parseArgs, type CliArgs } from './args.ts';
 import { binRoot, resolveHome } from './config.ts';
-import { InstallError, installTool, type InstallOptions, type InstallResult } from './install.ts';
+import { defaultRunner, InstallError, installTool, type InstallOptions, type InstallResult } from './install.ts';
 import { toolState } from './inspect.ts';
 import { fail, ok, stringify } from './json.ts';
 import { loadManifests, type LoadResult, type ToolManifest } from './manifest.ts';
@@ -208,14 +207,16 @@ export async function run(argv: readonly string[], env: NodeJS.ProcessEnv = proc
       const spec = launchSpec(state.bin, args.toolArgs, process.platform, env);
       // Tools resolve their payload from $DECX_HOME (AFE does), so a custom
       // --home has to reach the child even when the host never exported it.
-      const child = spawnSync(spec.command, spec.args, {
-        stdio: 'inherit',
+      const child = await defaultRunner({
+        command: spec.command,
+        args: spec.args,
+        mode: 'inherit',
         env: { ...env, DECX_HOME: home },
         windowsHide: false,
-        ...(spec.windowsVerbatimArguments === true ? { windowsVerbatimArguments: true } : {}),
+        windowsVerbatimArguments: spec.windowsVerbatimArguments === true,
       });
       if (child.error !== undefined) {
-        throw new InstallError('LAUNCH_FAILED', `could not launch ${state.bin}: ${child.error.message}`);
+        throw new InstallError('LAUNCH_FAILED', `could not launch ${state.bin}: ${child.error}`);
       }
       return child.status ?? 1;
     } catch (error) {
@@ -267,10 +268,19 @@ export async function run(argv: readonly string[], env: NodeJS.ProcessEnv = proc
         hint: `use \`decx install ${manifest.id} --force\` to reinstall`,
       });
     }
-    const result = await installTool(manifest, { ...installOptions(args), ...(command === 'update' ? { preferRelease: true, ...(args.releaseTag === undefined ? { version: 'latest' } : {}) } : {}) }, {
+    const options = installOptions(args);
+    if (command === 'update') {
+      options.preferRelease = true;
+      if (args.releaseTag === undefined) options.version = 'latest';
+    }
+    const apiBase = env.DECX_GITHUB_API_BASE;
+    const downloadBase = env.DECX_GITHUB_DOWNLOAD_BASE;
+    const result = await installTool(manifest, options, {
       home,
       repoRoot: REPO_ROOT,
       env,
+      ...(apiBase !== undefined ? { apiBase } : {}),
+      ...(downloadBase !== undefined ? { downloadBase } : {}),
       platform: currentPlatformKey(),
     });
     emit(ok(command, installPayload(result)), args.pretty);

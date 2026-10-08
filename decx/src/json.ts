@@ -4,7 +4,10 @@
  * shape as the rest of DECX.
  */
 
-export type SuccessEnvelope<T> = { ok: true; command: string } & T;
+export interface SuccessEnvelope extends Record<string, unknown> {
+  ok: true;
+  command: string;
+}
 
 export interface FailureEnvelope {
   ok: false;
@@ -12,8 +15,10 @@ export interface FailureEnvelope {
   error: { code: string; message: string; hint?: string };
 }
 
-export function ok<T extends object>(command: string, payload: T): SuccessEnvelope<T> {
-  return { ok: true, command, ...payload };
+export function ok(command: string, payload: Record<string, unknown>): SuccessEnvelope {
+  const envelope: SuccessEnvelope = { ok: true, command };
+  for (const key of Object.keys(payload)) envelope[key] = payload[key];
+  return envelope;
 }
 
 export function fail(command: string | null, code: string, message: string, hint?: string): FailureEnvelope {

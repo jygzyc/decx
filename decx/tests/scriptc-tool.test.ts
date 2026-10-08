@@ -11,10 +11,9 @@ import { makeZip, runCli, sha256, startFixtureServer, tempDir } from './fixtures
 
 const fixture = fileURLToPath(new URL('./fixtures/scriptc-tool/', import.meta.url));
 const manifestFile = path.join(fixture, 'decx-scriptcprobe.json');
-const compiler = fileURLToPath(new URL('../.scriptc-toolchain/node_modules/scriptc/dist/bootstrap.js', import.meta.url));
+const compiler = fileURLToPath(new URL('../.scriptc-toolchain/node_modules/scriptc/bin/scriptc.exe', import.meta.url));
 const supported = Number(process.versions.node.split('.')[0]) >= 24 &&
   !(process.platform === 'win32' && process.arch === 'arm64') &&
-  !(process.platform === 'darwin' && process.arch === 'x64') &&
   fs.existsSync(compiler);
 
 function manifest(): ToolManifest {
@@ -40,12 +39,15 @@ test('scriptc builds an independent TS tool; decx installs its verified native r
 
   const executable = process.platform === 'win32' ? 'scriptcprobe.exe' : 'scriptcprobe';
   const compiled = path.join(repoRoot, executable);
-  const build = spawnSync(process.execPath, [compiler, 'build', path.join(fixture, 'probe.ts'), '-o', compiled], {
+  const build = spawnSync(compiler, ['build', path.join(fixture, 'probe.ts'), '-o', compiled], {
     encoding: 'utf8',
     timeout: 180_000,
   });
   assert.equal(build.status, 0, `${build.error ?? ''}\n${build.stdout}\n${build.stderr}`);
-  const direct = spawnSync(compiled, ['--version'], { encoding: 'utf8' });
+  const direct = spawnSync(compiled, ['--version'], {
+    cwd: home, encoding: 'utf8',
+    env: { ...process.env, PATH: home, Path: home, HOME: home, USERPROFILE: home },
+  });
   assert.equal(direct.status, 0, direct.stderr);
   assert.equal(direct.stdout.trim(), 'scriptcprobe 1.0.0');
 

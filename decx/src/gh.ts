@@ -11,12 +11,9 @@
 import childProcess from 'node:child_process';
 import { createHash } from 'node:crypto';
 import fs from 'node:fs';
-import http from 'node:http';
-import https from 'node:https';
 import path from 'node:path';
-import { Transform } from 'node:stream';
-import { pipeline } from 'node:stream/promises';
-import type { Readable } from 'node:stream';
+import { openResponse } from './transport.ts';
+import type { HttpResponse } from './http-types.ts';
 
 export const DEFAULT_API_BASE = 'https://api.github.com';
 export const DEFAULT_DOWNLOAD_BASE = 'https://github.com';
@@ -74,7 +71,8 @@ export async function releaseAssetDigests(options: GithubRequestOptions & { repo
     ...(options.token !== undefined ? { token: options.token } : {}),
   });
   const digests = new Map<string, string>();
-  for (const asset of Array.isArray(json.assets) ? json.assets : []) {
+  const assets: unknown[] = Array.isArray(json.assets) ? json.assets : [];
+  for (const asset of assets) {
     if (typeof asset !== 'object' || asset === null) continue;
     const { name, digest } = asset as { name?: unknown; digest?: unknown };
     if (typeof name === 'string' && typeof digest === 'string' && /^sha256:[0-9a-f]{64}$/i.test(digest)) {
@@ -105,10 +103,6 @@ export function githubToken(env: NodeJS.ProcessEnv = process.env): string | unde
   return undefined;
 }
 
-interface RawResponse {
-  status: number;
-  body: Readable;
-}
 
 interface RequestOptions {
   token?: string;
@@ -118,60 +112,53 @@ interface RequestOptions {
   authOrigin?: string;
 }
 
-function request(url: string, options: RequestOptions, redirects = 0): Promise<RawResponse> {
-  return new Promise((resolve, reject) => {
+async function request(url: string, options: RequestOptions): Promise<HttpResponse> {
+  let target: URL;
+  try { target = new URL(url); }
+  catch { throw new GithubError('BAD_URL', `not a valid URL: ${url}`); }
+  const authOrigin = options.authOrigin ?? target.origin;
+  for (let redirects = 0; ; redirects += 1) {
+    if (target.protocol !== 'http:' && target.protocol !== 'https:') {
+      throw new GithubError('ERR_INVALID_PROTOCOL', `unsupported URL protocol: ${target.protocol}`);
+    }
     if (redirects > 8) {
-      reject(new GithubError('TOO_MANY_REDIRECTS', `too many redirects while fetching ${url}`));
-      return;
+      throw new GithubError('TOO_MANY_REDIRECTS', `too many redirects while fetching ${target}`);
     }
-    let target: URL;
-    try {
-      target = new URL(url);
-    } catch {
-      reject(new GithubError('BAD_URL', `not a valid URL: ${url}`));
-      return;
-    }
-    const authOrigin = options.authOrigin ?? target.origin;
-    const transport = target.protocol === 'http:' ? http : https;
     const headers: Record<string, string> = {
-      accept: options.accept ?? '*/*',
-      'user-agent': options.userAgent,
+      accept: options.accept ?? '*/*', 'user-agent': options.userAgent,
     };
     if (options.token !== undefined && target.origin === authOrigin) {
       headers.authorization = `Bearer ${options.token}`;
     }
-    const req = transport.get(target, { headers }, (res) => {
-      const status = res.statusCode ?? 0;
-      const location = res.headers.location;
-      if (status >= 300 && status < 400 && location !== undefined) {
-        res.resume();
-        let next: URL;
-        try {
-          next = new URL(location, target);
-        } catch {
-          reject(new GithubError('BAD_URL', `not a valid redirect URL: ${location}`));
-          return;
-        }
-        if (target.protocol === 'https:' && next.protocol !== 'https:') {
-          reject(new GithubError('INSECURE_REDIRECT', `refusing HTTPS downgrade from ${target} to ${next}`));
-          return;
-        }
-        resolve(request(next.toString(), { ...options, authOrigin }, redirects + 1));
-        return;
-      }
-      resolve({ status, body: res });
-    });
-    req.on('error', (error) => reject(error));
-    req.setTimeout(60_000, () => req.destroy(new Error(`timed out after 60s while fetching ${url}`)));
-  });
+    const response = await openResponse(target.toString(), headers);
+    const location = response.location;
+    if (response.status < 300 || response.status >= 400 || location === undefined) return response;
+    response.cancel();
+    let next: URL;
+    try { next = new URL(location, target); }
+    catch { throw new GithubError('BAD_URL', `not a valid redirect URL: ${location}`); }
+    if (target.protocol === 'https:' && next.protocol !== 'https:') {
+      throw new GithubError('INSECURE_REDIRECT', `refusing HTTPS downgrade from ${target} to ${next}`);
+    }
+    target = next;
+  }
 }
 
-async function readBody(body: Readable): Promise<Buffer> {
+async function readBody(response: HttpResponse): Promise<Buffer> {
   const chunks: Buffer[] = [];
-  for await (const chunk of body) {
-    chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk as string));
-  }
-  return Buffer.concat(chunks);
+  const body = response.body;
+  try {
+    if (body !== null) {
+      const reader = body.getReader();
+      for (;;) {
+        const chunk = await reader.read();
+        if (chunk.done) break;
+        response.touch();
+        chunks.push(Buffer.from(chunk.value));
+      }
+    }
+    return Buffer.concat(chunks);
+  } finally { response.cancel(); }
 }
 
 function apiError(status: number, url: string, detail: string): GithubError {
@@ -181,7 +168,7 @@ function apiError(status: number, url: string, detail: string): GithubError {
 
 async function getJson<T>(url: string, options: RequestOptions): Promise<T> {
   const response = await request(url, { ...options, accept: 'application/vnd.github+json' });
-  const text = (await readBody(response.body)).toString('utf8');
+  const text = (await readBody(response)).toString('utf8');
   if (response.status !== 200) {
     let detail = text.slice(0, 300);
     try {
@@ -213,7 +200,7 @@ function releaseFromJson(repository: string, json: GithubReleaseJson, source: st
   if (typeof tag !== 'string' || tag.trim() === '') {
     throw new GithubError('RELEASE_NOT_FOUND', `no release tag in the GitHub response for ${source}`);
   }
-  const assets = Array.isArray(json.assets) ? json.assets : [];
+  const assets: unknown[] = Array.isArray(json.assets) ? json.assets : [];
   const assetNames: string[] = [];
   for (const asset of assets) {
     if (typeof asset === 'object' && asset !== null && typeof (asset as { name?: unknown }).name === 'string') {
@@ -283,7 +270,8 @@ export async function downloadAsset(
   dest: string,
   options: GithubRequestOptions = {},
 ): Promise<DownloadResult> {
-  let response: RawResponse;
+  const hash = createHash('sha256');
+  let response: HttpResponse;
   try {
     response = await request(url, {
       userAgent: options.userAgent ?? DEFAULT_USER_AGENT,
@@ -296,55 +284,71 @@ export async function downloadAsset(
     throw new GithubError('DOWNLOAD_FAILED', `failed to download ${url}: ${(error as Error).message}`);
   }
   if (response.status !== 200) {
-    response.body.resume();
+    response.cancel();
     throw new GithubError('DOWNLOAD_FAILED', `failed to download ${url}: HTTP ${response.status}`, {
       status: response.status,
       hint: 'check the release tag and network access',
     });
   }
-  fs.mkdirSync(path.dirname(dest), { recursive: true });
-  const hash = createHash('sha256');
   let bytes = 0;
-  const meter = new Transform({
-    transform(chunk, _encoding, callback) {
-      const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk as string);
-      hash.update(buffer);
-      bytes += buffer.length;
-      callback(null, buffer);
-    },
-  });
-  const output = fs.createWriteStream(dest);
-  let writeError: Error | undefined;
-  output.on('error', (error: NodeJS.ErrnoException) => {
-    // A local staging failure is not evidence that an upstream is unavailable.
-    if (error.syscall !== undefined && ['open', 'write', 'writev', 'close'].includes(error.syscall)) {
-      writeError = error;
-    }
-  });
+  let descriptor: number | undefined;
+  let localFailure = true;
   try {
-    await pipeline(response.body, meter, output);
-  } catch (error) {
-    fs.rmSync(dest, { force: true });
-    if (writeError !== undefined) {
-      throw writeError;
+    fs.mkdirSync(path.dirname(dest), { recursive: true });
+    descriptor = fs.openSync(dest, 'w');
+    localFailure = false;
+    const body = response.body;
+    if (body !== null) {
+      const reader = body.getReader();
+      for (;;) {
+        const chunk = await reader.read();
+        if (chunk.done) break;
+        response.touch();
+        const buffer = Buffer.from(chunk.value);
+        let offset = 0;
+        while (offset < buffer.length) {
+          localFailure = true;
+          const written = fs.writeSync(descriptor, buffer, offset, buffer.length - offset);
+          if (written === 0) throw new Error(`zero-byte write to ${dest}`);
+          localFailure = false;
+          offset += written;
+        }
+        hash.update(buffer);
+        bytes += buffer.length;
+      }
     }
+    localFailure = true;
+    fs.closeSync(descriptor);
+    descriptor = undefined;
+    localFailure = false;
+  } catch (error) {
+    response.cancel();
+    if (descriptor !== undefined) {
+      try { fs.closeSync(descriptor); } catch { /* Preserve the primary failure. */ }
+    }
+    fs.rmSync(dest, { force: true });
+    // A local staging failure must not trigger an upstream fallback.
+    if (localFailure) throw error;
     throw new GithubError('DOWNLOAD_FAILED', `failed to download ${url}: ${(error as Error).message}`);
   }
+  response.cancel();
   return { path: dest, sha256: hash.digest('hex'), bytes };
 }
 
 /** SHA-256 of a file on disk, as lowercase hex. */
 export async function sha256File(file: string): Promise<string> {
   const hash = createHash('sha256');
-  await pipeline(
-    fs.createReadStream(file),
-    new Transform({
-      transform(chunk, _encoding, callback) {
-        hash.update(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk as string));
-        callback(null);
-      },
-    }),
-  );
+  const descriptor = fs.openSync(file, 'r');
+  const buffer = Buffer.alloc(64 * 1024);
+  try {
+    for (;;) {
+      const bytes = fs.readSync(descriptor, buffer, 0, buffer.length, null);
+      if (bytes === 0) break;
+      hash.update(buffer.subarray(0, bytes));
+    }
+  } finally {
+    fs.closeSync(descriptor);
+  }
   return hash.digest('hex');
 }
 

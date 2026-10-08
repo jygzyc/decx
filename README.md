@@ -31,15 +31,16 @@ decx help install        # usage for the manager or one command
 Tools are declared as data in `subprojects/decx-<id>/decx-<id>.json`, never as code. Executables
 and payloads live under `$DECX_HOME` (`bin/`, `share/<id>/` with a `PROVENANCE` record); the
 manager installs tools, not language runtimes, and each tool keeps its own arguments and output.
-Layout, `--links` and install rules: [`decx/README.md`](decx/README.md). Development builds can also
-produce scriptc-built native launchers (`cd decx && npm run build:scriptc`).
-They embed the CLI, but still require Node 24.21+ on PATH; the checked-in CLI remains plain Node.
+Layout, `--links` and install rules: [`decx/README.md`](decx/README.md). Direct native compilation
+with scriptc 0.2.3 builds the complete manager (`cd decx && npm run setup:scriptc && npm run build:scriptc && npm run test:native`).
+The native executable does not require Node; Node remains required for source development and the JavaScript release.
+Local native lifecycle tests pass on macOS arm64; CI gates Linux x64/arm64, macOS arm64 and Windows x64.
 
 ### Platform support
 
 macOS, Linux and Windows are supported for installing, using and building. The manager is
-plain Node, so it runs in PowerShell or cmd on Windows and installs `.exe`/`.cmd` names
-there; no Git Bash, `uname` or POSIX tooling is involved.
+available as a Node CLI and a compiled native executable. Both run in PowerShell or cmd on Windows
+and install `.exe`/`.cmd` names there; tool installation needs no Git Bash, `uname` or POSIX tooling.
 
 | Tool | macOS / Linux | Windows |
 | --- | --- | --- |
@@ -124,7 +125,7 @@ publish manager and AFE assets. DroidASC and Kuna use upstream distributions dir
 (fixture archives, fake toolchains, temp prefixes); the DroidASC and Kuna workflows
 deliberately exercise the real install paths, and the PR workflows never compile the
 vendored upstream checkouts. Releases: `decx-v*` → `decx-<version>.tar.gz` +
-`decx-SHA256SUMS.txt`, four gzip-compressed scriptc launchers (Node required at runtime), and `decx-pi-<version>.tar.gz` +
+`decx-SHA256SUMS.txt` and `decx-pi-<version>.tar.gz` +
 `decx-pi-SHA256SUMS.txt`; `tools-v*` → the six `afe-<version>-<platform>` archives +
 `afe-SHA256SUMS.txt`. Neither DroidASC nor Kuna needs a repository release.
 Kuna tracks upstream on its own: every 12 hours its workflow compares the pinned tag
