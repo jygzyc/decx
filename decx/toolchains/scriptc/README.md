@@ -17,6 +17,8 @@ on every host. Node is needed for build scripts, not the resulting executables.
 Windows executable builds need Zig on PATH. CI uses Zig 0.16.0, matching the
 upstream runtime-pack build; older Zig CRT libraries can fail to resolve
 `stat64i32`. The same Zig compiler builds the in-binary Win32 process bridge.
+The manager and independently compiled tools embed a UTF-8 code-page manifest
+for Unicode environment variables and paths (Windows 10 1903+/Server 2022+).
 There is no external Node launcher or JavaScript sidecar.
 
 ## Native source adaptations

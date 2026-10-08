@@ -51,8 +51,8 @@ else {
   process.exit(7);
 }
 `);
-  const compiler = path.join(root, '.scriptc-toolchain/node_modules/scriptc/bin/scriptc.exe');
-  const compiled = spawnSync(compiler, ['build', source, '-o', fixture, '--no-keep-llvm'], { encoding: 'utf8', timeout: 90_000 });
+  const compileScript = path.join(root, 'scripts/compile-ts-tool.mjs');
+  const compiled = spawnSync(process.execPath, [compileScript, source, '-o', fixture, '--no-keep-llvm'], { encoding: 'utf8', timeout: 90_000 });
   assert.equal(compiled.status, 0, compiled.stderr);
   const packFixture = (): Buffer => {
     const bytes = fs.readFileSync(fixture);
@@ -62,7 +62,7 @@ else {
   };
   const archive = packFixture();
   writeFile(source, fs.readFileSync(source, 'utf8').replace('demo 1.0.0', 'demo 1.1.0'));
-  const compiledUpdate = spawnSync(compiler, ['build', source, '-o', fixture, '--no-keep-llvm'], { encoding: 'utf8', timeout: 90_000 });
+  const compiledUpdate = spawnSync(process.execPath, [compileScript, source, '-o', fixture, '--no-keep-llvm'], { encoding: 'utf8', timeout: 90_000 });
   assert.equal(compiledUpdate.status, 0, compiledUpdate.stderr);
   const updatedArchive = packFixture();
   const routes: Record<string, Buffer | string> = {};

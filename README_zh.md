@@ -87,7 +87,7 @@ project=$(mktemp -d); node .pi/extensions/decx/cli.ts init --root "$project" && 
 
 ## 范围与非目标
 
-DECX 不提供分析 CLI、会话管理、分析器注册表、内嵌 JavaScript 运行时、JADX 集成或分析服务端，也不把一个分析器的命令树翻译成另一个；`decx/` 只做安装、定位与报告，并把参数原样传给工具。DroidASC 与 Kuna 是按原样使用的上游工具。只有在上游工具确有无法覆盖的能力缺口时才增加适配。
+DECX 不提供分析 CLI、会话管理、分析器注册表、分析插件运行时、JADX 集成或分析服务端，也不把一个分析器的命令树翻译成另一个；`decx/` 只做安装、定位与报告，并把参数原样传给工具。DroidASC 与 Kuna 是按原样使用的上游工具。只有在上游工具确有无法覆盖的能力缺口时才增加适配。
 
 `subprojects/` 存放所有子项目，每个子项目都是自包含的：自己的 `README.md`、它的工具契约（在 `skills/decx-tool/references/` 中）、以及管理器读取的工具清单 `decx-<id>.json`。`decx-afe/` 是 DECX 自己维护的 Rust 工具；`decx-droidasc/` 与 `decx-kuna/` 把上游源码作为固定版本的 git submodule 放在 `source/`（见 `.gitmodules`）。
 

@@ -136,7 +136,7 @@ asset SHA-256 digests.
 
 ## Scope and non-goals
 
-DECX ships no analysis CLI, session manager, analyzer registry, embedded JavaScript runtime, JADX
+DECX ships no analysis CLI, session manager, analyzer registry, analysis-plugin runtime, JADX
 integration or analysis server, and it never translates one analyzer's command tree onto another;
 `decx/` installs, locates and reports tools and passes arguments through unchanged. DroidASC and
 Kuna are upstream tools used as they are. Adapters exist only for a demonstrated native-tool

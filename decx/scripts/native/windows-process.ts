@@ -20,7 +20,13 @@ export async function runWindowsVerbatim(spec: CommandSpec): Promise<CommandResu
     }
     entries.push(`${key}=${value}`);
   }
-  entries.sort((a, b) => a.toUpperCase() < b.toUpperCase() ? -1 : a.toUpperCase() > b.toUpperCase() ? 1 : 0);
+  entries.sort((a, b) => {
+    const left = a.toUpperCase();
+    const right = b.toUpperCase();
+    if (left < right) return -1;
+    if (left > right) return 1;
+    return 0;
+  });
   const commandLine = `"${spec.command}" ${spec.args.join(' ')}`;
   const environment = `${entries.join('\0')}\0\0`;
   const capture = spec.mode !== 'inherit';

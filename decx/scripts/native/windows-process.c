@@ -70,7 +70,7 @@ double decx_windows_run(const uint8_t *app, size_t app_size,
     startup.lpAttributeList = (LPPROC_THREAD_ATTRIBUTE_LIST)malloc(bytes);
     if (!startup.lpAttributeList) goto cleanup;
     if (!InitializeProcThreadAttributeList(startup.lpAttributeList, 1, 0, &bytes)) {
-        free(startup.lpAttributeList); startup.lpAttributeList = NULL; error = GetLastError(); goto cleanup;
+        error = GetLastError(); free(startup.lpAttributeList); startup.lpAttributeList = NULL; goto cleanup;
     }
     if (!UpdateProcThreadAttribute(startup.lpAttributeList, 0, PROC_THREAD_ATTRIBUTE_HANDLE_LIST,
         handles, sizeof(handles), NULL, NULL)) { error = GetLastError(); goto cleanup; }

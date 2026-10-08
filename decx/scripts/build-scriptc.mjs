@@ -7,6 +7,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { loadManifests } from '../src/manifest.ts';
+import { windowsResource } from './windows-resource.mjs';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
 const supported = new Set(['darwin-arm64', 'darwin-x64', 'linux-arm64', 'linux-x64', 'windows-x64']);
@@ -44,12 +45,15 @@ try {
     fs.copyFileSync(path.join(root, 'scripts/native/windows-process.ts'), path.join(stagedSources, 'windows-process.ts'));
     const object = path.join(temporary, 'windows-process.obj');
     run('zig', ['cc', '-target', 'x86_64-windows-gnu', '-c', path.join(root, 'scripts/native/windows-process.c'), '-o', object, '-O2', '-Wall', '-Wextra', '-Werror']);
+    // The runtime reads CRT environment/filesystem strings. Opt into UTF-8
+    // before CRT initialization instead of losing Unicode paths to the ACP.
+    const resource = windowsResource(temporary, run);
     const ffi = path.join(temporary, 'ffi.json');
     fs.writeFileSync(ffi, JSON.stringify({
       ffi_format: 1,
       functions: [{ name: 'decxWindowsRun', symbol: 'decx_windows_run',
         params: ['string', 'string', 'string', 'string', 'string', 'i32', 'i32'], returns: 'f64' }],
-      libraries: [object], system_libraries: ['kernel32'],
+      libraries: [object, resource], system_libraries: ['kernel32'],
     }));
     ffiArgs.push('--ffi', ffi);
   }

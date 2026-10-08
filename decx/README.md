@@ -248,8 +248,10 @@ redirect/download verification policy, explicit filesystem copy/link handling,
 and typed callbacks. Node source execution retains its HTTP adapter. Windows
 links a small `CreateProcessW` FFI implementation into the same executable so
 `.cmd` arguments retain their existing escaping; building that bridge requires
-Zig on PATH (CI pins Zig 0.16.0, matching upstream's Windows runtime-pack ABI). No bridge binary,
-Node interpreter or JavaScript sidecar is needed at runtime. `--dynamic` embeds
+Zig on PATH (CI pins Zig 0.16.0, matching upstream's Windows runtime-pack ABI). Windows native executables also embed a UTF-8 process-code-page manifest so
+environment variables and filesystem paths preserve Unicode (Windows 10 1903+
+or Windows Server 2022+). No bridge binary, Node interpreter or JavaScript
+sidecar is needed at runtime. `--dynamic` embeds
 scriptc's own dynamic engine for unsupported static operations, not Node.
 
 ```console
