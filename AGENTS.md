@@ -109,7 +109,7 @@ ledger lives under the pi agent directory, outside the three knowledge layers.
   compiling: native release and Python-wheel lifecycle tests remove Node from PATH.
   Four hosts are release-gated (Linux x64/arm64, macOS arm64, Windows x64);
   Windows arm64 is unsupported by scriptc and macOS x64 is outside the release matrix.
-  Windows compilation links an in-binary Win32 cmd bridge using Clang and the SDK. Install tests are offline — fixture archives served locally, a local wheel installed
+  Windows compilation links an in-binary Win32 cmd bridge using Zig (CI pins 0.14.1). Install tests are offline — fixture archives served locally, a local wheel installed
   with real Python/pip into a private venv, and fake toolchains for other branches — and must never touch the real home
   directory or the network; pass `--home`/`DECX_HOME` with temp dirs.
 - Skills: `python3 skills/check-skills.py` verifies frontmatter, names and relative

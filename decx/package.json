@@ -22,6 +22,7 @@
     "compile:ts-tool": "node scripts/compile-ts-tool.mjs",
     "build:scriptc": "node scripts/build-scriptc.mjs",
     "test:native": "node scripts/test-native.mjs",
+    "check:native": "npm run setup:scriptc && node --test tests/scriptc-tool.test.ts && npm run build:scriptc && npm run test:native",
     "prepack": "npm run build",
     "pack": "node scripts/pack.mjs",
     "decx": "node src/cli.ts"

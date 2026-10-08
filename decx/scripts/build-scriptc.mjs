@@ -43,7 +43,7 @@ try {
   if (process.platform === 'win32') {
     fs.copyFileSync(path.join(root, 'scripts/native/windows-process.ts'), path.join(stagedSources, 'windows-process.ts'));
     const object = path.join(temporary, 'windows-process.obj');
-    run('clang', ['-c', path.join(root, 'scripts/native/windows-process.c'), '-o', object, '-O2', '-Wall', '-Wextra', '-Werror']);
+    run('zig', ['cc', '-target', 'x86_64-windows-gnu', '-c', path.join(root, 'scripts/native/windows-process.c'), '-o', object, '-O2', '-Wall', '-Wextra', '-Werror']);
     const ffi = path.join(temporary, 'ffi.json');
     fs.writeFileSync(ffi, JSON.stringify({
       ffi_format: 1,
@@ -58,13 +58,14 @@ try {
   for (const name of fs.readdirSync(stagedSources)) {
     if (!name.endsWith('.ts')) continue;
     const file = path.join(stagedSources, name);
-    const text = fs.readFileSync(file, 'utf8');
+    const text = fs.readFileSync(file, 'utf8').replace(/\r\n/g, '\n');
     let adapted = text.replace(/^import (\w+) from ('node:[^']+');$/gm, 'import * as $1 from $2;');
     if (name === 'install.ts') {
       // This option is not lowered by scriptc. Windows uses an in-binary Win32
       // FFI bridge for verbatim cmd lines; all other launches use native spawn.
       assert.equal(adapted.split('windowsVerbatimArguments: spec.windowsVerbatimArguments === true,').length, 3);
       adapted = adapted.replace(/^\s*windowsVerbatimArguments: spec\.windowsVerbatimArguments === true,\n/gm, '\n');
+      assert.doesNotMatch(adapted, /windowsVerbatimArguments:/, 'unsupported spawn option must be removed');
       if (process.platform === 'win32') {
         adapted = `import { runWindowsVerbatim } from './windows-process.ts';\n${adapted}`;
         const marker = 'export async function defaultRunner(spec: CommandSpec): Promise<CommandResult> {';

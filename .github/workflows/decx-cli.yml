@@ -123,7 +123,7 @@ jobs:
         include:
           - { os: ubuntu-latest, platform: linux-x64 }
           - { os: ubuntu-24.04-arm, platform: linux-arm64 }
-          - { os: macos-15-arm64, platform: darwin-arm64 }
+          - { os: macos-15, platform: darwin-arm64 }
           - { os: windows-latest, platform: windows-x64 }
     steps:
       - uses: actions/checkout@v7.0.1
@@ -136,16 +136,16 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: '3.11'
-      - uses: ilammy/msvc-dev-cmd@v1
+      - uses: mlugg/setup-zig@v2
         if: runner.os == 'Windows'
+        with:
+          version: '0.14.1'
+      - name: Install build dependencies
+        working-directory: decx
+        run: npm ci
       - name: Compile and test the native manager without Node on its PATH
         working-directory: decx
-        run: |
-          npm ci
-          npm run setup:scriptc
-          node --test tests/scriptc-tool.test.ts
-          npm run build:scriptc
-          npm run test:native
+        run: npm run check:native
 
   pack:
     name: build and pack the CLI
@@ -208,7 +208,7 @@ jobs:
         include:
           - { os: ubuntu-latest, platform: linux-x64 }
           - { os: ubuntu-24.04-arm, platform: linux-arm64 }
-          - { os: macos-15-arm64, platform: darwin-arm64 }
+          - { os: macos-15, platform: darwin-arm64 }
           - { os: windows-latest, platform: windows-x64 }
     steps:
       - uses: actions/checkout@v7.0.1
@@ -223,17 +223,16 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: '3.11'
-      - uses: ilammy/msvc-dev-cmd@v1
+      - uses: mlugg/setup-zig@v2
         if: runner.os == 'Windows'
+        with:
+          version: '0.14.1'
       - name: Build native manager and verify offline tool lifecycles
         shell: bash
         working-directory: decx
         run: |
           npm ci
-          npm run setup:scriptc
-          node --test tests/scriptc-tool.test.ts
-          npm run build:scriptc
-          npm run test:native
+          npm run check:native
           gzip -9 "dist/decx-${{ matrix.platform }}${{ matrix.platform == 'windows-x64' && '.exe' || '' }}"
       - uses: actions/upload-artifact@v7
         with:
@@ -252,7 +251,7 @@ jobs:
         include:
           - { os: ubuntu-latest, platform: linux-x64 }
           - { os: ubuntu-24.04-arm, platform: linux-arm64 }
-          - { os: macos-15-arm64, platform: darwin-arm64 }
+          - { os: macos-15, platform: darwin-arm64 }
           - { os: windows-latest, platform: windows-x64 }
     steps:
       - uses: actions/setup-node@v7

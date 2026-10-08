@@ -248,7 +248,7 @@ redirect/download verification policy, explicit filesystem copy/link handling,
 and typed callbacks. Node source execution retains its HTTP adapter. Windows
 links a small `CreateProcessW` FFI implementation into the same executable so
 `.cmd` arguments retain their existing escaping; building that bridge requires
-Clang and the Windows SDK (CI initializes the MSVC environment). No bridge binary,
+Zig on PATH (CI pins Zig 0.14.1 for the linker and C/Win32 headers). No bridge binary,
 Node interpreter or JavaScript sidecar is needed at runtime. `--dynamic` embeds
 scriptc's own dynamic engine for unsupported static operations, not Node.
 
@@ -256,6 +256,8 @@ scriptc's own dynamic engine for unsupported static operations, not Node.
 $ npm run setup:scriptc
 $ npm run build:scriptc
 $ npm run test:native
+# Or run the complete compiler + independent-tool + manager gate:
+$ npm run check:native
 ```
 
 ## Independent TypeScript tools (scriptc)
