@@ -223,7 +223,7 @@ default manifest set with that directory's manifests; it does not merge them.
 
 ## scriptc native manager
 
-On Node 24.21+, run `npm run setup:scriptc` to install scriptc 0.2.3 into
+On Node 24.21+, run `npm run setup:scriptc` to install scriptc 0.2.6 into
 `.scriptc-toolchain/`. Its complete dependency graph is locked separately in
 `toolchains/scriptc/package-lock.json`; setup uses `npm ci` with lifecycle
 scripts disabled, then explicitly runs scriptc's native compiler setup.
@@ -248,7 +248,7 @@ redirect/download verification policy, explicit filesystem copy/link handling,
 and typed callbacks. Node source execution retains its HTTP adapter. Windows
 links a small `CreateProcessW` FFI implementation into the same executable so
 `.cmd` arguments retain their existing escaping; building that bridge requires
-Zig on PATH (CI pins Zig 0.14.1 for the linker and C/Win32 headers). No bridge binary,
+Zig on PATH (CI pins Zig 0.16.0, matching upstream's Windows runtime-pack ABI). No bridge binary,
 Node interpreter or JavaScript sidecar is needed at runtime. `--dynamic` embeds
 scriptc's own dynamic engine for unsupported static operations, not Node.
 
@@ -268,7 +268,7 @@ executable as a verified release asset and declare `launch.type: "bin"` in the
 tool manifest. DECX installs and invokes that native binary without Node at
 runtime. `tests/scriptc-tool.test.ts` compiles a real TS fixture, serves a
 checksum-protected archive locally, then installs and executes it through
-`decx -m` without network access. scriptc 0.2.3 publishes native compilers
+`decx -m` without network access. scriptc 0.2.6 publishes native compilers
 for macOS x64/arm64, Linux x64/arm64 and Windows x64; Windows arm64 remains
 unsupported. CI tests independent tool compilation on the same four hosts as
 the native manager; macOS x64 is not part of the release matrix. Because scriptc is installed separately for builds,

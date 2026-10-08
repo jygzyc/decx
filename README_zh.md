@@ -30,7 +30,7 @@ decx help install        # 查看管理器或单个命令的用法
 管理器按主机平台选择要安装与执行的文件：`<os>-<arch>` 键（`win`/`darwin`/`linux` × `arm64`/`amd64`，如
 `darwin-arm64`、`win-amd64`）
 决定每个工具用哪个 release asset（或源码构建），`decx -m <tool> …` 执行的就是该平台解析出的
-启动器 —— 调用方从不自己挑二进制或路径。scriptc 0.2.3 直接编译完整管理器（`cd decx && npm run setup:scriptc && npm run build:scriptc && npm run test:native`），
+启动器 —— 调用方从不自己挑二进制或路径。scriptc 0.2.6 直接编译完整管理器（`cd decx && npm run setup:scriptc && npm run build:scriptc && npm run test:native`），
 原生可执行文件不依赖 Node；源码开发与 JavaScript 发行版仍需 Node。macOS arm64 的原生生命周期测试已在本地通过，CI 对 Linux x64/arm64、macOS arm64 与 Windows x64 设置同样的发布门槛。
 
 安装、使用与编译均支持 macOS、Linux 与 Windows。管理器提供 Node CLI 与编译后的原生可执行文件，都可在 Windows 的 PowerShell / cmd 中直接运行并安装 `.exe`/`.cmd` 名称；工具安装不依赖 Git Bash、`uname` 或 POSIX 工具。

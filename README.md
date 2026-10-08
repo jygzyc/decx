@@ -32,7 +32,7 @@ Tools are declared as data in `subprojects/decx-<id>/decx-<id>.json`, never as c
 and payloads live under `$DECX_HOME` (`bin/`, `share/<id>/` with a `PROVENANCE` record); the
 manager installs tools, not language runtimes, and each tool keeps its own arguments and output.
 Layout, `--links` and install rules: [`decx/README.md`](decx/README.md). Direct native compilation
-with scriptc 0.2.3 builds the complete manager (`cd decx && npm run setup:scriptc && npm run build:scriptc && npm run test:native`).
+with scriptc 0.2.6 builds the complete manager (`cd decx && npm run setup:scriptc && npm run build:scriptc && npm run test:native`).
 The native executable does not require Node; Node remains required for source development and the JavaScript release.
 Local native lifecycle tests pass on macOS arm64; CI gates Linux x64/arm64, macOS arm64 and Windows x64.
 

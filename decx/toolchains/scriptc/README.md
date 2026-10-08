@@ -1,58 +1,42 @@
 # scriptc toolchain
 
-`package.json` and `package-lock.json` pin scriptc 0.2.2 and its platform
+`package.json` and `package-lock.json` pin scriptc 0.2.6 and its platform
 packages separately from the manager dependencies. From `decx/`, run:
 
 ```sh
-npm run setup:scriptc
-node --test tests/scriptc-tool.test.ts
-npm run build:scriptc
+npm run check:native
 ```
 
-Setup runs `npm ci` under `.scriptc-toolchain/` with dependency lifecycle
-scripts disabled, then explicitly invokes the pinned package's
-`installNativeCli` export. The compiler executable is
-`.scriptc-toolchain/node_modules/scriptc/bin/scriptc.exe` on every host;
-POSIX executes it as a native file, despite the suffix. Node is required for
-build scripts, not for independently compiled tools.
+This installs the locked compiler, tests an independently compiled TS tool,
+compiles the complete manager, then tests native tool lifecycles offline.
+Setup runs `npm ci` under `.scriptc-toolchain/` with lifecycle scripts disabled,
+then explicitly invokes the pinned package's `installNativeCli` export.
+The compiler path is `.scriptc-toolchain/node_modules/scriptc/bin/scriptc.exe`
+on every host. Node is needed for build scripts, not the resulting executables.
 
-## Verified locally
+Windows executable builds need Zig on PATH. CI uses Zig 0.16.0, matching the
+upstream runtime-pack build; older Zig CRT libraries can fail to resolve
+`stat64i32`. The same Zig compiler builds the in-binary Win32 process bridge.
+There is no external Node launcher or JavaScript sidecar.
 
-On macOS arm64, the installed native compiler prints `0.2.2`. The independent
-TS fixture compiles, runs with Node absent from PATH, installs from a local
-checksum-verified archive, and forwards Unicode arguments through DECX.
-This does not establish that the full manager or other hosts work.
+## Native source adaptations
 
-## Manager compilation remains blocked
+The build stages typed TS modules, supplies version/manifests as constants,
+and invokes scriptc with `--dynamic`. It normalizes CRLF before adapting builtin
+namespace imports and the entry-point guard. Native fetch shares the manager's
+redirect, authentication and download-integrity policy. Windows links a
+`CreateProcessW` FFI bridge to preserve cmd's already-escaped command lines.
+Unsupported operations fail rather than generating an external-Node fallback.
 
-The native build stages typed TS modules (no esbuild type erasure), supplies
-version/manifests as real constants, and invokes the native compiler with
-`--dynamic`. Builtin default imports are converted to namespace imports only
-in staging. The source entry-point guard is also adapted because scriptc's
-`import.meta.url` denotes the compile-time source path.
+## Validation
 
-The latest local `npm run build:scriptc` failed with `46 errors.` after
-unblocking the installer signature. The count includes dependent errors and
-is not a count of independent missing features. Examples from that output:
+Native tests execute outside the checkout, with Node absent from PATH:
+verified tar.gz/zip releases, redirected authentication, environment launchers,
+Unicode/empty/metacharacter arguments, update, checksum rejection and rollback,
+removal, and a real private Python venv installing a local wheel. All prefixes,
+links and caches are temporary; pip has no network access.
 
-```text
-SC2020: 'spawnSync option 'env'' is part of the standard library types but has no scriptc lowering yet
-SC2020: 'fs.readlinkSync' is typed by @types/node but has no scriptc lowering yet
-SC2020: 'fs.symlinkSync' is typed by @types/node but has no scriptc lowering yet
-SC2020: 'fs.cpSync' is typed by @types/node but has no scriptc lowering yet
-SC2020: 'fs.lstatSync with 2 arguments' is part of the standard library types but has no scriptc lowering yet
-SC2020: 'fs.createWriteStream' is typed by @types/node but has no scriptc lowering yet
-SC2020: 'pipeline over a 'Readable'' is part of the standard library types but has no scriptc lowering yet
-```
-
-Remaining source-shape errors also include conditional/index-signature spreads
-and an optional asynchronous initialization callback. Dynamic compilation is
-not proof that every runtime operation works; unsupported island calls can
-still fail at execution time.
-
-Do not delete child-process environments, link ownership checks, archive
-safety checks or streaming download verification to suppress these errors.
-Do not publish a binary based only on help/version. Full offline installation,
-tool launch, removal and failure/rollback tests must pass without an external
-Node before native manager releases are enabled. Existing release CI must be
-requalified; it is not proof of native manager support with this compiler.
+Local macOS arm64 tests pass. Branch and release CI gate Linux x64/arm64,
+macOS arm64 and Windows x64. Help/version alone is not sufficient to publish.
+The opt-in dynamic engine is part of scriptc's executable, not Node; a successful
+compile is still not proof that untested runtime operations work.
