@@ -1,0 +1,11 @@
+{
+  "version": "0.2.7",
+  "repository": "vercel-labs/scriptc",
+  "sha256": {
+    "darwin-arm64": "30b604eb38079dcb49148a192d9c315452f4f779cdf7dbb2a34d5ae4f7209c34",
+    "darwin-x64": "eb8306b237974e0cd39cb7d77230179ca36106440fbc787a8c8644dacc92fdc6",
+    "linux-arm64-gnu": "bbbf5ee3469509a9071f9b67d84b60187496ba1275b73e1d4e301258cd3c0d53",
+    "linux-x64-gnu": "fde3a55eaa2ec2c9b3cec688e7c9aa454cf122284d0efac4c71f3024e279f60f",
+    "win32-x64-msvc": "86f053b434516177ca115dde6c0704e76efe106b10bd79b5126e696c3910a22a"
+  }
+}

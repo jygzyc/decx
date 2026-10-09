@@ -6,7 +6,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { windowsResource } from './windows-resource.mjs';
 
-const compiler = fileURLToPath(new URL('../.scriptc-toolchain/node_modules/scriptc/bin/scriptc.exe', import.meta.url));
+const compiler = fileURLToPath(new URL('../.scriptc-toolchain/bin/scriptc.exe', import.meta.url));
 const args = process.argv.slice(2);
 const temporary = fs.mkdtempSync(path.join(os.tmpdir(), 'decx-ts-tool-'));
 try {

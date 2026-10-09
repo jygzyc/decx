@@ -16,7 +16,7 @@ if (!supported.has(platform)) throw new Error(`scriptc does not support ${platfo
 if (process.env.SCRIPTC_TARGET || process.env.SCRIPTC_CC) {
   throw new Error('build:scriptc labels host binaries only; unset SCRIPTC_TARGET and SCRIPTC_CC');
 }
-const compiler = path.join(root, '.scriptc-toolchain/node_modules/scriptc/bin/scriptc.exe');
+const compiler = path.join(root, '.scriptc-toolchain/bin/scriptc.exe');
 if (!fs.existsSync(compiler)) throw new Error('scriptc is not installed; run npm run setup:scriptc first');
 const run = (command, args, options = {}) => {
   const result = spawnSync(command, args, { cwd: root, encoding: 'utf8', ...options });
@@ -24,7 +24,7 @@ const run = (command, args, options = {}) => {
   return result.stdout;
 };
 const packageInfo = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'));
-const compilerVersion = JSON.parse(fs.readFileSync(path.join(root, 'toolchains/scriptc/package.json'), 'utf8')).dependencies.scriptc;
+const compilerVersion = JSON.parse(fs.readFileSync(path.join(root, 'toolchains/scriptc/toolchain.json'), 'utf8')).version;
 assert.equal(run(compiler, ['--version']).trim(), compilerVersion, 'run setup:scriptc to install the pinned compiler');
 const manifests = loadManifests(path.resolve(root, '..', 'subprojects'));
 assert.equal(manifests.issues.length, 0, 'native metadata must contain valid manifests');

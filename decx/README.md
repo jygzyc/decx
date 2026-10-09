@@ -223,11 +223,13 @@ default manifest set with that directory's manifests; it does not merge them.
 
 ## scriptc native manager
 
-On Node 24.21+, run `npm run setup:scriptc` to install scriptc 0.2.6 into
-`.scriptc-toolchain/`. Its complete dependency graph is locked separately in
-`toolchains/scriptc/package-lock.json`; setup uses `npm ci` with lifecycle
-scripts disabled, then explicitly runs scriptc's native compiler setup.
-It is a build-time dependency, separate from the manager's `npm ci`.
+On Node 24.21+, run `npm run setup:scriptc` to install scriptc 0.2.7 into
+`.scriptc-toolchain/`. `toolchains/scriptc/toolchain.json` pins the official
+GitHub Release SDK and each host archive's SHA-256 digest. Setup verifies before
+extracting, checks the compiler version, and stages replacement atomically.
+It executes no npm lifecycle scripts and records the source in `SOURCE.json`.
+This build-time SDK is separate from the manager's `npm ci`. To use an HTTP proxy,
+set `HTTPS_PROXY` and `NODE_USE_ENV_PROXY=1` for the setup command only.
 
 `npm run build:scriptc` stages the typed manager sources, embeds the version
 and manifests, and invokes the native compiler with `--dynamic`. It does not
@@ -273,7 +275,7 @@ executable as a verified release asset and declare `launch.type: "bin"` in the
 tool manifest. DECX installs and invokes that native binary without Node at
 runtime. `tests/scriptc-tool.test.ts` compiles a real TS fixture, serves a
 checksum-protected archive locally, then installs and executes it through
-`decx -m` without network access. scriptc 0.2.6 publishes native compilers
+`decx -m` without network access. scriptc 0.2.7 publishes native compilers
 for macOS x64/arm64, Linux x64/arm64 and Windows x64; Windows arm64 remains
 unsupported. CI tests independent tool compilation on the same four hosts as
 the native manager; macOS x64 is not part of the release matrix. Because scriptc is installed separately for builds,

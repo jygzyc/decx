@@ -1,8 +1,0 @@
-{
-  "name": "decx-scriptc-toolchain",
-  "private": true,
-  "version": "1.0.0",
-  "dependencies": {
-    "scriptc": "0.2.6"
-  }
-}

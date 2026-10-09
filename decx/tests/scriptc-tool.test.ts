@@ -11,7 +11,7 @@ import { makeZip, runCli, sha256, startFixtureServer, tempDir } from './fixtures
 
 const fixture = fileURLToPath(new URL('./fixtures/scriptc-tool/', import.meta.url));
 const manifestFile = path.join(fixture, 'decx-scriptcprobe.json');
-const compiler = fileURLToPath(new URL('../.scriptc-toolchain/node_modules/scriptc/bin/scriptc.exe', import.meta.url));
+const compiler = fileURLToPath(new URL('../.scriptc-toolchain/bin/scriptc.exe', import.meta.url));
 const supported = Number(process.versions.node.split('.')[0]) >= 24 &&
   !(process.platform === 'win32' && process.arch === 'arm64') &&
   fs.existsSync(compiler);
