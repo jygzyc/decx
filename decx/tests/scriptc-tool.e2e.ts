@@ -4,28 +4,15 @@ import fs from 'node:fs';
 import path from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
-import { installTool } from '../src/install.ts';
-import { validateManifest, type ToolManifest } from '../src/manifest.ts';
-import { currentPlatformKey } from '../src/platform.ts';
-import { makeZip, runCli, sha256, startFixtureServer, tempDir } from './fixtures.ts';
+import { HOST_PLATFORM, makeZip, runCli, runCliAsync, sha256, startFixtureServer, tempDir } from './fixtures.ts';
 
 const fixture = fileURLToPath(new URL('./fixtures/scriptc-tool/', import.meta.url));
 const manifestFile = path.join(fixture, 'decx-scriptcprobe.json');
 const compilerName = process.platform === 'win32' ? 'scriptc.exe' : 'scriptc';
 const compiler = fileURLToPath(new URL(`../.scriptc-toolchain/bin/${compilerName}`, import.meta.url));
-const supported = Number(process.versions.node.split('.')[0]) >= 24 &&
-  !(process.platform === 'win32' && process.arch === 'arm64') &&
-  fs.existsSync(compiler);
-
-function manifest(): ToolManifest {
-  const { manifest: parsed, errors } = validateManifest(JSON.parse(fs.readFileSync(manifestFile, 'utf8')), manifestFile, 'scriptcprobe');
-  assert.deepEqual(errors, []);
-  assert.ok(parsed);
-  return parsed;
-}
-
-test('scriptc builds an independent TS tool; decx installs its verified native release', { skip: !supported }, async (t) => {
-  const platform = currentPlatformKey();
+test('scriptc builds an independent TS tool; decx installs its verified native release', { timeout: 240_000 }, async (t) => {
+  assert.ok(fs.existsSync(compiler), 'Run setup:scriptc before this functional test');
+  const platform = HOST_PLATFORM;
   assert.ok(platform);
   const home = tempDir('decx-scriptc-home-');
   const repoRoot = tempDir('decx-scriptc-repo-');
@@ -60,16 +47,17 @@ test('scriptc builds an independent TS tool; decx installs its verified native r
     [`${releasePath}SHA256SUMS`]: `${sha256(archive)}  ${asset}\n`,
   });
   try {
-    const result = await installTool(manifest(), { version: '1.0.0', noLinks: true }, {
-      home, repoRoot, env: { ...process.env, HOME: home, USERPROFILE: home },
-      apiBase: server.url, downloadBase: server.url, log: () => {},
+    const installed = await runCliAsync(['--home', home, '--subprojects', subprojects, 'install', 'scriptcprobe', '--version', '1.0.0', '--no-links'], {
+      HOME: repoRoot, USERPROFILE: repoRoot, DECX_GITHUB_API_BASE: server.url, DECX_GITHUB_DOWNLOAD_BASE: server.url,
     });
+    assert.equal(installed.status, 0, installed.stderr + installed.stdout);
+    const result = installed.json as { method: string; checksum: string; provenance: Record<string, string> };
     assert.equal(result.method, 'release download');
     assert.equal(result.provenance.reported_version, 'scriptcprobe 1.0.0');
     assert.equal(result.checksum, `verified (${sha256(archive)})`);
     const args = ['two words', '中文', '--home', 'a"b'];
     const launched = runCli(['--home', home, '--subprojects', subprojects, '-m', 'scriptcprobe', ...args], {
-      HOME: home, USERPROFILE: home,
+      HOME: repoRoot, USERPROFILE: repoRoot,
     });
     assert.equal(launched.status, 0, launched.stderr);
     assert.deepEqual(JSON.parse(launched.stdout.trim()), args);

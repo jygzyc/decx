@@ -1,20 +1,15 @@
 import { spawn } from 'node:child_process';
 import type { CommandResult, CommandSpec } from './install.ts';
 
-/** Node's process adapter; native builds select src/native/runner instead. */
+/** Node runner; native builds omit the unsupported Windows argv option. */
 export async function defaultRunner(spec: CommandSpec): Promise<CommandResult> {
   return new Promise((resolve) => {
-    const child = spec.mode === 'inherit'
-      ? spawn(spec.command, spec.args, {
-        env: spec.env ?? process.env, stdio: 'inherit',
-        windowsHide: spec.windowsHide !== false,
-        windowsVerbatimArguments: spec.windowsVerbatimArguments === true,
-      })
-      : spawn(spec.command, spec.args, {
-        env: spec.env ?? process.env, stdio: 'pipe',
-        windowsHide: spec.windowsHide !== false,
-        windowsVerbatimArguments: spec.windowsVerbatimArguments === true,
-      });
+    const child = spawn(spec.command, spec.args, {
+      env: spec.env ?? process.env,
+      stdio: spec.mode === 'inherit' ? 'inherit' : 'pipe',
+      windowsHide: spec.windowsHide !== false,
+      windowsVerbatimArguments: spec.windowsVerbatimArguments === true,
+    });
     let stdout = '';
     let stderr = '';
     child.stdout?.on('data', (chunk: Buffer) => {

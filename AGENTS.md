@@ -163,8 +163,10 @@ The manager and crate jobs are offline — the manager's install tests use fixtu
 archives, fake toolchains and temporary prefixes — while the two tool workflows
 deliberately exercise the real install paths (`pip install` into the tool's venv, the Kuna
 release and specs archives) and require `npm run test:functional:droidasc` /
-`npm run test:functional:kuna`. `npm test` is supplemental offline regression coverage,
-not proof of decompilation. The real suites fail on absent tools (no silent skips),
+`npm run test:functional:kuna`. All manager tests exercise public CLI subprocesses
+and real file/process outcomes, not imported functions or mocked builtins. `npm test`
+checks offline manager functionality; real decompilation is required separately by
+both live tool workflows. The real suites fail on absent tools (no silent skips),
 use explicit temporary prefixes, and can target a built native manager through
 `DECX_FUNCTIONAL_MANAGER`; no workflow compiles the vendored upstream checkouts.
 The kuna manifest installs from official upstream releases — manifest 2 resolves the

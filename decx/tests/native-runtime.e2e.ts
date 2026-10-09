@@ -5,8 +5,7 @@ import path from 'node:path';
 import os from 'node:os';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
-import { currentPlatformKey } from '../src/platform.ts';
-import { makeTarGz, makeZip, sha256, startFixtureServer, tempDir, writeFile } from './fixtures.ts';
+import { HOST_PLATFORM, makeTarGz, makeZip, sha256, startFixtureServer, tempDir, writeFile } from './fixtures.ts';
 import { writePythonWheel } from './python-wheel.ts';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
@@ -84,7 +83,7 @@ else {
     manifest: 2, id: 'demo', summary: 'offline native fixture', install: ['github-release'],
     launch: { type: 'bin', commands: ['demo'] },
     env: { DECX_NATIVE_MARKER: 'launcher环境' },
-    release: {repository:'acme/demo', tagPrefix:'v', assets:{[currentPlatformKey()!]:`demo-{version}.${suffix}`}, checksums:'SHA256SUMS'},
+    release: {repository:'acme/demo', tagPrefix:'v', assets:{[HOST_PLATFORM]:`demo-{version}.${suffix}`}, checksums:'SHA256SUMS'},
     verify: '--version',
   }));
   const env = {

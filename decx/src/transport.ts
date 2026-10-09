@@ -1,28 +1,22 @@
-import * as http from 'node:http';
-import * as https from 'node:https';
-import { Readable } from 'node:stream';
-
 import type { HttpResponse } from './http-types.ts';
 
-/** One hop only: authentication and redirect policy belongs to gh.ts. */
-export function openResponse(url: string, headers: Record<string, string>): Promise<HttpResponse> {
-  return new Promise((resolve, reject) => {
-    const onResponse = (res: http.IncomingMessage): void => {
-      resolve({
-        status: res.statusCode ?? 0,
-        location: res.headers.location,
-        body: Readable.toWeb(res) as ReadableStream<Uint8Array>,
-        touch: () => {}, // ClientRequest's timeout already measures socket inactivity.
-        cancel: () => { res.destroy(); },
-      });
+/** Shared Node/scriptc transport; gh.ts owns redirect and authentication policy. */
+export async function openResponse(url: string, headers: Record<string, string>): Promise<HttpResponse> {
+  const controller = new AbortController();
+  const timeout = (): void => { controller.abort(); };
+  let timer = setTimeout(timeout, 60_000);
+  const cancel = (): void => { clearTimeout(timer); controller.abort(); };
+  try {
+    const response = await fetch(url, { headers, redirect: 'manual', signal: controller.signal });
+    return {
+      status: response.status,
+      location: response.headers.get('location') ?? undefined,
+      body: response.body,
+      touch: () => { clearTimeout(timer); timer = setTimeout(timeout, 60_000); },
+      cancel,
     };
-    const target = new URL(url);
-    const req = target.protocol === 'http:'
-      ? http.get(target, { headers }, onResponse)
-      : https.get(target, { headers }, onResponse);
-    req.on('error', reject);
-    req.setTimeout(60_000, () => {
-      req.destroy(new Error(`timed out after 60s while fetching ${url}`));
-    });
-  });
+  } catch (error) {
+    cancel();
+    throw error;
+  }
 }

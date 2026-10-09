@@ -4,24 +4,14 @@ import fs from 'node:fs';
 import path from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
-import { installTool } from '../src/install.ts';
-import { validateManifest, type ToolManifest } from '../src/manifest.ts';
-import { currentPlatformKey } from '../src/platform.ts';
-import { makeZip, runCli, sha256, startFixtureServer, tempDir } from './fixtures.ts';
+import { HOST_PLATFORM, makeZip, runCli, runCliAsync, sha256, startFixtureServer, tempDir } from './fixtures.ts';
 
 const fixtureDir = fileURLToPath(new URL('./fixtures/bin-tool/', import.meta.url));
 const manifestFile = path.join(fixtureDir, 'decx-binprobe.json');
 const argvProgram = 'console.log(JSON.stringify(process.argv.slice(1)))';
 
-function binaryManifest(): ToolManifest {
-  const { manifest, errors } = validateManifest(JSON.parse(fs.readFileSync(manifestFile, 'utf8')), manifestFile, 'binprobe');
-  assert.deepEqual(errors, []);
-  assert.ok(manifest);
-  return manifest;
-}
-
 test('binary fixture downloads a verified native executable and runs through decx -m', async (t) => {
-  const platform = currentPlatformKey();
+  const platform = HOST_PLATFORM;
   assert.ok(platform, 'the integration test requires a supported platform');
   const home = tempDir('decx-bin-home-');
   const repoRoot = tempDir('decx-bin-repo-');
@@ -47,14 +37,11 @@ test('binary fixture downloads a verified native executable and runs through dec
   });
   try {
     const linkDir = path.join(home, 'links');
-    const result = await installTool(binaryManifest(), { version, links: linkDir }, {
-      home,
-      repoRoot,
-      env: { ...process.env, HOME: home, USERPROFILE: home },
-      apiBase: server.url,
-      downloadBase: server.url,
-      log: () => {},
+    const installed = await runCliAsync(['--home', home, '--subprojects', subprojects, 'install', 'binprobe', '--version', version, '--links', linkDir], {
+      HOME: repoRoot, USERPROFILE: repoRoot, DECX_GITHUB_API_BASE: server.url, DECX_GITHUB_DOWNLOAD_BASE: server.url,
     });
+    assert.equal(installed.status, 0, installed.stderr + installed.stdout);
+    const result = installed.json as { method: string; checksum: string; launcher: string; provenance: Record<string, string> };
     assert.equal(result.method, 'release download');
     assert.equal(result.checksum, `verified (${sha256(archive)})`);
     assert.equal(result.provenance.reported_version, process.version);
@@ -70,8 +57,8 @@ test('binary fixture downloads a verified native executable and runs through dec
 
     const args = ['two words', '中文', '--home', 'a"b'];
     const invoked = runCli(['--home', home, '--subprojects', subprojects, '-m', 'binprobe', '-e', argvProgram, '--', ...args], {
-      HOME: home,
-      USERPROFILE: home,
+      HOME: repoRoot,
+      USERPROFILE: repoRoot,
     });
     assert.equal(invoked.status, 0, invoked.stderr);
     assert.deepEqual(JSON.parse(invoked.stdout.trim()), args);

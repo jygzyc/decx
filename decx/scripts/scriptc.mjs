@@ -100,7 +100,6 @@ function buildManager() {
   try {
     const sources = path.join(temporary, 'src');
     fs.cpSync(path.join(root, 'src'), sources, { recursive: true });
-    fs.writeFileSync(path.join(sources, 'transport.ts'), "export { openResponse } from './native/transport.ts';\n");
     const runner = process.platform === 'win32' ? 'runner-windows' : 'runner';
     fs.writeFileSync(path.join(sources, 'runner.ts'), `export { defaultRunner } from './native/${runner}.ts';\n`);
     fs.writeFileSync(path.join(sources, 'build-info.ts'), [

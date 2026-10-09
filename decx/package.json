@@ -15,7 +15,7 @@
     "dist/"
   ],
   "scripts": {
-    "test": "node --test \"tests/**/*.test.ts\" \"tests/*.test.mjs\"",
+    "test": "node --test tests/manager.e2e.ts tests/bin-tool.e2e.ts tests/js-tool.e2e.ts tests/python-tool.e2e.ts tests/release.e2e.mjs",
     "test:functional": "node --test tests/functional/*.e2e.ts",
     "test:functional:droidasc": "node --test tests/functional/droidasc.e2e.ts",
     "test:functional:kuna": "node --test tests/functional/kuna.e2e.ts",
@@ -25,7 +25,7 @@
     "compile:ts-tool": "node scripts/scriptc.mjs tool",
     "build:scriptc": "node scripts/scriptc.mjs build",
     "test:native": "node --test tests/native-runtime.e2e.ts",
-    "check:native": "npm run setup:scriptc && node --test tests/scriptc-tool.test.ts && npm run build:scriptc && npm run test:native",
+    "check:native": "npm run setup:scriptc && node --test tests/scriptc-tool.e2e.ts && npm run build:scriptc && npm run test:native",
     "prepack": "npm run build",
     "pack": "node scripts/pack.mjs",
     "decx": "node src/cli.ts"

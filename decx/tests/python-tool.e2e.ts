@@ -5,20 +5,11 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
-import { installTool } from '../src/install.ts';
-import { validateManifest, type ToolManifest } from '../src/manifest.ts';
-import { runCli, tempDir } from './fixtures.ts';
+import { runCli, runCliAsync, tempDir } from './fixtures.ts';
 import { writePythonWheel } from './python-wheel.ts';
 
 const fixtureDir = fileURLToPath(new URL('./fixtures/python-tool/', import.meta.url));
 const manifestFile = path.join(fixtureDir, 'decx-pyprobe.json');
-
-function pythonManifest(): ToolManifest {
-  const { manifest, errors } = validateManifest(JSON.parse(fs.readFileSync(manifestFile, 'utf8')), manifestFile, 'pyprobe');
-  assert.deepEqual(errors, []);
-  assert.ok(manifest);
-  return manifest;
-}
 
 test('Python fixture installs a local wheel into a real private venv and runs through decx -m', async (t) => {
   const home = tempDir('decx-py-home-');
@@ -37,8 +28,8 @@ test('Python fixture installs a local wheel into a real private venv and runs th
   // creates the venv, invokes its pip and verifies its generated console script.
   const env = {
     ...process.env,
-    HOME: home,
-    USERPROFILE: home,
+    HOME: repoRoot,
+    USERPROFILE: repoRoot,
     XDG_CACHE_HOME: path.join(home, 'cache'),
     PIP_CACHE_DIR: path.join(home, 'pip-cache'),
     PIP_CONFIG_FILE: os.devNull,
@@ -49,12 +40,9 @@ test('Python fixture installs a local wheel into a real private venv and runs th
     PYTHONIOENCODING: 'utf-8',
   };
   const linkDir = path.join(home, 'links');
-  const result = await installTool(pythonManifest(), { version: '1.0.0', links: linkDir }, {
-    home,
-    repoRoot,
-    env,
-    log: () => {},
-  });
+  const installed = await runCliAsync(['--home', home, '--subprojects', subprojects, 'install', 'pyprobe', '--version', '1.0.0', '--links', linkDir], env);
+  assert.equal(installed.status, 0, installed.stderr + installed.stdout);
+  const result = installed.json as { method: string; version: string; launcher: string };
   assert.equal(result.method, 'python venv');
   assert.equal(result.version, '1.0.0');
   const scriptsDir = process.platform === 'win32' ? 'Scripts' : 'bin';

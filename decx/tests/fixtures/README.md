@@ -10,4 +10,4 @@ These manifests are loaded from temporary subproject directories by the integrat
 
 The Python test sets `PIP_NO_INDEX=1` and `PIP_FIND_LINKS` to its temporary wheelhouse; no PyPI access or installation into the user's environment is needed. The binary fixture reuses Node so the tests do not need a C compiler or platform-specific binaries checked into Git.
 
-Run all three with `cd decx && node --test tests/{js,python,bin}-tool.test.ts`, or through `npm test`.
+Run all three with `cd decx && node --test tests/{js,python,bin}-tool.e2e.ts`, or through `npm test`.

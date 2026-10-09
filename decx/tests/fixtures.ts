@@ -1,10 +1,10 @@
 /**
  * Offline test fixtures: tar.gz and zip builders (node:zlib only) plus a local
- * HTTP server the installer can download from.  Only `*.test.ts` files are run
- * by `node --test`, so this helper never executes on its own.
+ * HTTP server the installer can download from. Test entry points explicitly
+ * select functional suites; this helper never executes on its own.
  */
 
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import http from 'node:http';
@@ -15,7 +15,7 @@ import { deflateRawSync, gzipSync, crc32 } from 'node:zlib';
 
 const CLI = fileURLToPath(new URL('../src/cli.ts', import.meta.url));
 
-export const SUBPROJECTS_DIR = fileURLToPath(new URL('../../subprojects', import.meta.url));
+export const HOST_PLATFORM = `${process.platform === 'win32' ? 'win' : process.platform}-${process.arch === 'x64' ? 'amd64' : process.arch}`;
 
 export function sha256(data: Buffer | string): string {
   return createHash('sha256').update(data).digest('hex');
@@ -53,6 +53,25 @@ export function runCli(args: readonly string[], env: NodeJS.ProcessEnv = {}): Cl
     json = undefined;
   }
   return { status: result.status, stdout: result.stdout, stderr: result.stderr, json };
+}
+
+/** Async subprocess execution lets the offline fixture HTTP server keep serving. */
+export function runCliAsync(args: readonly string[], env: NodeJS.ProcessEnv = {}): Promise<CliResult> {
+  return new Promise((resolve, reject) => {
+    const child = spawn(process.execPath, [CLI, ...args], {
+      env: { ...process.env, ...env }, stdio: 'pipe', timeout: 90_000,
+    });
+    let stdout = '';
+    let stderr = '';
+    child.stdout.setEncoding('utf8').on('data', chunk => { stdout += chunk; });
+    child.stderr.setEncoding('utf8').on('data', chunk => { stderr += chunk; });
+    child.on('error', reject);
+    child.on('close', status => {
+      let json: unknown;
+      try { json = JSON.parse(stdout); } catch { json = undefined; }
+      resolve({ status, stdout, stderr, json });
+    });
+  });
 }
 
 export interface TarEntry {

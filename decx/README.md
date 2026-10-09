@@ -197,7 +197,7 @@ the requested version.
 
 ```console
 $ npm ci                      # dev deps only (esbuild, typescript, @types/node)
-$ npm test                    # supplemental offline manager/security regression tests
+$ npm test                    # offline CLI functional tests: install/run/update/remove and actual artifacts
 $ npm run typecheck           # tsc --noEmit
 $ node src/cli.ts version
 ```
@@ -231,8 +231,9 @@ macOS/Linux; `cl` in a Visual Studio developer environment on Windows).
   exit status or whether output contains `return`.
 - `test:functional:droidasc` and `test:functional:kuna` select one suite. The
   existing tool workflows run these gates on Linux, macOS and Windows using
-  real installed tools; no mocks replace them. Offline security/rollback
-  tests remain complementary coverage, not functional acceptance.
+  real installed tools; no mocks replace them. Manager security/rollback cases
+  also run through actual CLI subprocesses. No suite imports manager functions
+  or mocks Node builtins.
 
 Set `DECX_FUNCTIONAL_MANAGER` to an absolute built native manager executable
 to run the same functional suite through scriptc instead of `dist/decx.mjs`.
@@ -318,7 +319,7 @@ With Node 24.21+ on the **build** machine, run `npm run setup:scriptc`, then
 `npm run compile:ts-tool -- <tool.ts> -o <tool>` (use `<tool>.exe` on Windows). Package the resulting
 executable as a verified release asset and declare `launch.type: "bin"` in the
 tool manifest. DECX installs and invokes that native binary without Node at
-runtime. `tests/scriptc-tool.test.ts` compiles a real TS fixture, serves a
+runtime. `tests/scriptc-tool.e2e.ts` compiles a real TS fixture, serves a
 checksum-protected archive locally, then installs and executes it through
 `decx -m` without network access. scriptc 0.2.7 publishes native compilers
 for macOS x64/arm64, Linux x64/arm64 and Windows x64; Windows arm64 remains
