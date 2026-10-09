@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import test from 'node:test';
-const { installSdk } = await import(new URL('../scripts/setup-scriptc.mjs', import.meta.url).href) as {
+const { installSdk } = await import(new URL('../scripts/scriptc.mjs', import.meta.url).href) as {
   installSdk(root: string, options: {
     download: (url: string | URL | Request) => Promise<Response>;
     verify: (compiler: string) => { status: number | null; stdout: string; stderr: string; error?: Error };
@@ -23,7 +23,7 @@ for (const failure of ['none', 'digest', 'download', 'version']) {
   test(`pinned SDK setup: ${failure}`, async (t) => {
     const root = tempDir('decx-sdk-');
     t.after(() => fs.rmSync(root, { recursive: true, force: true }));
-    writeFile(path.join(root, 'toolchains/scriptc/toolchain.json'), JSON.stringify({
+    writeFile(path.join(root, 'scriptc.json'), JSON.stringify({
       version: '0.2.7', repository: 'vercel-labs/scriptc',
       sha256: { [platform]: failure === 'digest' ? '0'.repeat(64) : sha256(bytes) },
     }));
@@ -45,7 +45,7 @@ for (const failure of ['none', 'digest', 'download', 'version']) {
       await install();
       assert.ok(verified);
       assert.ok(!fs.existsSync(marker));
-      assert.ok(fs.existsSync(path.join(root, '.scriptc-toolchain/bin/scriptc.exe')));
+      assert.ok(fs.existsSync(path.join(root, '.scriptc-toolchain/bin', executable)));
       const source = JSON.parse(fs.readFileSync(path.join(root, '.scriptc-toolchain/SOURCE.json'), 'utf8'));
       assert.equal(source.sha256, sha256(bytes));
       assert.equal(source.version, '0.2.7');

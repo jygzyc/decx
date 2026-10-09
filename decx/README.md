@@ -261,17 +261,25 @@ default manifest set with that directory's manifests; it does not merge them.
 ## scriptc native manager
 
 On Node 24.21+, run `npm run setup:scriptc` to install scriptc 0.2.7 into
-`.scriptc-toolchain/`. `toolchains/scriptc/toolchain.json` pins the official
+`.scriptc-toolchain/`. `scriptc.json` pins the official
 GitHub Release SDK and each host archive's SHA-256 digest. Setup verifies before
 extracting, checks the compiler version, and stages replacement atomically.
 It executes no npm lifecycle scripts and records the source in `SOURCE.json`.
-This build-time SDK is separate from the manager's `npm ci`. To use an HTTP proxy,
+This build-time SDK is separate from the manager's `npm ci`. The SDK retains its
+upstream compiler filename (`bin/scriptc`, or `bin/scriptc.exe` on Windows).
+Updating the pin requires updating every archive digest and rebuilding the
+matching runtime; scriptc 0.2.7 uses runtime ABI v8. To use an HTTP proxy,
 set `HTTPS_PROXY` and `NODE_USE_ENV_PROXY=1` for the setup command only.
 
 `npm run build:scriptc` stages the typed manager sources, embeds the version
 and manifests, and invokes the native compiler with `--dynamic`. It does not
 compile erased esbuild output or launch an external Node interpreter. Successful
 builds must pass smoke checks with Node absent from PATH outside the checkout.
+
+All compiler commands live in `scripts/scriptc.mjs` (`setup`, `build`, `tool`).
+There is no separate toolchain project or test-launcher script. The native
+runtime suite is explicit (`tests/native-runtime.e2e.ts`); missing prerequisites
+fail rather than silently skipping.
 
 `npm run test:native` tests the resulting manager with Node absent from its
 PATH: verified tar.gz/zip installation, cross-origin redirect authentication,

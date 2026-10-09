@@ -103,7 +103,7 @@ ledger lives under the pi agent directory, outside the three knowledge layers.
   `cargo fmt --check` and `cargo clippy --all-targets -- -D warnings` must stay clean.
 - Manager: `cd decx && npm ci && npm run typecheck && npm test && npm run build`; `node src/cli.ts version` must keep printing one JSON
   envelope. Run `npm run setup:scriptc` before `npm run build:scriptc` or the independent TS-tool test;
-  it installs the official SDK archive pinned by `decx/toolchains/scriptc/toolchain.json`,
+  it installs the official SDK archive pinned by `decx/scriptc.json`,
   verifying SHA-256 before extraction into the ignored `.scriptc-toolchain/`, outside `npm ci`.
   `build:scriptc` compiles the typed manager with scriptc 0.2.7 and its embedded
   dynamic engine, not an external Node launcher. Run `npm run test:native` after

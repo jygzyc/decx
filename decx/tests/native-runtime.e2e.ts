@@ -12,7 +12,6 @@ import { writePythonWheel } from './python-wheel.ts';
 const root = fileURLToPath(new URL('../', import.meta.url));
 const host = `${process.platform === 'win32' ? 'windows' : process.platform}-${process.arch}`;
 const binary = path.join(root, 'dist', `decx-${host}${process.platform === 'win32' ? '.exe' : ''}`);
-const enabled = process.env.DECX_NATIVE_TEST === '1';
 
 interface NativeResult { status: number | null; stdout: string; stderr: string }
 
@@ -30,7 +29,7 @@ function runNative(args: string[], cwd: string, env: NodeJS.ProcessEnv): Promise
 
 for (const suffix of process.platform === 'win32' ? ['zip'] : ['tar.gz', 'zip']) {
 test(`native manager ${suffix}: install, argv/env, update, rollback and remove offline without Node`, {
-  skip: !enabled, timeout: 120_000,
+  timeout: 120_000,
 }, async (t) => {
   assert.ok(fs.existsSync(binary), 'build:scriptc must run before test:native');
   const temporary = tempDir('decx-native-');
@@ -51,8 +50,8 @@ else {
   process.exit(7);
 }
 `);
-  const compileScript = path.join(root, 'scripts/compile-ts-tool.mjs');
-  const compiled = spawnSync(process.execPath, [compileScript, source, '-o', fixture, '--no-keep-llvm'], { encoding: 'utf8', timeout: 90_000 });
+  const compileScript = path.join(root, 'scripts/scriptc.mjs');
+  const compiled = spawnSync(process.execPath, [compileScript, 'tool', source, '-o', fixture, '--no-keep-llvm'], { encoding: 'utf8', timeout: 90_000 });
   assert.equal(compiled.status, 0, compiled.stderr);
   const packFixture = (): Buffer => {
     const bytes = fs.readFileSync(fixture);
@@ -62,7 +61,7 @@ else {
   };
   const archive = packFixture();
   writeFile(source, fs.readFileSync(source, 'utf8').replace('demo 1.0.0', 'demo 1.1.0'));
-  const compiledUpdate = spawnSync(process.execPath, [compileScript, source, '-o', fixture, '--no-keep-llvm'], { encoding: 'utf8', timeout: 90_000 });
+  const compiledUpdate = spawnSync(process.execPath, [compileScript, 'tool', source, '-o', fixture, '--no-keep-llvm'], { encoding: 'utf8', timeout: 90_000 });
   assert.equal(compiledUpdate.status, 0, compiledUpdate.stderr);
   const updatedArchive = packFixture();
   const routes: Record<string, Buffer | string> = {};
@@ -129,7 +128,7 @@ else {
 }
 
 test('native manager creates a real Python venv offline and launches its entry point without Node', {
-  skip: !enabled, timeout: 120_000,
+  timeout: 120_000,
 }, async (t) => {
   const temporary = tempDir('decx-native-python-');
   t.after(() => fs.rmSync(temporary, { recursive: true, force: true }));
