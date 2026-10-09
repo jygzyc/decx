@@ -89,21 +89,32 @@ test('lock release never removes a replacement project writer lock', async () =>
   const project = await mkdtemp(join(tmpdir(), 'decx-cap-'));
   const moved = `${project}-moved`;
   const workspace = join(project, '.decxwiki');
-  let entered = false;
+  let replaced = false;
+  let renameDenied = false;
+  const lock = join(workspace, '.pi', 'decx-write.lock');
   try {
     try {
       await withWorkspaceLock(workspace, async () => {
-        entered = true;
-        await rename(project, moved);
+        try {
+          await rename(project, moved);
+        } catch (error) {
+          // Windows may prevent moving a directory while fs-safe retains ownership handles.
+          if (process.platform !== 'win32' || !['EPERM', 'EACCES', 'EBUSY'].includes((error as NodeJS.ErrnoException).code ?? '')) throw error;
+          assert.equal(JSON.parse(await readFile(lock, 'utf8')).pid, process.pid);
+          renameDenied = true;
+          return;
+        }
         await mkdir(join(workspace, '.pi'), { recursive: true });
-        await writeFile(join(workspace, '.pi', 'decx-write.lock'), 'other writer');
+        await writeFile(lock, 'other writer');
+        replaced = true;
       });
     } catch (error) {
-      // An ownership change may fail closed instead of releasing the moved lock.
-      if (!entered) throw error;
+      // Only a completed replacement grants permission to accept fail-closed cleanup.
+      if (!replaced) throw error;
     }
-    assert.equal(entered, true);
-    assert.equal(await readFile(join(workspace, '.pi', 'decx-write.lock'), 'utf8'), 'other writer');
+    assert.equal(replaced || renameDenied, true);
+    if (replaced) assert.equal(await readFile(lock, 'utf8'), 'other writer');
+    else await assert.rejects(readFile(lock), { code: 'ENOENT' });
   } finally {
     await rm(project, { recursive: true, force: true });
     await rm(moved, { recursive: true, force: true });
