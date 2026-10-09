@@ -5,7 +5,7 @@ import path from 'node:path';
 import test from 'node:test';
 import { analyze, compile, execute, fixtures } from './helpers.ts';
 
-interface FunctionRecord { name: string; address: number; code: string; error: string | null }
+interface FunctionRecord { name: string; address: number; size: number; code: string; error: string | null }
 interface FunctionsResult { error: string | null; functions: FunctionRecord[] }
 
 test('real executable: run, discover, decompile, recompile and compare behavior through DECX', { timeout: 180_000 }, async (t) => {
@@ -19,28 +19,33 @@ test('real executable: run, discover, decompile, recompile and compare behavior 
   assert.equal(baseline.stdout.trim(), 'DECX_REAL_NATIVE score=1337 mix=272');
   const listed = JSON.parse(analyze('kuna', ['functions', binary, '--json'], temporary)) as FunctionsResult;
   assert.equal(listed.error, null);
-  const names = ['decx_score', 'decx_mix'].map(name => {
-    const found = listed.functions.find(fn => fn.name.replace(/^_/, '') === name);
-    assert.ok(found, `Actual executable symbol missing: ${name}`);
-    return found.name;
+  const targets = ['decx_score', 'decx_mix'].map(name => {
+    const matches = listed.functions.filter(fn => fn.name.replace(/^_/, '') === name);
+    assert.ok(matches.length, `Actual executable symbol missing: ${name}`);
+    // PE debug builds can expose both the body and an incremental-link thunk.
+    // Select the full body and use its address, never an ambiguous name selector.
+    return matches.reduce((body, candidate) => candidate.size > body.size ? candidate : body);
   });
   const recovered: FunctionRecord[] = [];
 
   await t.test('recover nonempty C bodies from actual machine instructions', () => {
-    for (const name of names) {
-      const result = JSON.parse(analyze('kuna', ['decompile', binary, name, '--json'], temporary)) as FunctionsResult;
+    for (const target of targets) {
+      const result = JSON.parse(analyze('kuna', ['decompile', binary, `0x${target.address.toString(16)}`, '--addr', '--json'], temporary)) as FunctionsResult;
       assert.equal(result.error, null);
       assert.equal(result.functions.length, 1);
       const fn = result.functions[0];
       assert.ok(fn);
-      assert.equal(fn.error, null, `${name}: decompiler failure`);
+      assert.equal(fn.error, null, `${target.name}: decompiler failure`);
       assert.match(fn.code, /return\b/);
-      assert.ok(fn.code.includes(name));
+      assert.ok(fn.code.includes(fn.name));
       recovered.push(fn);
     }
     assert.ok(recovered[0]);
     assert.match(recovered[0].code, /\b(?:1337|0x539)\b/);
   });
+
+  assert.equal(recovered.length, targets.length, 'Both actual functions must decompile before behavior comparison');
+  const names = recovered.map(fn => fn.name);
 
   await t.test('recompile recovered C and match the original executable on branch and negative inputs', () => {
     const source = path.join(temporary, 'recovered.c');
@@ -73,7 +78,7 @@ int main(int argc, char **argv) {
 
   await t.test('export an actual decompilation project and verify indexed C bodies', () => {
     const project = path.join(temporary, 'project export');
-    analyze('kuna', ['decompile-project', binary, '--functions', names.join(','), '--jobs', '1', '--stream', '-o', project], temporary);
+    analyze('kuna', ['decompile-project', binary, ...targets.flatMap(fn => ['--addr', `0x${fn.address.toString(16)}`]), '--jobs', '1', '--stream', '-o', project], temporary);
     const index = fs.readFileSync(path.join(project, 'index.jsonl'), 'utf8').trim().split(/\r?\n/)
       .map(line => JSON.parse(line) as { name: string; error: string | null; c_offset: number; c_len: number });
     const cFile = fs.readdirSync(project).find(name => name.endsWith('.c'));
