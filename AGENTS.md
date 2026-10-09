@@ -50,9 +50,10 @@ builds execute third-party code: record what was fetched, built and verified in
 `share/<id>/PROVENANCE`. Installs follow each tool's manifest — kuna the official upstream `v*` release plus
 its compiled SLEIGH specs, both verified against GitHub REST asset SHA-256 digests,
 droidasc a private venv installing the published PyPI package with pip,
-afe a prebuilt `tools-v*` archive when one carries an AFE build for the platform and
-otherwise a cargo build. The rules behind them (the `env` launcher contract, `release.tagPrefix`
-resolution, `--version <tag>`, when `--from-source` is offered) are documented in `decx/README.md`.
+afe a prebuilt `tools-v*` archive for the platform. Missing assets fail explicitly;
+there is no automatic source-build fallback. The rules behind them (the `env`
+launcher contract, `release.tagPrefix` resolution and `--version <tag>`) are documented in `decx/README.md`.
+Python installs use published packages, never vendored/source-archive recipes.
 CI never modifies the pinned upstream checkouts; DroidASC installs directly from PyPI.
 Installation prefers upstream distribution; repository release assets are fallback sources.
 Integrity failures must stop installation, not silently switch sources.
@@ -110,8 +111,8 @@ ledger lives under the pi agent directory, outside the three knowledge layers.
   compiling: native release and Python-wheel lifecycle tests remove Node from PATH.
   Four hosts are release-gated (Linux x64/arm64, macOS arm64, Windows x64);
   Windows arm64 is unsupported by scriptc and macOS x64 is outside the release matrix.
-  Windows compilation links an in-binary Win32 cmd bridge using Zig (CI pins 0.16.0, matching upstream's runtime-pack build). Install tests are offline — fixture archives served locally, a local wheel installed
-  with real Python/pip into a private venv, and fake toolchains for other branches — and must never touch the real home
+  Windows compilation embeds a UTF-8/long-path resource using Zig (CI pins 0.16.0, matching upstream's runtime-pack build). The manager executes the installed `launch.json` executable/argv directly: no cmd bridge, native adapter tree or legacy launch fallback. Install tests are offline — fixture archives served locally, real executables and a local wheel installed
+  with real Python/pip into a private venv — and must never touch the real home
   directory or the network; pass `--home`/`DECX_HOME` with temp dirs.
 - Skills: `python3 skills/check-skills.py` verifies frontmatter, names and relative
   links; also verify every documented native command against the supported upstream

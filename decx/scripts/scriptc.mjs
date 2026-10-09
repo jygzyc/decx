@@ -74,7 +74,7 @@ export async function installSdk(root, {
 }
 
 function windowsResource(directory) {
-  const manifest = path.join(root, 'src/native/windows.manifest').replaceAll('\\', '/');
+  const manifest = path.join(root, 'scripts/windows.manifest').replaceAll('\\', '/');
   const source = path.join(directory, 'windows.rc');
   const resource = path.join(directory, 'windows.res');
   fs.writeFileSync(source, `1 24 "${manifest}"\n`);
@@ -100,8 +100,6 @@ function buildManager() {
   try {
     const sources = path.join(temporary, 'src');
     fs.cpSync(path.join(root, 'src'), sources, { recursive: true });
-    const runner = process.platform === 'win32' ? 'runner-windows' : 'runner';
-    fs.writeFileSync(path.join(sources, 'runner.ts'), `export { defaultRunner } from './native/${runner}.ts';\n`);
     fs.writeFileSync(path.join(sources, 'build-info.ts'), [
       "import type { LoadResult } from './manifest.ts';",
       `export const embeddedManifests: LoadResult | undefined = ${JSON.stringify(manifests)};`,
@@ -112,15 +110,9 @@ function buildManager() {
     fs.writeFileSync(source, "import { runEntry } from './src/cli.ts';\nrunEntry();\n");
     const ffiArgs = [];
     if (process.platform === 'win32') {
-      const object = path.join(temporary, 'windows-process.obj');
-      run('zig', ['cc', '-target', 'x86_64-windows-gnu', '-c', path.join(root, 'src/native/windows-process.c'), '-o', object, '-O2', '-Wall', '-Wextra', '-Werror']);
       const ffi = path.join(temporary, 'ffi.json');
-      fs.writeFileSync(ffi, JSON.stringify({
-        ffi_format: 1,
-        functions: [{ name: 'decxWindowsRun', symbol: 'decx_windows_run',
-          params: ['string', 'string', 'string', 'string', 'string', 'i32', 'i32'], returns: 'f64' }],
-        libraries: [object, windowsResource(temporary)], system_libraries: ['kernel32'],
-      }));
+      fs.writeFileSync(ffi, JSON.stringify({ ffi_format: 1, functions: [],
+        libraries: [windowsResource(temporary)], system_libraries: [] }));
       ffiArgs.push('--ffi', ffi);
     }
     fs.mkdirSync(path.join(root, 'dist'), { recursive: true });

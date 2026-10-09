@@ -83,8 +83,9 @@ whether the link directory is on `PATH` together with the line to add when it is
 not. PATH links are set up after the core install commits; link conflicts or
 setup failures produce warnings without undoing the installed tool. The tool
 remains callable with `decx <tool>`.
-`decx <tool> [args...]` (or `decx -m <tool> [args...]`) executes the installed
-launcher with every argument after the tool id passed through unchanged,
+`decx <tool> [args...]` (or `decx -m <tool> [args...]`) reads the installed
+`share/<id>/launch.json` and executes its real executable and argv directly,
+with every argument after the tool id passed through unchanged,
 inherits stdio and forwards the exit code; it never translates analysis
 commands. The selected install root is passed as `DECX_HOME`. Python launchers
 initialize `VIRTUAL_ENV` and prepend the private interpreter directory to `PATH`,
@@ -129,6 +130,7 @@ Installs live under `$DECX_HOME` (default `~/.decx`; `--home`, alias
 ```
 $DECX_HOME/bin/<name>                executables of every managed tool (`.exe`/`.cmd` on Windows)
 $DECX_HOME/share/<id>/PROVENANCE     what was installed, from where
+$DECX_HOME/share/<id>/launch.json    executable, fixed argv and environment
 $DECX_HOME/runtime/<id>/               Python virtualenvs
 $DECX_HOME/share/<id>/...            runtime resources, if needed (not Python source)
 $DECX_HOME/share/kuna/specs/         Kuna's SLEIGH specs
@@ -168,8 +170,8 @@ Every tool JSON uses the same [JSON Schema](../subprojects/decx-tool.schema.json
 | Field | Meaning |
 |---|---|
 | `summary` | one-line tool description |
-| `release` | required for `bin`, `js` and `{source}` recipes, omitted for direct PyPI packages. The install source: `repository` (`owner/repo`, default `jygzyc/decx`), `version` (`latest` or an exact version/tag), `tagPrefix` (default `<id>-v`), exactly one of `asset` (a single template) or `assets` (per-platform names); `{version}`, `{os}` and `{arch}` are substituted at install time. `checksums` names the `sha256  filename` asset (`<id>-SHA256SUMS.txt` by default); `null` instead requires a SHA-256 digest in GitHub REST asset metadata for **every** download. `extraAssets` are downloaded for every platform (Kuna's compiled SLEIGH specs) |
-| `install` | required installer recipe: `["github-release"]` downloads and verifies the archive described by `release`; `["pip", "install", "droidasc"]` installs a published PyPI package (no shell). `{source}` recipes instead install a checked source archive or pinned checkout and require `release`. The manager creates the Python virtual environment itself; manifests do not contain venv commands. `--version` pins PyPI packages using `==`. Python source checkouts are not copied into `share/`; JS release assets retain their module tree under `share/<id>/app` |
+| `release` | required for `bin` and `js`, omitted for PyPI packages. The install source: `repository` (`owner/repo`, default `jygzyc/decx`), `version` (`latest` or an exact version/tag), `tagPrefix` (default `<id>-v`), exactly one of `asset` (a single template) or `assets` (per-platform names); `{version}`, `{os}` and `{arch}` are substituted at install time. `checksums` names the `sha256  filename` asset (`<id>-SHA256SUMS.txt` by default); `null` instead requires a SHA-256 digest in GitHub REST asset metadata for **every** download. `extraAssets` are downloaded for every platform (Kuna's compiled SLEIGH specs) |
+| `install` | required installer recipe: `["github-release"]` downloads and verifies the archive described by `release`; `["pip", "install", "droidasc"]` installs a published PyPI package (no shell). Python source-checkout/archive recipes are not supported. The manager creates the Python virtual environment itself; manifests do not contain venv commands. `--version` pins PyPI packages using `==`. Python source checkouts are not copied into `share/`; JS release assets retain their module tree under `share/<id>/app` |
 | `env` | `bin` tools only: environment the generated launchers export (`{prefix}` = the payload directory, `{version}` = the installed version); declaring it moves the binaries to `share/<id>/bin` and puts wrappers in `bin/` |
 | `launch` | required object with `type` (`bin`, `python` or `js`) and `commands` (nonempty list of public command names). The first command is the default for `decx -m <tool>`. For `bin`, the release archive contains each executable; for `python`, the manager generates a wrapper to the venv console script; for `js`, the release archive contains `<command>.mjs`, `.cjs` or `.js` and the manager keeps the archive tree in `share/<id>/app` (including local imports and `package.json`), generating Node launchers (`.cmd` on Windows). JS installs require `node` on PATH. |
 | `verify` | the probe command run against the staged executable or Node script before committing, e.g. `--version` |
@@ -188,10 +190,8 @@ platform-independent payload. For archive recipes, `--version <tag>` picks a
 release explicitly; otherwise `release.version` selects a tag (default
 `latest`, resolved through GitHub REST). For PyPI recipes, `--version` pins a
 package version and the default is the newest available version. `update`
-selects the latest unless `--version` is specified. For a Python checkout
-recipe, an explicit `--version` must match the checkout's exact tag;
-a mismatch or an untagged checkout is rejected rather than silently ignoring
-the requested version.
+selects the latest unless `--version` is specified. There is no checkout detection, source fallback, old manifest migration or
+legacy launch-record fallback. An install missing `launch.json` must be reinstalled.
 
 ## Development
 
@@ -291,18 +291,15 @@ passed locally on macOS arm64. Branch and release CI run compilation and the
 same native tests on Linux x64/arm64, macOS arm64 and Windows x64; a platform
 must pass before its native artifact is published.
 
-Shared application modules use scriptc-compatible namespace imports, explicit
-filesystem copy/link handling, and typed callbacks directly. The native build
-selects the HTTP/process adapters under `src/native/` and generates build metadata
-and an entry point; it does not regex-rewrite application code. Node execution
-retains its HTTP/process adapters. Native fetch shares the redirect/download
-verification policy. Windows
-links a small `CreateProcessW` FFI implementation into the same executable so
-`.cmd` arguments retain their existing escaping; building that bridge requires
-Zig on PATH (CI pins Zig 0.16.0, matching upstream's Windows runtime-pack ABI). Windows native executables also embed a UTF-8 process-code-page manifest so
-environment variables and filesystem paths preserve Unicode (Windows 10 1903+
-or Windows Server 2022+). No bridge binary, Node interpreter or JavaScript
-sidecar is needed at runtime. `--dynamic` embeds
+Node and native builds use the same source modules and one shell-free process
+runner. The compiler stages only version/manifests and the entry point; it does
+not substitute application adapters. Installation records a real executable,
+fixed argv and environment in `launch.json` inside the rollback transaction.
+User-facing shell/`.cmd` launchers remain available on PATH but the manager never
+executes them. There is no `src/native/`, custom Win32 process bridge or runtime
+sidecar. Windows native executables embed `scripts/windows.manifest` for UTF-8
+paths/environment and long paths (Windows 10 1903+ or Windows Server 2022+).
+DECX's build script uses Zig only to compile that executable resource. `--dynamic` embeds
 scriptc's own dynamic engine for unsupported static operations, not Node.
 
 ```console

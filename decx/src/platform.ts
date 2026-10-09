@@ -10,10 +10,6 @@ export type ArchKey = 'arm64' | 'amd64';
 
 export type PlatformKey = `${OsKey}-${ArchKey}`;
 
-export const SUPPORTED_OS: readonly OsKey[] = ['win', 'darwin', 'linux'];
-
-export const SUPPORTED_ARCH: readonly ArchKey[] = ['arm64', 'amd64'];
-
 export const SUPPORTED_PLATFORMS: readonly PlatformKey[] = [
   'win-amd64',
   'win-arm64',
@@ -22,12 +18,6 @@ export const SUPPORTED_PLATFORMS: readonly PlatformKey[] = [
   'linux-amd64',
   'linux-arm64',
 ];
-
-const OS_LABELS: Record<string, string> = {
-  darwin: 'macOS',
-  linux: 'Linux',
-  win32: 'Windows',
-};
 
 /** Maps a Node platform/arch pair onto a toolkit platform key, or null. */
 export function platformKey(
@@ -42,16 +32,6 @@ export function platformKey(
   }
   const key: PlatformKey = `${os}-${cpu}`;
   return (SUPPORTED_PLATFORMS as readonly string[]).includes(key) ? key : null;
-}
-
-/** True when the key is one of the supported `<os>-<arch>` combinations. */
-export function isPlatformKey(key: string): key is PlatformKey {
-  return (SUPPORTED_PLATFORMS as readonly string[]).includes(key);
-}
-
-/** Human label for a Node platform, e.g. `win32` -> `Windows`. */
-export function osLabel(platform: string = process.platform): string {
-  return OS_LABELS[platform] ?? platform;
 }
 
 export function isWindows(platform: string = process.platform): boolean {

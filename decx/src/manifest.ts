@@ -21,7 +21,7 @@
 
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import { SUPPORTED_PLATFORMS, type PlatformKey } from './platform.ts';
+import { SUPPORTED_PLATFORMS } from './platform.ts';
 
 export type LaunchType = 'bin' | 'python' | 'js';
 
@@ -83,7 +83,7 @@ export interface ToolManifest {
   env?: Record<string, string>;
   /** Runtime type and the public commands, including the default first. */
   launch: LaunchSpec;
-  /** Required for binaries or pip recipes containing {source}; omitted for PyPI packages. */
+  /** Required for release archives; omitted for PyPI packages. */
   release?: ReleaseSpec;
   /** Command used to verify a fresh install, e.g. `--version`. */
   verify?: string;
@@ -119,11 +119,6 @@ const TOP_LEVEL_KEYS = new Set([
 ]);
 const RELEASE_KEYS = new Set(['repository', 'tagPrefix', 'version', 'checksums', 'asset', 'assets', 'extraAssets']);
 const REQUIREMENT_KEYS = new Set(['python']);
-
-/** Keys of manifest 1 that no longer exist; a file carrying one is out of date. */
-const REMOVED_TOP_LEVEL = ['fallbackRelease', 'source'];
-
-const REMOVED_RELEASE = ['tag', 'allowSourceFallback'];
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -191,8 +186,6 @@ export function validateManifest(
     return { errors: [`${file}: not a JSON object`] };
   }
   for (const key of Object.keys(value)) {
-    if (REMOVED_TOP_LEVEL.includes(key)) continue;
-    if (key === 'kind' || key === 'python' || key === 'bins') continue;
     if (!TOP_LEVEL_KEYS.has(key)) {
       errors.push(`${file}: unknown field "${key}"`);
     }
@@ -212,14 +205,6 @@ export function validateManifest(
     errors.push(`${file}: manifest id "${value.id}" does not match directory "${idHint}"`);
   }
   const summary = requireString(value, 'summary', file, errors);
-  if (value.kind !== undefined) {
-    errors.push(`${file}: "kind" is derived from launch.type`);
-  }
-  for (const key of REMOVED_TOP_LEVEL) {
-    if (value[key] !== undefined) {
-      errors.push(`${file}: "${key}" is not supported any more; every install comes from the release assets`);
-    }
-  }
   const optionalTextKeys: string[] = ['homepage', 'license', 'notes'];
   for (const key of optionalTextKeys) {
     if (value[key] !== undefined && typeof value[key] !== 'string') {
@@ -237,16 +222,11 @@ export function validateManifest(
   } else if (kind === 'python-venv' && (recipe.length < 3 || recipe[0] !== 'pip' || recipe[1] !== 'install')) {
     errors.push(`${file}: python launch requires install: ["pip", "install", ...]`);
   }
-  if (value.python !== undefined) errors.push(`${file}: python is obsolete; declare pip install arguments in "install"`);
-  if (value.bins !== undefined) errors.push(`${file}: "bins" is obsolete; declare commands under "launch"`);
-  const usesSource = kind === 'python-venv' && recipe !== undefined &&
-    recipe.some((arg: unknown) => typeof arg === 'string' && arg.includes('{source}'));
-  const requiresRelease = kind === 'binary' || usesSource;
-  const release = value.release === undefined && !requiresRelease ? undefined : validateRelease(value.release, id, `${file}: release`, errors);
-  if (kind === 'python-venv' && !usesSource && value.release !== undefined) {
+  const release = kind === 'binary' ? validateRelease(value.release, id, `${file}: release`, errors) : undefined;
+  if (kind === 'python-venv' && value.release !== undefined) {
     errors.push(`${file}: PyPI install recipes must not declare release assets`);
   }
-  if (kind === 'python-venv' && !usesSource && recipe !== undefined &&
+  if (kind === 'python-venv' && recipe !== undefined &&
     (typeof recipe[2] !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9_.-]*$/.test(recipe[2]))) {
     errors.push(`${file}: PyPI install recipes must name a package immediately after install`);
   }
@@ -311,13 +291,7 @@ function validateRelease(
     errors.push(`${where}: must be an object naming the release assets`);
     return undefined;
   }
-  for (const key of REMOVED_RELEASE) {
-    if (value[key] !== undefined) {
-      errors.push(`${where}.${key} is not supported any more; releases are chosen by --version or the newest tag`);
-    }
-  }
   for (const key of Object.keys(value)) {
-    if (REMOVED_RELEASE.includes(key)) continue;
     if (!RELEASE_KEYS.has(key)) {
       errors.push(`${where}: unknown field "${key}"`);
     }
@@ -408,27 +382,9 @@ function isBareDirectoryName(value: unknown): value is string {
   );
 }
 
-/** A tool subproject directory names its tool id: `decx-<id>` (or plain `<id>`). */
-function toolIdFromName(name: string): string {
-  return name.startsWith('decx-') ? name.slice('decx-'.length) : name;
-}
-
-/** `decx-*.json` files sitting in a directory where one manifest was expected. */
-function manifestNamesIn(subprojectDir: string): string[] {
-  try {
-    return fs
-      .readdirSync(subprojectDir)
-      .filter((entry) => entry.startsWith('decx-') && entry.endsWith('.json'))
-      .sort();
-  } catch {
-    return [];
-  }
-}
-
 /**
  * Loads every tool manifest under `dir`: each subproject directory holds
- * `decx-<id>.json` for the id it is named after — `subprojects/decx-<id>/…`,
- * or `<id>/…` for a plain directory.  Unreadable or invalid manifests are
+ * `decx-<id>.json` in `subprojects/decx-<id>/`. Unreadable or invalid manifests are
  * reported as issues instead of failing the whole command, so a broken tool
  * never blocks the others.
  */
@@ -440,21 +396,12 @@ export function loadManifests(dir: string): LoadResult {
   }
   const entries = fs
     .readdirSync(dir, { withFileTypes: true })
-    .filter((entry) => entry.isDirectory())
+    .filter((entry) => entry.isDirectory() && entry.name.startsWith('decx-'))
     .map((entry) => entry.name)
     .sort();
   for (const name of entries) {
-    const id = toolIdFromName(name);
+    const id = name.slice('decx-'.length);
     const file = path.join(dir, name, `decx-${id}.json`);
-    if (!fs.existsSync(file)) {
-      const strays = manifestNamesIn(path.join(dir, name));
-      if (strays.length > 0) {
-        issues.push({ file, message: `found ${strays.join(', ')}, expected decx-${id}.json` });
-      } else if (id !== name) {
-        issues.push({ file, message: `no decx-${id}.json in subprojects/${name}` });
-      }
-      continue;
-    }
     let parsed: unknown;
     try {
       parsed = JSON.parse(fs.readFileSync(file, 'utf8'));
@@ -472,37 +419,4 @@ export function loadManifests(dir: string): LoadResult {
     tools.push(manifest);
   }
   return { tools, issues };
-}
-
-/** Platform keys a manifest can install on, `['any']` for platform-independent payloads. */
-export function supportedPlatforms(manifest: ToolManifest): string[] {
-  if (manifest.launch.type === 'python') {
-    return ['any'];
-  }
-  const { asset, assets } = manifest.release!;
-  if (asset !== undefined) {
-    return asset.includes('{os}') || asset.includes('{arch}') ? [...SUPPORTED_PLATFORMS] : ['any'];
-  }
-  const keys = Object.keys(assets ?? {}).sort();
-  return keys.length > 0 ? keys : ['any'];
-}
-
-/**
- * The asset name for one platform, or null when the platform is unsupported.
- * The caller substitutes `{version}` from the release tag it resolved.
- */
-export function releaseAssetFor(manifest: ToolManifest, platform: PlatformKey): string | null {
-  const { release } = manifest;
-  if (release === undefined) return null;
-  if (release.asset !== undefined) {
-    return substitutePlatform(release.asset, platform);
-  }
-  const asset = release.assets?.[platform] ?? release.assets?.any;
-  return asset ?? null;
-}
-
-/** `{os}` and `{arch}` of a platform key substituted into an asset template. */
-function substitutePlatform(template: string, platform: PlatformKey): string {
-  const [os, arch] = platform.split('-');
-  return template.replaceAll('{os}', os ?? '').replaceAll('{arch}', arch ?? '');
 }

@@ -1,10 +1,66 @@
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import test from 'node:test';
 import { HOST_PLATFORM, makeTarGz, makeZip, runCli, runCliAsync, sha256, startFixtureServer, tempDir } from './fixtures.ts';
 
 // Only public CLI subprocesses. No imported manager functions or builtin mocks.
+test('CLI stages verified resources before verification and launches executable metadata and human shims identically', async t => {
+  const root = tempDir('decx-resources-');
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const home = path.join(root, '安装目录 with spaces');
+  const projects = path.join(root, 'subprojects');
+  const project = path.join(projects, 'decx-resources');
+  const name = process.platform === 'win32' ? 'resources.exe' : 'resources';
+  const envKey = process.platform === 'win32' ? 'PATH' : 'Path';
+  fs.mkdirSync(project, { recursive: true });
+  fs.writeFileSync(path.join(project, 'decx-resources.json'), JSON.stringify({
+    manifest: 2, id: 'resources', summary: 'native executable with required resources', install: ['github-release'],
+    launch: { type: 'bin', commands: ['resources'] },
+    verify: "-e console.log(require('fs').readFileSync(process.env.RESOURCES+'/probe.sla','utf8'))",
+    env: { RESOURCES: '{prefix}/specs', Path: 'descriptor-path', DECX_MARKER: '资源%literal!^&' },
+    release: { repository: 'acme/resources', tagPrefix: 'v', asset: 'resources.zip', checksums: null, extraAssets: { specs: 'specs.zip' } },
+  }));
+  const archive = makeZip([{ name, data: fs.readFileSync(process.execPath), mode: 0o755 }]);
+  const specs = makeZip([{ name: 'specs/probe.sla', data: 'resource fixture' }]);
+  const assets = [
+    { name: 'resources.zip', digest: `sha256:${sha256(archive)}` },
+    { name: 'specs.zip', digest: `sha256:${sha256(specs)}` },
+  ];
+  const releasePath = '/repos/acme/resources/releases/tags/v1.0.0';
+  const routes: Record<string, string | Buffer> = {
+    [releasePath]: JSON.stringify({ tag_name: 'v1.0.0', assets }),
+    '/acme/resources/releases/download/v1.0.0/resources.zip': archive,
+    '/acme/resources/releases/download/v1.0.0/specs.zip': specs,
+  };
+  const server = await startFixtureServer(routes);
+  t.after(() => server.close());
+  const env = { HOME: root, USERPROFILE: root, GITHUB_TOKEN: 'test-only-token', DECX_GITHUB_API_BASE: server.url, DECX_GITHUB_DOWNLOAD_BASE: server.url };
+  const common = ['--home', home, '--subprojects', projects];
+  const installed = await runCliAsync([...common, 'install', 'resources', '--version', 'v1.0.0', '--no-links'], env);
+  assert.equal(installed.status, 0, installed.stderr + installed.stdout);
+  assert.equal(server.requested.filter(url => url === releasePath).length, 1);
+  const expected = [path.join(home, 'share/resources/specs'), 'descriptor-path', '资源%literal!^&'];
+  const expression = `JSON.stringify([process.env.RESOURCES,process.env.${envKey},process.env.DECX_MARKER])`;
+  const direct = runCli([...common, '-m', 'resources', '-p', expression], env);
+  assert.equal(direct.status, 0, direct.stderr + direct.stdout);
+  assert.deepEqual(JSON.parse(direct.stdout), expected);
+  const launcher = (installed.json as { launcher: string }).launcher;
+  const shim = process.platform === 'win32'
+    ? spawnSync('cmd.exe', ['/d', '/s', '/c', `""${launcher}" -p "${expression}""`], { encoding: 'utf8', env: { ...process.env, ...env }, windowsVerbatimArguments: true })
+    : spawnSync(launcher, ['-p', expression], { encoding: 'utf8', env: { ...process.env, ...env } });
+  assert.equal(shim.status, 0, shim.stderr + shim.stdout);
+  assert.deepEqual(JSON.parse(shim.stdout), expected);
+  const provenance = path.join(home, 'share/resources/PROVENANCE');
+  const record = fs.readFileSync(provenance);
+  assets[1]!.digest = `sha256:${'0'.repeat(64)}`;
+  routes[releasePath] = JSON.stringify({ tag_name: 'v1.0.0', assets });
+  const rejected = await runCliAsync([...common, 'update', 'resources', '--version', 'v1.0.0'], env);
+  assert.notEqual(rejected.status, 0);
+  assert.match(rejected.stdout, /CHECKSUM_MISMATCH/);
+  assert.deepEqual(fs.readFileSync(provenance), record);
+});
 test('CLI discovery, usage, manifest errors and explicit home operate as user commands', async t => {
   const root = tempDir('decx-commands-');
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));

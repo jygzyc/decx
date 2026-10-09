@@ -12,7 +12,6 @@
  * `$DECX_LINKS_DIR`.
  */
 
-import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 
@@ -22,11 +21,6 @@ export const ENV_LINKS = 'DECX_LINKS_DIR';
 /** `<home>/bin` -- executables of every installed tool (the store). */
 export function binRoot(home: string): string {
   return path.join(home, 'bin');
-}
-
-/** `<home>/bin/<name>` -- one installed executable. */
-export function binPath(home: string, name: string): string {
-  return path.join(binRoot(home), name);
 }
 
 /** `<home>/runtime/<id>` -- private interpreter environment for a tool. */
@@ -73,8 +67,4 @@ export function resolveLinkDir(flag?: string, env: NodeJS.ProcessEnv = process.e
   const explicit = flag !== undefined && flag.trim() !== '' ? flag : env[ENV_LINKS];
   const chosen = explicit !== undefined && explicit.trim() !== '' ? explicit : path.join(userHome(env), '.local', 'bin');
   return path.resolve(chosen);
-}
-
-export function exists(target: string): boolean {
-  return fs.existsSync(target);
 }

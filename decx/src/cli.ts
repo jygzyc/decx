@@ -2,7 +2,7 @@
 /**
  * `decx` -- install the DECX tools and run them.  It is a thin wrapper:
  * `install` moves files into DECX_HOME, `decx -m <tool> [args...]` execs the
- * installed launcher with every later argument untouched, and the tools
+ * installed executable with every later argument untouched, and the tools
  * themselves are never translated.
  *
  * Data commands print one JSON object on stdout (`help` and a module run print
@@ -17,17 +17,17 @@ import { embeddedManifests, packageVersion, runtimeInfo } from './build-info.ts'
 import { fileURLToPath } from 'node:url';
 import { KNOWN_COMMANDS, parseArgs, type CliArgs } from './args.ts';
 import { binRoot, resolveHome } from './config.ts';
-import { defaultRunner, InstallError, installTool, type InstallOptions, type InstallResult } from './install.ts';
+import { InstallError, installTool, type InstallOptions, type InstallResult } from './install.ts';
+import { defaultRunner } from './runner.ts';
 import { toolState } from './inspect.ts';
 import { fail, ok, stringify } from './json.ts';
 import { loadManifests, type LoadResult, type ToolManifest } from './manifest.ts';
 import { currentPlatformKey } from './platform.ts';
-import { launchSpec } from './launch.ts';
+import { installedCommand } from './launch.ts';
 import { removeTool } from './remove.ts';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const SUBPROJECTS_DIR = path.resolve(HERE, '..', '..', 'subprojects');
-const REPO_ROOT = path.resolve(HERE, '..', '..');
 
 const HELP = `decx -- DECX toolkit installer and manager
 
@@ -154,7 +154,6 @@ export function installPayload(result: InstallResult): Record<string, unknown> {
   };
 }
 
-export { launchSpec } from './launch.ts';
 
 export async function run(argv: readonly string[], env: NodeJS.ProcessEnv = process.env): Promise<number> {
   const args = parseArgs(argv);
@@ -191,17 +190,7 @@ export async function run(argv: readonly string[], env: NodeJS.ProcessEnv = proc
           hint: `run \`decx install ${manifest.id}\``,
         });
       }
-      const spec = launchSpec(state.bin, args.toolArgs, process.platform, env);
-      // Tools resolve their payload from $DECX_HOME (AFE does), so a custom
-      // --home has to reach the child even when the host never exported it.
-      const child = await defaultRunner({
-        command: spec.command,
-        args: spec.args,
-        mode: 'inherit',
-        env: { ...env, DECX_HOME: home },
-        windowsHide: false,
-        windowsVerbatimArguments: spec.windowsVerbatimArguments === true,
-      });
+      const child = await defaultRunner(installedCommand(home, manifest.id, args.toolArgs, env));
       if (child.error !== undefined) {
         throw new InstallError('LAUNCH_FAILED', `could not launch ${state.bin}: ${child.error}`);
       }
@@ -257,14 +246,12 @@ export async function run(argv: readonly string[], env: NodeJS.ProcessEnv = proc
     }
     const options = installOptions(args);
     if (command === 'update') {
-      options.preferRelease = true;
       if (args.releaseTag === undefined) options.version = 'latest';
     }
     const apiBase = env.DECX_GITHUB_API_BASE;
     const downloadBase = env.DECX_GITHUB_DOWNLOAD_BASE;
     const result = await installTool(manifest, options, {
       home,
-      repoRoot: REPO_ROOT,
       env,
       ...(apiBase !== undefined ? { apiBase } : {}),
       ...(downloadBase !== undefined ? { downloadBase } : {}),

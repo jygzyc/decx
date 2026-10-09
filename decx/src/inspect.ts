@@ -8,7 +8,6 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { binRoot, provenanceFile, toolPrefix } from './config.ts';
 import type { ToolManifest } from './manifest.ts';
-import { exeSuffix } from './platform.ts';
 
 export interface ToolState {
   id: string;
@@ -17,7 +16,7 @@ export interface ToolState {
   prefix?: string;
   /** The installed launcher inside `<home>/bin`. */
   bin?: string;
-  version?: string;
+  version?: string | undefined;
   provenance?: Record<string, string>;
 }
 
@@ -57,33 +56,12 @@ export function readProvenance(file: string): Record<string, string> | null {
 
 /** Version recorded by the installer, whatever key the install method used. */
 export function provenanceVersion(provenance: Record<string, string>): string | undefined {
-  for (const key of ['release_tag', 'upstream_tag', 'version']) {
-    const value = provenance[key];
-    if (value !== undefined && value.trim() !== '' && value.trim() !== 'unknown') {
-      return value.trim().replace(/^v/, '');
-    }
-  }
-  return undefined;
+  return provenance.version?.trim() || undefined;
 }
 
 /** Executable names a PROVENANCE file records, used to create the PATH links. */
 export function provenanceBinaries(provenance: Record<string, string>): string[] {
-  const list = provenance.binaries;
-  if (list !== undefined && list.trim() !== '') {
-    // Older installs used a whitespace-joined list. Preserve a space-containing
-    // primary executable recorded separately, rather than splitting its name
-    // into unrelated store files when removing that legacy install.
-    const primary = provenance.binary === undefined ? '' : path.basename(provenance.binary);
-    if (primary.includes(' ') && (list === primary || list.startsWith(`${primary} `))) {
-      return [primary, ...list.slice(primary.length).trim().split(/\s+/).filter(Boolean)];
-    }
-    return list.split(/\s+/).filter((name) => name !== '');
-  }
-  const single = provenance.binary;
-  if (single !== undefined && single.trim() !== '') {
-    return [path.basename(single.trim())];
-  }
-  return [];
+  return (provenance.binaries ?? '').split(/\s+/).filter(Boolean);
 }
 
 function isFile(target: string): boolean {
@@ -102,43 +80,18 @@ function isDir(target: string): boolean {
   }
 }
 
-function managedLauncher(home: string, bin: string): string | null {
-  for (const name of [`${bin}${exeSuffix()}`, `${bin}.cmd`, bin]) {
-    const file = path.join(binRoot(home), name);
-    if (isFile(file)) {
-      return file;
-    }
-  }
-  return null;
-}
-
 /**
  * Install state of one tool: the launcher in the store, the payload it belongs
  * to and the PROVENANCE of the last install.  A launcher whose payload is gone
  * is a leftover, not an install.
  */
 export function toolState(home: string, manifest: ToolManifest): ToolState {
-  const launcher = manifest.launch.commands[0] as string;
-  const current = managedLauncher(home, launcher);
   const prefix = toolPrefix(home, manifest.id);
-  const file = provenanceFile(home, manifest.id);
-  const provenance = isFile(file) ? readProvenance(file) : null;
-  const recorded = provenance?.tool === manifest.id ? provenance.binary : undefined;
-  const previous = recorded !== undefined && path.dirname(recorded) === binRoot(home) && isFile(recorded) ? recorded : null;
-  const bin = provenance === null ? current : provenance.tool === manifest.id
-    ? (current !== null && (provenanceBinaries(provenance).includes(path.basename(current)) ||
-      (provenance.binaries === undefined && provenance.binary === undefined)) ? current : previous)
-    : null;
-  if (bin === null || !isDir(prefix)) {
-    return { id: manifest.id, installed: false, ...(bin !== null ? { bin } : {}) };
+  const provenance = readProvenance(provenanceFile(home, manifest.id));
+  const bin = provenance?.binary;
+  if (provenance?.tool !== manifest.id || bin === undefined || path.dirname(bin) !== binRoot(home) ||
+    !provenanceBinaries(provenance).includes(path.basename(bin)) || !isFile(bin) || !isDir(prefix)) {
+    return { id: manifest.id, installed: false };
   }
-  const version = provenance !== null ? provenanceVersion(provenance) : undefined;
-  return {
-    id: manifest.id,
-    installed: true,
-    prefix,
-    bin,
-    ...(version !== undefined ? { version } : {}),
-    ...(provenance !== null ? { provenance } : {}),
-  };
+  return { id: manifest.id, installed: true, prefix, bin, version: provenanceVersion(provenance), provenance };
 }

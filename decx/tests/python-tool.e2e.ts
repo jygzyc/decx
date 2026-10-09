@@ -68,4 +68,32 @@ test('Python fixture installs a local wheel into a real private venv and runs th
   const version = runCli(['--home', home, '--subprojects', subprojects, '-m', 'pyprobe', '--version'], env);
   assert.equal(version.status, 0, version.stderr);
   assert.equal(version.stdout.trim(), 'pyprobe 1.0.0');
+
+  // Routing uses the executable descriptor, never a generated shell shim.
+  const launcher = fs.readFileSync(result.launcher);
+  fs.writeFileSync(result.launcher, 'this shim must not execute');
+  const direct = runCli(['--home', home, '--subprojects', subprojects, '-m', 'pyprobe', ...args], env);
+  assert.equal(direct.status, 0, direct.stderr);
+  assert.deepEqual(JSON.parse(direct.stdout), args);
+  fs.writeFileSync(result.launcher, launcher);
+
+  const entry = path.join(home, 'share/pyprobe/launch.json');
+  const descriptor = fs.readFileSync(entry);
+  fs.unlinkSync(entry);
+  const missing = runCli(['--home', home, '--subprojects', subprojects, '-m', 'pyprobe'], env);
+  assert.notEqual(missing.status, 0);
+  assert.match(missing.stdout, /reinstall pyprobe/);
+  fs.writeFileSync(entry, descriptor);
+
+  // Failure occurs after swapping the payload and creating the new final-path venv.
+  const provenance = path.join(home, 'share/pyprobe/PROVENANCE');
+  const record = fs.readFileSync(provenance);
+  const failed = await runCliAsync(['--home', home, '--subprojects', subprojects, 'update', 'pyprobe', '--version', '2.0.0'], env);
+  assert.notEqual(failed.status, 0);
+  assert.match(failed.stdout, /PIP_FAILED/);
+  assert.deepEqual(fs.readFileSync(provenance), record);
+  assert.deepEqual(fs.readFileSync(entry), descriptor);
+  const restored = runCli(['--home', home, '--subprojects', subprojects, '-m', 'pyprobe', '--version'], env);
+  assert.equal(restored.status, 0, restored.stderr);
+  assert.equal(restored.stdout.trim(), 'pyprobe 1.0.0');
 });

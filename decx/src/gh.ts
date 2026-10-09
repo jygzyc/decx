@@ -335,23 +335,6 @@ export async function downloadAsset(
   return { path: dest, sha256: hash.digest('hex'), bytes };
 }
 
-/** SHA-256 of a file on disk, as lowercase hex. */
-export async function sha256File(file: string): Promise<string> {
-  const hash = createHash('sha256');
-  const descriptor = fs.openSync(file, 'r');
-  const buffer = Buffer.alloc(64 * 1024);
-  try {
-    for (;;) {
-      const bytes = fs.readSync(descriptor, buffer, 0, buffer.length, null);
-      if (bytes === 0) break;
-      hash.update(buffer.subarray(0, bytes));
-    }
-  } finally {
-    fs.closeSync(descriptor);
-  }
-  return hash.digest('hex');
-}
-
 /** Parses `sha256  filename` lines (the `sha256sum` and `*filename` forms). */
 export function parseChecksums(text: string): Map<string, string> {
   const checksums = new Map<string, string>();

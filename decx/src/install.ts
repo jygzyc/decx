@@ -1,16 +1,12 @@
 /**
- * Tool installation.  Every install is a release download: resolve the tag,
- * pick the asset of the host platform, verify and unpack it, stage inside the
- * tool prefix, then commit `bin/`, `share/<id>/` and (for Kuna) `specs/` plus a
- * PROVENANCE record.
- *
- * Nothing here installs a language runtime: missing tools are reported with
- * the command that installs them.  External programs (python) run through a
- * `CommandRunner` so the whole flow is testable offline.
+ * Install upstream release archives or PyPI packages into an isolated stage,
+ * then atomically commit executables, payload, launch metadata and PROVENANCE.
+ * Python virtualenvs are initialized at their permanent path under rollback.
+ * Runtimes are probed, never installed.
  */
 
-import { defaultRunner } from './runner.ts';
-export { defaultRunner } from './runner.ts';
+import { defaultRunner, type CommandResult } from './runner.ts';
+import { launcherText, shellQuote, type LaunchEntry } from './launch.ts';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
@@ -36,39 +32,14 @@ import { currentPlatformKey, isWindows, type PlatformKey } from './platform.ts';
 
 export type InstallMethod = 'release download' | 'python venv';
 
-export interface CommandSpec {
-  command: string;
-  args: string[];
-  /** `capture` keeps output; `stream` also logs it; `inherit` connects the terminal. */
-  mode?: 'capture' | 'stream' | 'inherit';
-  env?: NodeJS.ProcessEnv;
-  windowsHide?: boolean;
-  windowsVerbatimArguments?: boolean;
-}
-
-export interface CommandResult {
-  status: number | null;
-  stdout: string;
-  stderr: string;
-  error?: string;
-}
-
-export type CommandRunner = (spec: CommandSpec) => Promise<CommandResult>;
-
 export interface InstallContext {
   /** DECX_HOME root; the tool prefix is `<home>/share/<id>`. */
   home: string;
-  /** Repository root holding `subprojects/`; a temp directory works in tests. */
-  repoRoot: string;
   env?: NodeJS.ProcessEnv;
   /** Overrides the host platform key (tests use it to pin an asset). */
   platform?: PlatformKey | null;
   apiBase?: string;
   downloadBase?: string;
-  /** Runs the manifest `verify` command after staging; defaults to true. */
-  verify?: boolean;
-  log?: (line: string) => void;
-  run?: CommandRunner;
 }
 
 export interface InstallOptions {
@@ -80,8 +51,6 @@ export interface InstallOptions {
   noLinks?: boolean;
   /** Replace files in the store or link directory that decx did not create. */
   force?: boolean;
-  /** Resolve a release even when a pinned Python checkout is available. */
-  preferRelease?: boolean;
 }
 
 export interface InstallResult {
@@ -121,17 +90,15 @@ export class InstallError extends Error {
 
 interface ResolvedContext {
   home: string;
-  repoRoot: string;
   env: NodeJS.ProcessEnv;
   platform: PlatformKey | null;
   apiBase: string;
   downloadBase: string;
-  verify: boolean;
   log: (line: string) => void;
-  run: CommandRunner;
 }
 
 interface StagedOutcome {
+  entry: LaunchEntry;
   /** Runs after the payload reaches its permanent path, while backups still exist. */
   initialize?: () => Promise<void>;
   provenance: Record<string, string>;
@@ -150,14 +117,11 @@ interface StagedOutcome {
 function resolveContext(context: InstallContext): ResolvedContext {
   return {
     home: context.home,
-    repoRoot: context.repoRoot,
     env: context.env ?? process.env,
     platform: context.platform !== undefined ? context.platform : currentPlatformKey(),
     apiBase: context.apiBase ?? DEFAULT_API_BASE,
     downloadBase: context.downloadBase ?? DEFAULT_DOWNLOAD_BASE,
-    verify: context.verify !== false,
-    log: context.log ?? ((line: string) => process.stderr.write(`${line}\n`)),
-    run: context.run ?? defaultRunner,
+    log: (line: string) => process.stderr.write(`${line}\n`),
   };
 }
 
@@ -168,12 +132,7 @@ async function runCommand(
   mode: 'capture' | 'stream' = 'capture',
   extraEnv?: Record<string, string>,
 ): Promise<CommandResult> {
-  const env: NodeJS.ProcessEnv = {};
-  for (const [key, value] of Object.entries(ctx.env)) env[key] = value;
-  if (extraEnv !== undefined) {
-    for (const [key, value] of Object.entries(extraEnv)) env[key] = value;
-  }
-  return await ctx.run({ command, args, mode, env });
+  return defaultRunner({ command, args, mode, env: { ...ctx.env, ...extraEnv } });
 }
 
 function assertInstallRoot(home: string): string {
@@ -252,89 +211,6 @@ export function pathHint(binDir: string, windows: boolean = isWindows()): string
   return windows ? `set PATH=${binDir};%PATH%` : `export PATH="${binDir}:$PATH"`;
 }
 
-export interface VenvLauncherInput {
-  id: string;
-  /** `macos`, `linux` or `windows`, for the informative comment only. */
-  platformOs: string;
-  venvBin: string;
-  command: string;
-}
-
-/** The POSIX launcher for a python-venv tool: venv python on its upstream entry point. */
-export function venvLauncherText(input: VenvLauncherInput): string {
-  return [
-    '#!/bin/sh',
-    `# Generated by decx install -- exec the installed ${input.command} console script.`,
-    '# Arguments are passed through untouched; this is not a DECX command wrapper.',
-    `# Platform: ${input.platformOs}`,
-    '# The launcher is reached through a PATH symlink, so follow it to find the payload.',
-    'self=$0',
-    'while [ -L "$self" ]; do',
-    '  link=$(readlink "$self")',
-    '  case $link in /*) self=$link ;; *) self=$(dirname -- "$self")/$link ;; esac',
-    'done',
-    'case $self in */*) dir=${self%/*} ;; *) dir=. ;; esac',
-    'root=$(CDPATH= cd -- "$dir/.." && pwd)',
-    `export VIRTUAL_ENV="$root/runtime/${input.id}"`,
-    `export PATH="$VIRTUAL_ENV/${input.venvBin}:$PATH"`,
-    `exec "$VIRTUAL_ENV/${input.venvBin}/${input.command}" "$@"`,
-    '',
-  ].join('\n');
-}
-
-/** The cmd.exe/PowerShell sibling launcher; `%*` forwards arguments untouched. */
-export function venvCmdLauncherText(input: { id: string; command: string }): string {
-  return [
-    '@echo off',
-    'rem Generated by decx install -- Windows cmd/PowerShell launcher.',
-    'rem Arguments are passed through untouched; this is not a DECX command wrapper.',
-    'setlocal DisableDelayedExpansion',
-    'set "root=%~dp0.."',
-    `set "VIRTUAL_ENV=%root%\\runtime\\${input.id}"`,
-    'set "PATH=%VIRTUAL_ENV%\\Scripts;%PATH%"',
-    `"%VIRTUAL_ENV%\\Scripts\\${input.command}.exe" %*`,
-    'exit /b %errorlevel%',
-    '',
-  ].join('\r\n');
-}
-
-/** POSIX bin launcher for a Node script retained under share/<id>/app. */
-export function jsLauncherText(id: string, script: string): string {
-  if (!isSafeRelativePath(script)) throw new InstallError('INVALID_PATH', `unsafe JS script path: ${script}`);
-  return [
-    '#!/bin/sh',
-    '# Generated by decx install -- run the release script with Node.',
-    'self=$0',
-    'while [ -L "$self" ]; do',
-    '  link=$(readlink "$self")',
-    '  case $link in /*) self=$link ;; *) self=$(dirname -- "$self")/$link ;; esac',
-    'done',
-    'root=$(CDPATH= cd -- "$(dirname -- "$self")/.." && pwd)',
-    `exec node "$root/share/${id}/app/${script}" "$@"`,
-    '',
-  ].join('\n');
-}
-
-/** Windows cmd launcher for a Node script retained under share/<id>/app. */
-export function jsCmdLauncherText(id: string, script: string): string {
-  if (!isSafeRelativePath(script)) throw new InstallError('INVALID_PATH', `unsafe JS script path: ${script}`);
-  const windowsScript = script.replaceAll('/', '\\');
-  return [
-    '@echo off',
-    'rem Generated by decx install -- run the release script with Node.',
-    'setlocal DisableDelayedExpansion',
-    'set "root=%~dp0.."',
-    `node "%root%\\share\\${id}\\app\\${windowsScript}" %*`,
-    'exit /b %errorlevel%',
-    '',
-  ].join('\r\n');
-}
-
-/** Single-quoted POSIX word: `'` is the only character that needs escaping. */
-export function shellQuote(value: string): string {
-  return `'${value.replaceAll("'", "'\\''")}'`;
-}
-
 /**
  * Manifest `env` with its placeholders resolved: `{prefix}` is the payload
  * directory and `{version}` the installed version.  `undefined` when the
@@ -367,55 +243,6 @@ export function formatEnv(env: Record<string, string>): string {
 /** Store name of a wrapped binary: the archive's `kuna.exe` is exposed as `kuna.cmd`. */
 export function launcherStoreName(staged: string): string {
   return /\.exe$/i.test(staged) ? `${staged.slice(0, -4)}.cmd` : staged;
-}
-
-/**
- * POSIX launcher for a tool that needs `env`: the store file exports the
- * variables and execs the packaged binary.  Arguments are passed through
- * untouched -- this is not a DECX command wrapper.
- */
-function safeEnvName(name: string): void {
-  if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(name)) {
-    throw new InstallError('INVALID_MANIFEST', `invalid launcher environment variable name: ${JSON.stringify(name)}`);
-  }
-}
-
-export function envLauncherText(target: string, env: Record<string, string>): string {
-  const lines = [
-    '#!/bin/sh',
-    '# Generated by decx install -- exports the tool environment, then execs the packaged binary.',
-    '# Arguments are passed through untouched; this is not a DECX command wrapper.',
-  ];
-  for (const [name, value] of Object.entries(env)) {
-    safeEnvName(name);
-    lines.push(`export ${name}=${shellQuote(value)}`);
-  }
-  lines.push(`exec ${shellQuote(target)} "$@"`, '');
-  return lines.join('\n');
-}
-
-/** The cmd.exe/PowerShell sibling of {@link envLauncherText}. */
-export function envCmdLauncherText(target: string, env: Record<string, string>): string {
-  const lines = [
-    '@echo off',
-    'rem Generated by decx install -- exports the tool environment, then runs the packaged binary.',
-    'rem Arguments are passed through untouched; this is not a DECX command wrapper.',
-    'setlocal',
-  ];
-  // Refuse cmd metacharacters rather than writing an executable command
-  // injection into a persistent launcher. Most values are resource paths.
-  if (/["%\r\n!]/.test(target)) {
-    throw new InstallError('INVALID_PATH', 'Windows launcher path contains cmd metacharacters');
-  }
-  for (const [name, value] of Object.entries(env)) {
-    safeEnvName(name);
-    if (/["%\r\n!]/.test(value)) {
-      throw new InstallError('INVALID_PATH', `Windows launcher value for ${name} contains cmd metacharacters`);
-    }
-    lines.push(`set "${name}=${value}"`);
-  }
-  lines.push(`"${target}" %*`, 'exit /b %errorlevel%', '');
-  return lines.join('\r\n');
 }
 
 function isoTimestamp(): string {
@@ -623,10 +450,6 @@ async function findPython(
   );
 }
 
-function initialMethod(manifest: ToolManifest): InstallMethod {
-  return manifest.launch.type === 'python' ? 'python venv' : 'release download';
-}
-
 async function resolveInstallTag(ctx: ResolvedContext, release: ReleaseSpec, options: InstallOptions): Promise<string> {
   const requested = options.version ?? release.version;
   if (requested !== undefined && requested !== 'latest' && requested.trim() !== '') {
@@ -675,50 +498,30 @@ function checkDigest(asset: string, expected: string, actual: string): void {
   }
 }
 
-async function verifyChecksum(
-  ctx: ResolvedContext,
-  release: ReleaseSpec,
-  tag: string,
-  asset: string,
-  actualSha: string,
-  downloads: string,
-  token: string | undefined,
-  assetDigests?: Map<string, string>,
-): Promise<string> {
-  const checksumsName = release.checksums?.replaceAll('{version}', releaseVersionFromTag(tag, release.tagPrefix));
-  if (checksumsName !== undefined) safeAssetName(checksumsName);
-  if (checksumsName === undefined || checksumsName === '') {
-    const expected = assetDigests?.get(asset);
-    if (expected === undefined) {
-      throw new InstallError('CHECKSUM_MISSING', `GitHub release ${tag} has no SHA-256 digest for ${asset}. Refusing to install an unverified asset.`);
-    }
-    checkDigest(asset, expected, actualSha);
-    ctx.log(`GitHub asset digest verified: ${actualSha}`);
-    return `verified (${actualSha})`;
-  }
-  const url = releaseDownloadUrl(ctx.downloadBase, release.repository, tag, checksumsName);
+/** Load one integrity map per release; every primary/extra asset must appear in it. */
+async function releaseChecksums(ctx: ResolvedContext, release: ReleaseSpec, tag: string, downloads: string): Promise<Map<string, string>> {
+  const token = githubToken(ctx.env);
+  const authentication = { ...(token !== undefined ? { token } : {}), userAgent: DEFAULT_USER_AGENT };
   try {
-    await downloadAsset(url, path.join(downloads, checksumsName), {
-      ...(token !== undefined ? { token } : {}),
-      userAgent: DEFAULT_USER_AGENT,
-    });
-  } catch (error) {
-    if (!(error instanceof GithubError) || error.code !== 'DOWNLOAD_FAILED') {
-      throw error;
+    if (release.checksums === null) {
+      return await releaseAssetDigests({ ...authentication, repository: release.repository, tag, apiBase: ctx.apiBase });
     }
-    throw new InstallError('CHECKSUM_DOWNLOAD_FAILED', `could not download required ${checksumsName} for ${tag}: ${error.message}. Refusing to install an unverified asset.`);
+    const name = release.checksums.replaceAll('{version}', releaseVersionFromTag(tag, release.tagPrefix));
+    safeAssetName(name);
+    await downloadAsset(releaseDownloadUrl(ctx.downloadBase, release.repository, tag, name), path.join(downloads, name), authentication);
+    return parseChecksums(fs.readFileSync(path.join(downloads, name), 'utf8'));
+  } catch (error) {
+    if (error instanceof InstallError) throw error;
+    throw new InstallError('CHECKSUM_DOWNLOAD_FAILED', `could not load required checksums for ${tag}: ${(error as Error).message}. Refusing to install unverified assets.`);
   }
-  const expected = parseChecksums(fs.readFileSync(path.join(downloads, checksumsName), 'utf8')).get(asset);
-  if (expected === undefined) {
-    throw new InstallError(
-      'CHECKSUM_MISSING',
-      `${checksumsName} in release ${tag} has no entry for ${asset}. Refusing to install an unverified asset.`,
-      { hint: 'the release and the manifest disagree; pass --version <tag> or report the release' },
-    );
-  }
-  checkDigest(asset, expected, actualSha);
-  ctx.log(`checksum verified: ${actualSha}`);
-  return `verified (${actualSha})`;
+}
+
+function verifyChecksum(ctx: ResolvedContext, asset: string, actual: string, checksums: Map<string, string>): string {
+  const expected = checksums.get(asset);
+  if (expected === undefined) throw new InstallError('CHECKSUM_MISSING', `release checksums have no entry for ${asset}. Refusing to install an unverified asset.`);
+  checkDigest(asset, expected, actual);
+  ctx.log(`checksum verified: ${actual}`);
+  return `verified (${actual})`;
 }
 
 function safeAssetName(name: string): void {
@@ -752,26 +555,14 @@ async function downloadRelease(
     });
   }
   safeAssetName(asset);
-  const token = githubToken(ctx.env);
-  let assetDigests: Map<string, string> | undefined;
-  if (release.checksums == null) {
-    try {
-      assetDigests = await releaseAssetDigests({
-        repository: release.repository, tag, apiBase: ctx.apiBase,
-        ...(token !== undefined ? { token } : {}),
-        userAgent: DEFAULT_USER_AGENT,
-      });
-    } catch (error) {
-      throw new InstallError('CHECKSUM_DOWNLOAD_FAILED', `could not fetch GitHub asset digests for ${tag}: ${(error as Error).message}. Refusing to install unverified assets.`);
-    }
-  }
   const downloads = path.join(stage, 'downloads');
   const extract = path.join(stage, 'extract');
   fs.mkdirSync(downloads, { recursive: true });
   fs.mkdirSync(extract, { recursive: true });
+  const checksums = await releaseChecksums(ctx, release, tag, downloads);
   const assetUrl = releaseDownloadUrl(ctx.downloadBase, release.repository, tag, asset);
   const { sha256 } = await downloadRequired(ctx, assetUrl, path.join(downloads, asset));
-  const checksum = await verifyChecksum(ctx, release, tag, asset, sha256, downloads, token, assetDigests);
+  const checksum = verifyChecksum(ctx, asset, sha256, checksums);
   extractArchive(path.join(downloads, asset), extract);
   let specsAsset: string | undefined;
   const extraProvenance: Record<string, string> = {};
@@ -780,7 +571,7 @@ async function downloadRelease(
     safeAssetName(extraName);
     const extraUrl = releaseDownloadUrl(ctx.downloadBase, release.repository, tag, extraName);
     const download = await downloadRequired(ctx, extraUrl, path.join(downloads, extraName));
-    const extraChecksum = await verifyChecksum(ctx, release, tag, extraName, download.sha256, downloads, token, assetDigests);
+    const extraChecksum = verifyChecksum(ctx, extraName, download.sha256, checksums);
     extraProvenance[`${key}_sha256`] = download.sha256;
     extraProvenance[`${key}_checksum`] = extraChecksum;
     extractArchive(path.join(downloads, extraName), extract);
@@ -797,6 +588,7 @@ function stageJavascriptRelease(
   stage: string,
   asset: string,
   windows: boolean,
+  prefix: string,
 ): { binaries: string[]; verifyScript: string } {
   const binaries: string[] = [];
   let verifyScript = '';
@@ -816,7 +608,7 @@ function stageJavascriptRelease(
     const launcher = windows ? `${name}.cmd` : name;
     fs.writeFileSync(
       path.join(stage, 'bin', launcher),
-      windows ? jsCmdLauncherText(manifest.id, script) : jsLauncherText(manifest.id, script),
+      launcherText({ command: 'node', args: [path.join(prefix, 'app', script)] }, windows),
     );
     if (!windows) fs.chmodSync(path.join(stage, 'bin', launcher), 0o755);
     binaries.push(launcher);
@@ -835,10 +627,12 @@ async function stageRelease(
   tag: string,
 ): Promise<StagedOutcome> {
   const { extract, version, asset, sha256, checksum, specsAsset, extraProvenance } = await downloadRelease(ctx, release, stage, tag);
+  const share = path.join(stage, 'share', manifest.id);
+  fs.mkdirSync(share, { recursive: true });
   let verifyScript: string | undefined;
   const binaries: string[] = [];
   if (manifest.launch.type === 'js') {
-    const staged = stageJavascriptRelease(manifest, extract, stage, asset, (ctx.platform ?? '').startsWith('win-'));
+    const staged = stageJavascriptRelease(manifest, extract, stage, asset, isWindows(), prefix);
     binaries.push(...staged.binaries);
     verifyScript = staged.verifyScript;
   } else {
@@ -866,8 +660,8 @@ async function stageRelease(
         `the downloaded archives do not contain a specs/ tree with compiled .sla files. Try another --version.`,
       );
     }
-    fs.renameSync(specsSource, path.join(stage, 'specs'));
-    specsInstalled = countBySuffix(path.join(stage, 'specs'), '.sla');
+    fs.renameSync(specsSource, path.join(share, 'specs'));
+    specsInstalled = countBySuffix(path.join(share, 'specs'), '.sla');
     if (specsInstalled === 0) {
       throw new InstallError('SPECS_MISSING', 'no .sla files found in the downloaded specs tree; refusing to install an uncompiled tree.');
     }
@@ -876,12 +670,12 @@ async function stageRelease(
   const launcherPath = path.join(stage, 'bin', launcherName);
   let reported = '';
   const args = verifyArgs(manifest);
-  if (ctx.verify && args.length > 0) {
+  if (args.length > 0) {
     // The payload is still the stage here, so `{prefix}` has to resolve to the
     // staged tree -- that is the copy the probe is about to exercise.
     const command = verifyScript === undefined ? launcherPath : 'node';
     const probeArgs = verifyScript === undefined ? args : [verifyScript, ...args];
-    const result = await runCommand(ctx, command, probeArgs, 'capture', launcherEnv(manifest, stage, version));
+    const result = await runCommand(ctx, command, probeArgs, 'capture', launcherEnv(manifest, share, version));
     const output = `${result.stdout}\n${result.stderr}`.trim();
     if (result.error !== undefined || result.status !== 0) {
       throw new InstallError(
@@ -928,7 +722,11 @@ async function stageRelease(
     ['bin_dir', binRoot(ctx.home)],
     ['prefix', prefix],
   );
+  const entry: LaunchEntry = verifyScript === undefined
+    ? { command: path.join(binRoot(ctx.home), launcherName), args: [] }
+    : { command: 'node', args: [path.join(prefix, 'app', path.relative(path.join(share, 'app'), verifyScript))] };
   return {
+    entry,
     provenance: { ...Object.fromEntries(entries), ...extraProvenance },
     binaries,
     launcherName,
@@ -943,201 +741,36 @@ async function stageRelease(
   };
 }
 
-interface PythonSource extends Partial<Pick<StagedOutcome, 'version' | 'releaseTag' | 'releaseSource' | 'asset' | 'checksum'>> {
-  directory: string;
-  provenance: Record<string, string>;
-}
-
-/** Release archives may wrap their payload in one enclosing directory. */
-function pythonArchiveRoot(extract: string): string {
-  const marker = 'pyproject.toml';
-  if (fs.existsSync(path.join(extract, marker))) {
-    return extract;
-  }
-  const children = listDirEntries(extract);
-  const child = children[0];
-  if (children.length === 1 && child !== undefined && child.isDirectory()) {
-    const directory = path.join(extract, child.name);
-    if (fs.existsSync(path.join(directory, marker))) {
-      return directory;
-    }
-  }
-  throw new InstallError('ASSET_LAYOUT', `Python source archive must contain ${marker} at its root or in one enclosing directory`);
-}
-
-/** A pinned upstream checkout the superproject vendors for one tool. */
-interface LocalCheckout {
-  directory: string;
-  /** Path relative to the repository root, as PROVENANCE records it. */
-  relative: string;
-  commit?: string;
-  tag?: string;
-  dirty: boolean;
-  clean?: boolean;
-}
-
-/**
- * The checkout a python tool builds from, when the repository has one:
- * `subprojects/decx-<id>/source` (or `subprojects/<id>/source`), tracked by the
- * superproject as a gitlink.  A directory the submodule was never initialised
- * into is not a checkout, so both files the payload is built from must be there.
- */
-function localCheckout(ctx: ResolvedContext, manifest: ToolManifest): LocalCheckout | null {
-  for (const name of [`decx-${manifest.id}`, manifest.id]) {
-    const directory = path.join(ctx.repoRoot, 'subprojects', name, 'source');
-    if (!fs.existsSync(path.join(directory, 'pyproject.toml'))) {
-      continue;
-    }
-    let parent = ctx.repoRoot;
-    for (const component of ['subprojects', name, 'source']) {
-      parent = path.join(parent, component);
-      if (fs.lstatSync(parent).isSymbolicLink()) {
-        throw new InstallError('UNSAFE_PYTHON_PATH', `Python checkout must not traverse symlinks: ${parent}`);
-      }
-    }
-    return { directory, relative: path.join('subprojects', name, 'source'), dirty: false };
-  }
-  return null;
-}
-
-/**
- * Best-effort git facts about a checkout: a machine without git still installs,
- * it just records less.  The commit is the revision the payload was actually
- * built from -- which is what PROVENANCE must carry, not the gitlink.
- */
-async function checkoutRevision(ctx: ResolvedContext, checkout: LocalCheckout): Promise<LocalCheckout> {
-  const git = async (args: string[]): Promise<string | null> => {
-    const result = await runCommand(ctx, 'git', ['-C', checkout.directory, ...args]);
-    if (result.error !== undefined || result.status !== 0) {
-      return null;
-    }
-    return result.stdout.trim();
-  };
-  const commit = await git(['rev-parse', 'HEAD']);
-  const tag = await git(['describe', '--tags', '--exact-match', 'HEAD']);
-  const status = await git(['status', '--porcelain']);
-  const revision: LocalCheckout = {
-    directory: checkout.directory, relative: checkout.relative,
-    dirty: status !== null && status !== '', clean: status === '',
-  };
-  if (checkout.commit !== undefined) revision.commit = checkout.commit;
-  if (checkout.tag !== undefined) revision.tag = checkout.tag;
-  if (commit !== null && commit !== '') revision.commit = commit;
-  if (tag !== null && tag !== '') revision.tag = tag;
-  return revision;
-}
-
-/**
- * The payload a venv install builds from: the pinned checkout the superproject
- * vendors when it is there, otherwise the release's source archive.  The
- * checkout is the revision the subproject's own workflow validates; the archive
- * is the fallback for an install that has no repository at hand.
- */
-async function pythonSource(
-  ctx: ResolvedContext,
-  manifest: ToolManifest,
-  release: ReleaseSpec,
-  stage: string,
-  options: InstallOptions,
-): Promise<PythonSource> {
-  const found = localCheckout(ctx, manifest);
-  if (found !== null && options.preferRelease !== true) {
-    const checkout = await checkoutRevision(ctx, found);
-    const requested = options.version ?? release.version;
-    if (requested !== undefined && requested !== 'latest' && (
-      checkout.commit === undefined || checkout.tag === undefined || checkout.clean !== true ||
-      ![requested.trim(), normalizeReleaseTag(requested), normalizeReleaseTag(requested, release.tagPrefix)].includes(checkout.tag)
-    )) {
-      throw new InstallError('VERSION_MISMATCH', `release version ${requested} does not identify the clean checkout at ${checkout.relative} (tag: ${checkout.tag ?? 'unknown'}). Use a checkout at the requested tag or remove the local checkout to install the checked release archive.`);
-    }
-    const version = checkout.tag !== undefined ? releaseVersionFromTag(checkout.tag, release.tagPrefix) : undefined;
-    ctx.log(`building ${manifest.id} from ${checkout.relative}${checkout.commit !== undefined ? ` (${checkout.commit.slice(0, 7)})` : ''}`);
-    if (checkout.dirty) {
-      ctx.log(`warning: ${checkout.relative} has uncommitted changes; the install records what is there, not the pinned revision`);
-    }
-    const provenance: Record<string, string> = { source: checkout.relative };
-    if (checkout.commit !== undefined) provenance.source_commit = checkout.commit;
-    if (checkout.tag !== undefined) provenance.source_tag = checkout.tag;
-    if (checkout.dirty) provenance.source_dirty = 'true';
-    if (version !== undefined) provenance.version = version;
-    return {
-      directory: checkout.directory, provenance,
-      ...(version !== undefined ? { version } : {}),
-      ...(checkout.tag !== undefined ? { releaseTag: checkout.tag } : {}),
-    };
-  }
-  const tag = await resolveInstallTag(ctx, release, options);
-  const downloaded = await downloadRelease(ctx, release, stage, tag);
-  const releaseSource = `https://github.com/${release.repository}`;
-  return {
-    directory: pythonArchiveRoot(downloaded.extract),
-    version: downloaded.version,
-    releaseTag: tag,
-    releaseSource,
-    asset: downloaded.asset,
-    checksum: downloaded.checksum,
-    provenance: {
-      release_source: releaseSource,
-      release_tag: tag,
-      release_asset: downloaded.asset,
-      version: downloaded.version,
-      sha256: downloaded.sha256,
-      checksum: downloaded.checksum,
-      ...downloaded.extraProvenance,
-    },
-  };
-}
-
 async function stageVenv(
   ctx: ResolvedContext,
   manifest: ToolManifest,
   prefix: string,
   stage: string,
-  source: PythonSource | undefined,
   options: InstallOptions,
 ): Promise<StagedOutcome> {
-  const recipe = manifest.install;
-  const sourceDir = source?.directory;
-  const sourceProvenance = source?.provenance ?? {};
-  const sourceMetadata = source === undefined ? {} : {
-    ...(source.version !== undefined ? { version: source.version } : {}),
-    ...(source.releaseTag !== undefined ? { releaseTag: source.releaseTag } : {}),
-    ...(source.releaseSource !== undefined ? { releaseSource: source.releaseSource } : {}),
-    ...(source.asset !== undefined ? { asset: source.asset } : {}),
-    ...(source.checksum !== undefined ? { checksum: source.checksum } : {}),
-  };
-  const packageName = source === undefined ? recipe[2] : undefined;
+  const packageName = manifest.install[2] as string;
+  const provenance: Record<string, string> = {};
   const python = await findPython(ctx, manifest.id, manifest.requires?.python);
   const platformOs = ctx.platform !== null ? ctx.platform.split('-')[0] ?? 'unknown' : isWindows() ? 'win' : process.platform;
   const windows = platformOs === 'win';
   const venvBin = windows ? 'Scripts' : 'bin';
   const venvPythonName = windows ? 'python.exe' : 'python';
-  if (sourceDir !== undefined) {
-    const projectFile = path.join(sourceDir, 'pyproject.toml');
-    if (!fs.existsSync(projectFile)) {
-      throw new InstallError('SOURCE_MISSING', `${manifest.id} requires a pyproject.toml at ${sourceDir}`);
-    }
-    if (!fs.lstatSync(projectFile).isFile()) {
-      throw new InstallError('UNSAFE_PYTHON_PATH', `project file must be a regular file: ${projectFile}`);
-    }
-  }
   const venvDir = runtimePath(ctx.home, manifest.id);
   fs.mkdirSync(path.join(stage, 'bin'), { recursive: true });
   const name = manifest.launch.commands[0] as string;
-  fs.writeFileSync(path.join(stage, 'bin', name), venvLauncherText({ id: manifest.id, platformOs, venvBin, command: name }));
-  applyExecutableMode(path.join(stage, 'bin', name));
-  const binaries = windows ? [name, `${name}.cmd`] : [name];
-  let launcherName = name;
-  if (windows) {
-    launcherName = `${name}.cmd`;
-    fs.writeFileSync(path.join(stage, 'bin', launcherName), venvCmdLauncherText({ id: manifest.id, command: name }));
-  }
+  const launcherName = windows ? `${name}.cmd` : name;
+  const consoleScript = path.join(venvDir, venvBin, windows ? `${name}.exe` : name);
+  const entry: LaunchEntry = { command: windows ? consoleScript : path.join(venvDir, venvBin, venvPythonName),
+    args: windows ? [] : [consoleScript], env: { VIRTUAL_ENV: venvDir }, prependPath: path.join(venvDir, venvBin) };
+  fs.writeFileSync(path.join(stage, 'bin', launcherName), launcherText(entry, windows));
+  applyExecutableMode(path.join(stage, 'bin', launcherName));
+  const binaries = [launcherName];
   return {
-    provenance: sourceProvenance,
+    entry,
+    provenance,
     binaries,
     launcherName,
     method: 'python venv',
-    ...sourceMetadata,
     // Console scripts (including Windows .exe launchers) embed the interpreter
     // path. Build the environment here, never in a staging path that will move.
     initialize: async () => {
@@ -1156,11 +789,8 @@ async function stageVenv(
           `the virtualenv at ${venvDir} does not contain ${venvBin}/${venvPythonName}, which is what platform '${platformOs}' expects. Remove it and retry with a CPython 3 build from python.org or your distribution.`,
         );
       }
-      const installArgs = recipe.slice(2).map((arg) => arg.replaceAll('{source}', sourceDir ?? '').replaceAll('{version}', source?.version ?? ''));
-      if (installArgs.some((arg) => arg.trim() === '')) {
-        throw new InstallError('INVALID_RECIPE', `${manifest.id} install command requires a resolved source or version`);
-      }
-      if (packageName !== undefined && options.version !== undefined && options.version !== 'latest') {
+      const installArgs = manifest.install.slice(2);
+      if (options.version !== undefined && options.version !== 'latest') {
         const requested = options.version.replace(/^v/, '');
         if (!/^[0-9][A-Za-z0-9.!+_-]*$/.test(requested)) {
           throw new InstallError('INVALID_VERSION', `invalid PyPI package version: ${options.version}`);
@@ -1173,20 +803,16 @@ async function stageVenv(
       if (install.error !== undefined || install.status !== 0) {
         throw new InstallError('PIP_FAILED', `pip install failed. Check the declared install command and Python package dependencies for ${manifest.id}.`);
       }
-      let installedVersion = source?.version;
-      if (packageName !== undefined) {
-        const versionResult = await runCommand(ctx, venvPython, ['-c', `import importlib.metadata; print(importlib.metadata.version(${JSON.stringify(packageName)}))`], 'capture');
-        installedVersion = versionResult.stdout.trim();
-        if (versionResult.error !== undefined || versionResult.status !== 0 || installedVersion === '') {
-          throw new InstallError('PACKAGE_VERSION', `could not determine installed version of ${packageName} in ${venvDir}`);
-        }
+      const versionResult = await runCommand(ctx, venvPython, ['-c', `import importlib.metadata; print(importlib.metadata.version(${JSON.stringify(packageName)}))`], 'capture');
+      const installedVersion = versionResult.stdout.trim();
+      if (versionResult.error !== undefined || versionResult.status !== 0 || installedVersion === '') {
+        throw new InstallError('PACKAGE_VERSION', `could not determine installed version of ${packageName} in ${venvDir}`);
       }
-      const consoleScript = path.join(venvDir, venvBin, windows ? `${name}.exe` : name);
       if (!isExecutable(consoleScript)) {
         throw new InstallError('ENTRY_MISSING', `${manifest.id} did not install its declared console script: ${consoleScript}`);
       }
       const args = verifyArgs(manifest);
-      if (ctx.verify && args.length > 0) {
+      if (args.length > 0) {
         const result = await runCommand(ctx, consoleScript, args, 'capture');
         if (result.error !== undefined || result.status !== 0) {
           throw new InstallError('VERIFY_FAILED', `${manifest.id} verification failed: ${firstLine(result) || result.error || 'no output'}`);
@@ -1197,8 +823,8 @@ async function stageVenv(
         ['installer', 'decx install'],
         ['install_method', 'python venv'],
         ['installed', isoTimestamp()],
-        ['install_command', source === undefined ? ['pip', 'install', ...installArgs].join(' ') : recipe.join(' ')],
-        ...(installedVersion !== undefined ? [['version', installedVersion] as [string, string]] : []),
+        ['install_command', ['pip', 'install', ...installArgs].join(' ')],
+        ['version', installedVersion],
         ['platform', ctx.platform ?? platformOs],
         ['python', `${python.output} (${python.label})`],
         ['python_manager', 'pip'],
@@ -1210,37 +836,32 @@ async function stageVenv(
           `${path.join(binRoot(ctx.home), launcherName)} -> ${consoleScript}`,
         ],
       ];
-      for (const [key, value] of entries) sourceProvenance[key] = value;
+      Object.assign(provenance, Object.fromEntries(entries));
     },
   };
 }
 
-/** Binary file names the previous install recorded, for pruning the store. */
-function recordedBinaries(payload: string): string[] {
-  const provenance = readProvenance(path.join(payload, 'PROVENANCE'));
-  if (provenance === null) {
-    return [];
-  }
-  const list = provenance.binaries;
-  if (list !== undefined && list.trim() !== '') {
-    return list.split(/\s+/).filter((name) => name !== '');
-  }
-  const single = provenance.binary;
-  return single !== undefined && single.trim() !== '' ? [path.basename(single.trim())] : [];
-}
-
-/** A tool whose manifest declares `env` gets launchers instead of bare binaries. */
-export interface LauncherWrap {
-  /** Variables every launcher exports, `{prefix}`/`{version}` already resolved. */
-  env: Record<string, string>;
-  /** Staged name of the binary the launchers must run (from `pickLauncher`). */
-  launcher: string;
+/** Finish layout in staging; the transaction only moves ready-to-install files. */
+function stageEnvironment(stage: string, prefix: string, outcome: StagedOutcome, env: Record<string, string>): void {
+  const packagedBin = path.join(stage, 'share', outcome.provenance.tool as string, 'bin');
+  fs.mkdirSync(packagedBin, { recursive: true });
+  const original = outcome.launcherName;
+  outcome.entry.command = path.join(prefix, 'bin', original);
+  outcome.entry.env = env;
+  outcome.binaries = outcome.binaries.map(name => {
+    fs.renameSync(path.join(stage, 'bin', name), path.join(packagedBin, name));
+    const storeName = launcherStoreName(name);
+    const target = path.join(prefix, 'bin', name);
+    fs.writeFileSync(path.join(stage, 'bin', storeName), launcherText({ command: target, args: [], env }, isWindows()));
+    applyExecutableMode(path.join(stage, 'bin', storeName));
+    if (name === original) outcome.launcherName = storeName;
+    return storeName;
+  });
 }
 
 interface CommittedStage {
   bins: string[];
   removed: string[];
-  launcher?: string;
 }
 
 /**
@@ -1249,9 +870,7 @@ interface CommittedStage {
  * into the payload `<home>/share/<id>`; Python environments live separately
  * under `<home>/runtime/<id>`.  The payload is swapped as a whole, so a
  * failed move restores the previous one; a store file that belongs to another
- * tool is refused unless `force` is set.  With `wrap` the packaged binaries stay
- * in the payload (`<payload>/bin`) and the store holds launcher scripts that
- * export the manifest environment first.
+ * tool is refused unless `force` is set.
  * Backups are retained until finalize has written the complete PROVENANCE.
  */
 async function commitStage(
@@ -1262,7 +881,6 @@ async function commitStage(
   log: (line: string) => void,
   initialize: () => Promise<void>,
   finalize: (committed: CommittedStage) => void,
-  wrap?: LauncherWrap,
   replaceRuntime = false,
 ): Promise<CommittedStage> {
   const binDir = binRoot(home);
@@ -1271,13 +889,13 @@ async function commitStage(
   if (existingPayload !== undefined && readProvenance(path.join(payload, 'PROVENANCE'))?.tool !== id) {
     throw new InstallError('PAYLOAD_CONFLICT', `${payload} exists without a valid ${id} PROVENANCE; refusing to replace unrelated files`);
   }
-  const previous = recordedBinaries(payload).filter((name) => isSafeRelativePath(name) && !name.includes('/'));
+  const previous = provenanceBinaries(readProvenance(path.join(payload, 'PROVENANCE')) ?? {})
+    .filter((name) => isSafeRelativePath(name) && !name.includes('/'));
   const stagedBin = path.join(stage, 'bin');
   const names = listDirEntries(stagedBin)
     .filter((entry) => entry.isFile())
     .map((entry) => entry.name);
-  const storeNames = names.map((name) => (wrap === undefined ? name : launcherStoreName(name)));
-  for (const name of storeNames) {
+  for (const name of names) {
     const target = path.join(binDir, name);
     if (lstatIfPresent(target) !== undefined && !previous.includes(name) && !force) {
       throw new InstallError(
@@ -1297,6 +915,7 @@ async function commitStage(
   const runtime = runtimePath(home, id);
   const runtimeBackup = path.join(backupRoot, 'runtime');
   let runtimeSaved = false;
+  let runtimeStarted = false;
   const savedBins: string[] = [];
   const writtenBins: string[] = [];
   let payloadSaved = false;
@@ -1311,50 +930,25 @@ async function commitStage(
     fs.mkdirSync(path.dirname(payload), { recursive: true });
     fs.renameSync(stagedShare, payload);
     payloadInstalled = true;
-    const stagedSpecs = path.join(stage, 'specs');
-    if (fs.existsSync(stagedSpecs)) {
-      fs.renameSync(stagedSpecs, path.join(payload, 'specs'));
-    }
     if (replaceRuntime && lstatIfPresent(runtime) !== undefined) {
       fs.renameSync(runtime, runtimeBackup);
       runtimeSaved = true;
     }
+    runtimeStarted = replaceRuntime;
     await initialize();
     // Save every overwritten or stale executable before modifying the store.
-    for (const name of new Set([...storeNames, ...previous])) {
+    for (const name of new Set([...names, ...previous])) {
       const target = path.join(binDir, name);
       if (lstatIfPresent(target) !== undefined) {
         fs.renameSync(target, path.join(backupRoot, 'bin', name));
         savedBins.push(name);
       }
     }
-    const packagedBin = path.join(payload, 'bin');
-    if (wrap !== undefined) {
-      fs.mkdirSync(packagedBin, { recursive: true });
-    }
     const bins: string[] = [];
-    let launcher: string | undefined;
-    for (const [index, name] of names.entries()) {
-      const storeName = storeNames[index] ?? name;
-      const target = path.join(binDir, storeName);
-      writtenBins.push(storeName);
-      if (wrap === undefined) {
-        fs.copyFileSync(path.join(stagedBin, name), target);
-        applyExecutableMode(target);
-      } else {
-        const packaged = path.join(packagedBin, name);
-        fs.renameSync(path.join(stagedBin, name), packaged);
-        if (storeName.endsWith('.cmd')) {
-          fs.writeFileSync(target, envCmdLauncherText(packaged, wrap.env));
-        } else {
-          fs.writeFileSync(target, envLauncherText(packaged, wrap.env));
-          applyExecutableMode(target);
-        }
-        if (name === wrap.launcher) {
-          launcher = storeName;
-        }
-      }
-      bins.push(storeName);
+    for (const name of names) {
+      writtenBins.push(name);
+      fs.renameSync(path.join(stagedBin, name), path.join(binDir, name));
+      bins.push(name);
     }
     const removed: string[] = [];
     for (const name of previous) {
@@ -1367,7 +961,7 @@ async function commitStage(
         log(`removed stale executable ${stale}`);
       }
     }
-    committed = { bins, removed, ...(launcher !== undefined ? { launcher } : {}) };
+    committed = { bins, removed };
     finalize(committed);
   } catch (error) {
     // Keep the backup outside the staging tree if rollback itself fails.
@@ -1380,7 +974,7 @@ async function commitStage(
     if (payloadInstalled) {
       fs.rmSync(payload, { recursive: true, force: true });
     }
-    if (replaceRuntime) fs.rmSync(runtime, { recursive: true, force: true });
+    if (runtimeSaved || runtimeStarted) fs.rmSync(runtime, { recursive: true, force: true });
     if (runtimeSaved) {
       fs.mkdirSync(path.dirname(runtime), { recursive: true });
       fs.renameSync(runtimeBackup, runtime);
@@ -1433,46 +1027,35 @@ export async function installTool(
   const stage = fs.mkdtempSync(path.join(home, '.decx-stage-'));
   const binDir = binRoot(home);
   try {
-    const method = initialMethod(manifest);
+    const method = manifest.launch.type === 'python' ? 'python venv' : 'release download';
     const release = manifest.release;
     let outcome: StagedOutcome;
     if (method === 'python venv') {
-      // Direct PyPI installs need no GitHub release; {source} recipes retain
-      // the checked archive or vendored checkout path.
-      const needsSource = manifest.install.some((arg) => arg.includes('{source}'));
-      if (needsSource && release === undefined) throw new InstallError('INVALID_RECIPE', `${manifest.id} needs a source release`);
-      outcome = await stageVenv(ctx, manifest, prefix, stage,
-        needsSource && release !== undefined ? await pythonSource(ctx, manifest, release, stage, options) : undefined, options);
+      outcome = await stageVenv(ctx, manifest, prefix, stage, options);
     } else {
       if (release === undefined) throw new InstallError('INVALID_RECIPE', `${manifest.id} needs a binary release`);
       outcome = await stageRelease(ctx, manifest, release, options, prefix, stage, await resolveInstallTag(ctx, release, options));
     }
     const stageShare = path.join(stage, 'share', manifest.id);
     fs.mkdirSync(stageShare, { recursive: true });
-    fs.writeFileSync(path.join(stageShare, 'PROVENANCE'), formatProvenance(outcome.provenance));
-    // A manifest that declares `env` is installed as launcher wrappers: the
-    // packaged binaries move into the payload and `<home>/bin` holds scripts that
-    // export the variables first, so the tool finds its own data without any
-    // shell configuration.
     const launcherVariables = launcherEnv(manifest, prefix, outcome.version ?? '');
-    const wrap =
-      launcherVariables === undefined ? undefined : { env: launcherVariables, launcher: outcome.launcherName };
+    if (launcherVariables !== undefined) stageEnvironment(stage, prefix, outcome, launcherVariables);
     const linkDir = resolveLinkDir(options.links, ctx.env);
     let links: LinkOutcome[] = [];
-    let storeLauncher = outcome.launcherName;
+    const storeLauncher = outcome.launcherName;
     let provenance: Record<string, string> = {};
     const committed = await commitStage(stage, home, manifest.id, options.force === true, ctx.log, async () => {
       const initialize = outcome.initialize;
       if (initialize !== undefined) await initialize();
     }, (committed) => {
-      storeLauncher = committed.launcher ?? outcome.launcherName;
       provenance = { ...outcome.provenance };
       provenance.binary = path.join(binDir, storeLauncher);
       provenance.binaries = committed.bins.join(' ');
       provenance.bin_dir = binDir;
       if (launcherVariables !== undefined) provenance.env = formatEnv(launcherVariables);
       fs.writeFileSync(path.join(prefix, 'PROVENANCE'), formatProvenance(provenance));
-    }, wrap, method === 'python venv');
+      fs.writeFileSync(path.join(prefix, 'launch.json'), JSON.stringify(outcome.entry));
+    }, method === 'python venv');
     // A successful swap may have removed old executable names or moved links to
     // another directory. Prune only exact, previously owned links.
     if (previousRecord?.tool === manifest.id && previousRecord.link_dir !== undefined) {
