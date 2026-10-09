@@ -8,10 +8,10 @@
  * followed by hand so the bearer token stays bound to the initial origin.
  */
 
-import childProcess from 'node:child_process';
+import * as childProcess from 'node:child_process';
 import { createHash } from 'node:crypto';
-import fs from 'node:fs';
-import path from 'node:path';
+import * as fs from 'node:fs';
+import * as path from 'node:path';
 import { openResponse } from './transport.ts';
 import type { HttpResponse } from './http-types.ts';
 

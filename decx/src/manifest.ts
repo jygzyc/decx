@@ -19,8 +19,8 @@
  * no release block: pip selects the latest package or an explicit --version.
  */
 
-import fs from 'node:fs';
-import path from 'node:path';
+import * as fs from 'node:fs';
+import * as path from 'node:path';
 import { SUPPORTED_PLATFORMS, type PlatformKey } from './platform.ts';
 
 export type LaunchType = 'bin' | 'python' | 'js';

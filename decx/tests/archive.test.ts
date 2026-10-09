@@ -5,6 +5,7 @@
 
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import { mockBuiltin } from './builtin-mock.ts';
 import path from 'node:path';
 import test from 'node:test';
 import { gunzipSync, gzipSync } from 'node:zlib';
@@ -296,7 +297,7 @@ for (const copyFallback of [false, true]) {
     const root = tempDir('decx-archive-hardlink-');
     t.after(() => fs.rmSync(root, { recursive: true, force: true }));
     if (copyFallback) {
-      t.mock.method(fs, 'linkSync', () => { throw new Error('hard links unavailable'); });
+      mockBuiltin(t)(fs, 'linkSync', () => { throw new Error('hard links unavailable'); });
     }
     const archive = path.join(root, 'hardlink.tar.gz');
     const dest = path.join(root, 'out');

@@ -11,8 +11,9 @@
  * (usage error).
  */
 
-import fs from 'node:fs';
-import path from 'node:path';
+import * as fs from 'node:fs';
+import * as path from 'node:path';
+import { embeddedManifests, packageVersion, runtimeInfo } from './build-info.ts';
 import { fileURLToPath } from 'node:url';
 import { KNOWN_COMMANDS, parseArgs, type CliArgs } from './args.ts';
 import { binRoot, resolveHome } from './config.ts';
@@ -24,9 +25,6 @@ import { currentPlatformKey } from './platform.ts';
 import { launchSpec } from './launch.ts';
 import { removeTool } from './remove.ts';
 
-/** Replaced by the bundler; absent when Node runs the TypeScript source. */
-declare const __DECX_VERSION__: string;
-declare const __DECX_MANIFESTS__: LoadResult;
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const SUBPROJECTS_DIR = path.resolve(HERE, '..', '..', 'subprojects');
 const REPO_ROOT = path.resolve(HERE, '..', '..');
@@ -84,17 +82,6 @@ options: --version <tag>, --force, --links <dir>, --no-links, --home <dir>,
 };
 
 export { parseArgs } from './args.ts';
-
-function packageVersion(): string {
-  if (typeof __DECX_VERSION__ !== 'undefined') return __DECX_VERSION__;
-  try {
-    const file = path.resolve(HERE, '..', 'package.json');
-    const parsed = JSON.parse(fs.readFileSync(file, 'utf8')) as { version?: string };
-    return parsed.version ?? '0.0.0';
-  } catch {
-    return '0.0.0';
-  }
-}
 
 function emit(value: unknown, pretty: boolean): void {
   process.stdout.write(`${stringify(value, pretty)}\n`);
@@ -179,7 +166,7 @@ export async function run(argv: readonly string[], env: NodeJS.ProcessEnv = proc
     failAndExit(origin, 'USAGE', args.error, 'run `decx help`', 2);
   }
   if (args.versionFlag) {
-    emit(ok('version', { version: packageVersion(), node: process.versions.node }), args.pretty);
+    emit(ok('version', { version: packageVersion(), ...runtimeInfo }), args.pretty);
     return 0;
   }
   if (args.help && command === null) {
@@ -190,7 +177,7 @@ export async function run(argv: readonly string[], env: NodeJS.ProcessEnv = proc
   const home = resolveHome(args.home, env);
   const manifests = (): LoadResult => {
     if (args.subprojects !== undefined) return loadManifests(path.resolve(args.subprojects));
-    return typeof __DECX_MANIFESTS__ !== 'undefined' ? __DECX_MANIFESTS__ : loadManifests(SUBPROJECTS_DIR);
+    return embeddedManifests ?? loadManifests(SUBPROJECTS_DIR);
   };
 
   if (moduleId !== undefined) {
@@ -237,7 +224,7 @@ export async function run(argv: readonly string[], env: NodeJS.ProcessEnv = proc
     return 0;
   }
   if (command === 'version') {
-    emit(ok('version', { version: packageVersion(), node: process.versions.node }), args.pretty);
+    emit(ok('version', { version: packageVersion(), ...runtimeInfo }), args.pretty);
     return 0;
   }
   if (!KNOWN_COMMANDS.has(command)) {
@@ -307,7 +294,7 @@ function isEntryPoint(): boolean {
   }
 }
 
-if (isEntryPoint()) {
+export function runEntry(): void {
   run(process.argv.slice(2))
     .then((code) => process.exit(code))
     .catch((error: unknown) => {
@@ -315,3 +302,5 @@ if (isEntryPoint()) {
       process.exit(1);
     });
 }
+
+if (isEntryPoint()) runEntry();

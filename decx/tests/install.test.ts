@@ -9,6 +9,7 @@ import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import http from 'node:http';
 import fs from 'node:fs';
+import { mockBuiltin, restoreBuiltins } from './builtin-mock.ts';
 import path from 'node:path';
 import test from 'node:test';
 import { provenanceFile } from '../src/config.ts';
@@ -1139,22 +1140,22 @@ test('commit failures restore payload, specs, all store binaries and PROVENANCE'
         const copy = fs.copyFileSync;
         const write = fs.writeFileSync;
         const chmod = fs.chmodSync;
-        t.mock.method(fs, 'chmodSync', (...args: Parameters<typeof fs.chmodSync>) => {
+        mockBuiltin(t)(fs, 'chmodSync', (...args: Parameters<typeof fs.chmodSync>) => {
           if (!injected && phase === 'mode' && String(args[0]) === binary) abort();
           return chmod(...args);
         });
-        t.mock.method(fs, 'renameSync', (...args: Parameters<typeof fs.renameSync>) => {
+        mockBuiltin(t)(fs, 'renameSync', (...args: Parameters<typeof fs.renameSync>) => {
           const [from, to] = args.map(String);
           if (!injected && ((phase === 'specs' && to === path.join(prefix, 'specs')) ||
             (phase === 'packaged' && to === path.join(prefix, 'bin', 'demo')) ||
             (phase === 'stale' && from === stale))) abort();
           return rename(...args);
         });
-        t.mock.method(fs, 'copyFileSync', (...args: Parameters<typeof fs.copyFileSync>) => {
+        mockBuiltin(t)(fs, 'copyFileSync', (...args: Parameters<typeof fs.copyFileSync>) => {
           if (!injected && phase === 'copy' && String(args[1]) === binary) { write(binary, 'partial binary'); abort(); }
           return copy(...args);
         });
-        t.mock.method(fs, 'writeFileSync', (...args: Parameters<typeof fs.writeFileSync>) => {
+        mockBuiltin(t)(fs, 'writeFileSync', (...args: Parameters<typeof fs.writeFileSync>) => {
           const dest = String(args[0]);
           if (!injected && ((phase === 'wrapper' && dest === binary) || (phase === 'provenance' && dest === path.join(prefix, 'PROVENANCE')))) {
             write(...args); abort();
@@ -1163,7 +1164,7 @@ test('commit failures restore payload, specs, all store binaries and PROVENANCE'
         });
         try {
           await assert.rejects(() => installTool(manifest, { version: '1.0.0', noLinks: true }, context(home, tempDir('decx-repo-'), server.url, releaseRunner())), /injected commit failure/);
-        } finally { t.mock.restoreAll(); }
+        } finally { restoreBuiltins(t); }
         assert.ok(injected, phase);
         assert.ok(!fs.readdirSync(home).some((name) => name.startsWith('.decx-')));
         if (existing) {
@@ -1215,7 +1216,7 @@ test('core PROVENANCE failure never creates PATH links', async (t) => {
   const links = path.join(home, 'path-links');
   const fixture = releaseFixture();
   const write = fs.writeFileSync;
-  t.mock.method(fs, 'writeFileSync', (...args: Parameters<typeof fs.writeFileSync>) => {
+  mockBuiltin(t)(fs, 'writeFileSync', (...args: Parameters<typeof fs.writeFileSync>) => {
     if (String(args[0]) === provenanceFile(home, 'demo')) throw new Error('core record failure');
     return write(...args);
   });
@@ -1236,7 +1237,7 @@ test('post-commit link creation and link record failures only warn and preserve 
       const warnings: string[] = [];
       if (failure === 'creation') writeFile(links, 'not a directory');
       const write = fs.writeFileSync;
-      t.mock.method(fs, 'writeFileSync', (...args: Parameters<typeof fs.writeFileSync>) => {
+      mockBuiltin(t)(fs, 'writeFileSync', (...args: Parameters<typeof fs.writeFileSync>) => {
         if (failure === 'record' && String(args[0]).endsWith('PROVENANCE.links')) {
           write(...args); throw new Error('link record failure');
         }
@@ -1255,7 +1256,7 @@ test('post-commit link creation and link record failures only warn and preserve 
         if (failure === 'record') {
           assert.ok(installed.links!.some((link) => link.status === 'created' && fs.existsSync(link.path)));
         }
-      } finally { t.mock.restoreAll(); }
+      } finally { restoreBuiltins(t); }
     }
   });
 });

@@ -9,10 +9,11 @@
  * `CommandRunner` so the whole flow is testable offline.
  */
 
-import { spawn } from 'node:child_process';
-import fs from 'node:fs';
-import os from 'node:os';
-import path from 'node:path';
+import { defaultRunner } from './runner.ts';
+export { defaultRunner } from './runner.ts';
+import * as fs from 'node:fs';
+import * as os from 'node:os';
+import * as path from 'node:path';
 import { extractArchive } from './archive.ts';
 import { lstatIfPresent } from './fs.ts';
 import { binRoot, resolveLinkDir, runtimePath, toolPrefix } from './config.ts';
@@ -158,38 +159,6 @@ function resolveContext(context: InstallContext): ResolvedContext {
     log: context.log ?? ((line: string) => process.stderr.write(`${line}\n`)),
     run: context.run ?? defaultRunner,
   };
-}
-
-export async function defaultRunner(spec: CommandSpec): Promise<CommandResult> {
-  return new Promise((resolve) => {
-    const child = spec.mode === 'inherit'
-      ? spawn(spec.command, spec.args, {
-        env: spec.env ?? process.env, stdio: 'inherit',
-        windowsHide: spec.windowsHide !== false,
-        windowsVerbatimArguments: spec.windowsVerbatimArguments === true,
-      })
-      : spawn(spec.command, spec.args, {
-        env: spec.env ?? process.env, stdio: 'pipe',
-        windowsHide: spec.windowsHide !== false,
-        windowsVerbatimArguments: spec.windowsVerbatimArguments === true,
-      });
-    let stdout = '';
-    let stderr = '';
-    child.stdout?.on('data', (chunk: Buffer) => {
-      stdout += chunk.toString();
-      if (spec.mode === 'stream') {
-        process.stderr.write(chunk);
-      }
-    });
-    child.stderr?.on('data', (chunk: Buffer) => {
-      stderr += chunk.toString();
-      if (spec.mode === 'stream') {
-        process.stderr.write(chunk);
-      }
-    });
-    child.on('error', (error) => resolve({ status: null, stdout, stderr, error: error.message }));
-    child.on('close', (status) => resolve({ status, stdout, stderr }));
-  });
 }
 
 async function runCommand(

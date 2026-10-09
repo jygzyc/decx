@@ -243,9 +243,12 @@ passed locally on macOS arm64. Branch and release CI run compilation and the
 same native tests on Linux x64/arm64, macOS arm64 and Windows x64; a platform
 must pass before its native artifact is published.
 
-Source adaptations are build-only: namespace imports, native fetch with shared
-redirect/download verification policy, explicit filesystem copy/link handling,
-and typed callbacks. Node source execution retains its HTTP adapter. Windows
+Shared application modules use scriptc-compatible namespace imports, explicit
+filesystem copy/link handling, and typed callbacks directly. The native build
+selects the HTTP/process adapters under `src/native/` and generates build metadata
+and an entry point; it does not regex-rewrite application code. Node execution
+retains its HTTP/process adapters. Native fetch shares the redirect/download
+verification policy. Windows
 links a small `CreateProcessW` FFI implementation into the same executable so
 `.cmd` arguments retain their existing escaping; building that bridge requires
 Zig on PATH (CI pins Zig 0.16.0, matching upstream's Windows runtime-pack ABI). Windows native executables also embed a UTF-8 process-code-page manifest so

@@ -1,7 +1,7 @@
-import fs from 'node:fs';
-import os from 'node:os';
-import path from 'node:path';
-import type { CommandResult, CommandSpec } from './install.ts';
+import * as fs from 'node:fs';
+import * as os from 'node:os';
+import * as path from 'node:path';
+import type { CommandResult, CommandSpec } from '../install.ts';
 
 // Bound at build time by --ffi; UTF-8 strings pass as pointer/length pairs.
 declare function decxWindowsRun(application: string, commandLine: string, environment: string,

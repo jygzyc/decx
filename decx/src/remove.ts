@@ -1,5 +1,5 @@
-import fs from 'node:fs';
-import path from 'node:path';
+import * as fs from 'node:fs';
+import * as path from 'node:path';
 import { binRoot, resolveLinkDir, runtimePath, toolPrefix } from './config.ts';
 import { InstallError } from './install.ts';
 import { provenanceBinaries, readProvenance } from './inspect.ts';

@@ -23,12 +23,15 @@ There is no external Node launcher or JavaScript sidecar.
 
 ## Native source adaptations
 
-The build stages typed TS modules, supplies version/manifests as constants,
-and invokes scriptc with `--dynamic`. It normalizes CRLF before adapting builtin
-namespace imports and the entry-point guard. Native fetch shares the manager's
-redirect, authentication and download-integrity policy. Windows links a
-`CreateProcessW` FFI bridge to preserve cmd's already-escaped command lines.
-Unsupported operations fail rather than generating an external-Node fallback.
+The shared source uses builtin namespace imports accepted by both Node and
+scriptc. The build copies that source unchanged, selects the HTTP/process
+adapters under `src/native/`, generates `build-info.ts` with version/manifests,
+and calls the shared `runEntry()` from a generated native entry point. It
+invokes scriptc with `--dynamic`; it does not regex-rewrite application code.
+Native fetch shares the manager's redirect, authentication and download-integrity
+policy. Windows links a `CreateProcessW` FFI bridge to preserve cmd's already-escaped
+command lines. Unsupported operations fail rather than generating an external-Node
+fallback.
 
 ## Validation
 

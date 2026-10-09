@@ -8,9 +8,9 @@
  * skipping the entry.
  */
 
-import fs from 'node:fs';
-import path from 'node:path';
-import zlib from 'node:zlib';
+import * as fs from 'node:fs';
+import * as path from 'node:path';
+import * as zlib from 'node:zlib';
 import { lstatIfPresent } from './fs.ts';
 
 export class ArchiveError extends Error {

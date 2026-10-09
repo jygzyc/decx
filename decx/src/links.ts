@@ -6,8 +6,8 @@
  * startup files are never touched -- the caller prints the PATH hint instead.
  */
 
-import fs from 'node:fs';
-import path from 'node:path';
+import * as fs from 'node:fs';
+import * as path from 'node:path';
 import { binRoot } from './config.ts';
 import { isWindows } from './platform.ts';
 

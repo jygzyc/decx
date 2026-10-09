@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import http from 'node:http';
 import https from 'node:https';
+import { mockBuiltin } from './builtin-mock.ts';
 import path from 'node:path';
 import test, { type TestContext } from 'node:test';
 import { downloadAsset, GithubError, resolveRelease } from '../src/gh.ts';
@@ -35,7 +36,7 @@ function destination(t: TestContext): string {
 
 /** Exercise URL policy through HTTPS URLs without certificates or TLS overrides. */
 function loopbackHttps(t: TestContext): void {
-  t.mock.method(https, 'get', (target: URL, options: http.RequestOptions, callback: (res: http.IncomingMessage) => void) => {
+  mockBuiltin(t)(https, 'get', (target: URL, options: http.RequestOptions, callback: (res: http.IncomingMessage) => void) => {
     assert.equal(target.hostname, '127.0.0.1');
     assert.equal(target.protocol, 'https:');
     const local = new URL(target);

@@ -12,9 +12,9 @@
  * `$DECX_LINKS_DIR`.
  */
 
-import fs from 'node:fs';
-import os from 'node:os';
-import path from 'node:path';
+import * as fs from 'node:fs';
+import * as os from 'node:os';
+import * as path from 'node:path';
 
 export const ENV_HOME = 'DECX_HOME';
 export const ENV_LINKS = 'DECX_LINKS_DIR';

@@ -1,4 +1,4 @@
-import type { HttpResponse } from './http-types.ts';
+import type { HttpResponse } from '../http-types.ts';
 
 /** scriptc's native fetch streams through its bundled transport, not Node. */
 export async function openResponse(url: string, headers: Record<string, string>): Promise<HttpResponse> {

@@ -1,4 +1,4 @@
-import fs from 'node:fs';
+import * as fs from 'node:fs';
 
 /** Like lstatSync(..., { throwIfNoEntry: false }), without the options overload. */
 export function lstatIfPresent(file: string): fs.Stats | undefined {

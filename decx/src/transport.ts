@@ -1,5 +1,5 @@
-import http from 'node:http';
-import https from 'node:https';
+import * as http from 'node:http';
+import * as https from 'node:https';
 import { Readable } from 'node:stream';
 
 import type { HttpResponse } from './http-types.ts';
