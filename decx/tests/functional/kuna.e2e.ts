@@ -49,6 +49,29 @@ test('real executable: run, discover, decompile, recompile and compare behavior 
   assert.equal(recovered.length, targets.length, 'Both actual functions must decompile before behavior comparison');
   const names = recovered.map(fn => fn.name);
 
+  const project = path.join(temporary, 'project export');
+  const header = path.join(temporary, 'recovered-types.h');
+  await t.test('export an actual decompilation project and verify indexed C bodies', () => {
+    analyze('kuna', ['decompile-project', binary, ...targets.flatMap(fn => ['--addr', `0x${fn.address.toString(16)}`]), '--jobs', '1', '--stream', '-o', project], temporary);
+    const index = fs.readFileSync(path.join(project, 'index.jsonl'), 'utf8').trim().split(/\r?\n/)
+      .map(line => JSON.parse(line) as { name: string; error: string | null; c_offset: number; c_len: number });
+    const files = fs.readdirSync(project);
+    const cFile = files.find(name => name.endsWith('.c'));
+    const hFile = files.find(name => name.endsWith('.h'));
+    assert.ok(cFile, 'Project must contain generated C');
+    assert.ok(hFile, 'Project must contain the actual recovered scalar typedefs');
+    fs.copyFileSync(path.join(project, hFile), header);
+    const bytes = fs.readFileSync(path.join(project, cFile));
+    for (const name of names) {
+      const record = index.find(fn => fn.name === name);
+      assert.ok(record, `Project index missing ${name}`);
+      assert.equal(record.error, null);
+      assert.ok(record.c_len > 0);
+      assert.ok(bytes.subarray(record.c_offset, record.c_offset + record.c_len).toString('utf8').includes(name));
+    }
+    assert.ok(!fs.existsSync(path.join(project, '.streaming')), 'Project did not finalize');
+  });
+
   await t.test('recompile recovered C and match the original executable on branch and negative inputs', () => {
     const source = path.join(temporary, 'recovered.c');
     const rebuilt = path.join(temporary, `recovered${extension}`);
@@ -56,11 +79,7 @@ test('real executable: run, discover, decompile, recompile and compare behavior 
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdint.h>
-#include <stdbool.h>
-typedef unsigned char undefined1;
-typedef unsigned short undefined2;
-typedef unsigned int undefined4;
-typedef unsigned long long undefined8;
+#include "recovered-types.h"
 ${recovered.map(fn => fn.code).join('\n')}
 int main(int argc, char **argv) {
   int input = argc > 1 ? atoi(argv[1]) : 37;
@@ -78,21 +97,4 @@ int main(int argc, char **argv) {
     }
   });
 
-  await t.test('export an actual decompilation project and verify indexed C bodies', () => {
-    const project = path.join(temporary, 'project export');
-    analyze('kuna', ['decompile-project', binary, ...targets.flatMap(fn => ['--addr', `0x${fn.address.toString(16)}`]), '--jobs', '1', '--stream', '-o', project], temporary);
-    const index = fs.readFileSync(path.join(project, 'index.jsonl'), 'utf8').trim().split(/\r?\n/)
-      .map(line => JSON.parse(line) as { name: string; error: string | null; c_offset: number; c_len: number });
-    const cFile = fs.readdirSync(project).find(name => name.endsWith('.c'));
-    assert.ok(cFile, 'Project must contain generated C');
-    const bytes = fs.readFileSync(path.join(project, cFile));
-    for (const name of names) {
-      const record = index.find(fn => fn.name === name);
-      assert.ok(record, `Project index missing ${name}`);
-      assert.equal(record.error, null);
-      assert.ok(record.c_len > 0);
-      assert.ok(bytes.subarray(record.c_offset, record.c_offset + record.c_len).toString('utf8').includes(name));
-    }
-    assert.ok(!fs.existsSync(path.join(project, '.streaming')), 'Project did not finalize');
-  });
 });

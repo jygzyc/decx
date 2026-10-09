@@ -35,10 +35,10 @@ export function analyzeFailure(tool: string, args: string[], cwd: string) {
 export function compile(source: string, output: string): void {
   const compiler = process.env.CC ?? (process.platform === 'win32' ? 'cl' : 'cc');
   const args = process.platform === 'win32'
-    ? ['/nologo', '/Od', '/Zi', source, `/Fe:${output}`, '/link', '/INCREMENTAL:NO']
+    ? ['/nologo', '/Od', '/Zi', '/utf-8', source, `/Fe:${output}`, '/link', '/INCREMENTAL:NO']
     : ['-O0', '-g', '-fno-inline', source, '-o', output];
   const result = execute(compiler, args, path.dirname(output));
-  assert.equal(result.status, 0, `Compile real fixture: ${compiler}\n${result.stderr}\n${result.stdout}`);
+  assert.equal(result.status, 0, `Compile real fixture: ${compiler}\n${result.stderr}\n${result.stdout}\n${fs.readFileSync(source, 'utf8')}`);
   const magic = fs.readFileSync(output).subarray(0, 4).toString('hex');
   if (process.platform === 'win32') assert.ok(magic.startsWith('4d5a'), 'Expected a real PE executable');
   else if (process.platform === 'linux') assert.equal(magic, '7f454c46', 'Expected a real ELF executable');
