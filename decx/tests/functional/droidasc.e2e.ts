@@ -8,6 +8,8 @@ import { analyze, analyzeFailure, fixtures } from './helpers.ts';
 
 const provider = 'com.withsecure.example.sieve.provider.DBContentProvider';
 const uri = `content://${provider}/Passwords`;
+// Python stdout and saved files may use different platform line endings.
+const text = (value: string): string => value.replaceAll('\r\n', '\n').trim();
 
 test('real APK: manifest, DEX enumeration, Java decompilation and code references through DECX', { timeout: 180_000 }, async (t) => {
   const temporary = fs.mkdtempSync(path.join(os.tmpdir(), 'decx-real-apk-'));
@@ -22,7 +24,7 @@ test('real APK: manifest, DEX enumeration, Java decompilation and code reference
     const xml = analyze('droidasc', ['getmanifest', apk, '-o', output], temporary);
     assert.match(xml, /package="com\.withsecure\.example\.sieve"/);
     assert.match(xml, /provider\.DBContentProvider/);
-    assert.equal(fs.readFileSync(output, 'utf8').trim(), xml.trim());
+    assert.equal(text(fs.readFileSync(output, 'utf8')), text(xml));
   });
 
   await t.test('enumerate actual DEX classes', () => {
@@ -41,9 +43,9 @@ test('real APK: manifest, DEX enumeration, Java decompilation and code reference
     assert.match(code, /setTables\("Passwords"\)/);
     assert.match(code, /getWritableDatabase\(\)\.delete\("Passwords"/);
     assert.ok(code.includes(uri));
-    assert.equal(fs.readFileSync(output, 'utf8').trim(), code.trim());
+    assert.equal(text(fs.readFileSync(output, 'utf8')), text(code));
     const descriptorCode = analyze('droidasc', ['getclass', apk, `L${provider.replaceAll('.', '/')};`, '--threads', '2'], temporary);
-    assert.equal(descriptorCode.trim(), code.trim());
+    assert.equal(text(descriptorCode), text(code));
   });
 
   await t.test('locate a real string reference in a DEX instruction', () => {
