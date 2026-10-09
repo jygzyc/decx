@@ -1,0 +1,8 @@
+{
+  "name": "@jygzyc/decx-extension",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@openclaw/fs-safe": "0.25.0"
+  }
+}

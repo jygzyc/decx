@@ -77,8 +77,10 @@ in `.agents/skills/`). The package installer, not DECX, owns skill installation.
 
 The pi extension implements the [WikiSkill](https://arxiv.org/html/2608.27454) §3 loop as commands and tools, not as a second agent skill.
 
-Download the `decx-pi-<version>.tar.gz` release bundle, unpack it and run
-`pi install /path/to/decx-pi-<version>`; no repository clone is required. In any
+Download the `decx-pi-<version>.tar.gz` release bundle, unpack it, change into
+`/path/to/decx-pi-<version>/extensions/decx` and run `npm ci` for its pinned
+`@openclaw/fs-safe` dependency, then `pi install /path/to/decx-pi-<version>`;
+no repository clone is required. In any
 project, `/decx init` creates a fresh `.decxwiki/{raw,wiki}` and an **empty**
 `.agents/skills/` directory; it never downloads or copies a skill. Install
 `decx-tool` separately with `npx skills` as above.
@@ -114,6 +116,7 @@ target data; publish only reviewed evidence.
 ```bash
 cd subprojects/decx-afe && cargo build --release && cargo test
 cd decx && npm ci && npm test
+npm ci --prefix .pi/extensions/decx
 python3 skills/check-skills.py && node --test .pi/extensions/decx/*.test.ts
 project=$(mktemp -d); node .pi/extensions/decx/cli.ts init --root "$project" && node .pi/extensions/decx/cli.ts check --root "$project"
 ```

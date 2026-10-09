@@ -116,7 +116,7 @@ ledger lives under the pi agent directory, outside the three knowledge layers.
 - Skills: `python3 skills/check-skills.py` verifies frontmatter, names and relative
   links; also verify every documented native command against the supported upstream
   revision. Never invent missing analysis commands.
-- Decx: `node --test .pi/extensions/decx/*.test.ts` runs the extension tests. Structural validation happens against an
+- Decx: `npm ci --prefix .pi/extensions/decx && node --test .pi/extensions/decx/*.test.ts` runs the extension tests; also run with `FS_SAFE_NATIVE_MODE=off` to cover guarded JavaScript fallback. The extension owns the pinned `@openclaw/fs-safe` runtime dependency; the manager remains dependency-free. Extension-owned I/O is capability-scoped to project wiki/skills/config and agent checkpoint storage, not an OS sandbox. Structural validation happens against an
   initialized temporary project (`project=$(mktemp -d); node .pi/extensions/decx/cli.ts init --root "$project";
   node .pi/extensions/decx/cli.ts check --root "$project"`) because old repository knowledge is archived locally and
   is not a workspace. Use maintenance tools for routine knowledge updates; reviewed repository

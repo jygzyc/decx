@@ -27,7 +27,12 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.x'
-      - run: node --test .pi/extensions/decx/lib.test.ts
+      - run: npm ci --prefix .pi/extensions/decx --no-audit --no-fund
+      - run: node --test .pi/extensions/decx/*.test.ts
+      - name: Guarded JavaScript fallback
+        run: node --test .pi/extensions/decx/*.test.ts
+        env:
+          FS_SAFE_NATIVE_MODE: 'off'
       - shell: bash
         run: |
           project=$(mktemp -d)

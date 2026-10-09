@@ -55,7 +55,7 @@ AFE 只产出文件：设备收集需要 ADB，不支持的文件系统特性会
 
 WikiSkill 的维护流程内化在 pi 扩展的命令和工具中，不再分发独立的 wiki skill。
 
-下载 `decx-pi-<版本>.tar.gz` 并解压，执行 `pi install /path/to/decx-pi-<版本>`；无需 clone 源码。进入任意项目后执行 `/decx init`，在当前目录创建**空白** `.decxwiki/{raw,wiki}` 和空的 `.agents/skills/`，不下载或复制 skill；然后单独用 `npx skills` 安装 `decx-tool`。执行 `/decx-wiki` 由扩展整理执行记录、更新 wiki 并检查结构；通过 `decx_propose` / `decx_gate` 更新或回滚实际运行的 skill。旧知识仅保存在本地且被 Git 忽略的 `archive/legacy-knowledge/`，不会作为新项目的初始化内容。根目录 `skills/` 只保留当前可独立安装的执行 skill，不会被当作 wiki 工作区。
+下载 `decx-pi-<版本>.tar.gz` 并解压，先进入 `/path/to/decx-pi-<版本>/extensions/decx` 执行 `npm ci` 安装锁定的 `@openclaw/fs-safe` 依赖，再执行 `pi install /path/to/decx-pi-<版本>`；本地 pi 包不会自动安装依赖，无需 clone 源码。进入任意项目后执行 `/decx init`，在当前目录创建**空白** `.decxwiki/{raw,wiki}` 和空的 `.agents/skills/`，不下载或复制 skill；然后单独用 `npx skills` 安装 `decx-tool`。执行 `/decx-wiki` 由扩展整理执行记录、更新 wiki 并检查结构；通过 `decx_propose` / `decx_gate` 更新或回滚实际运行的 skill。旧知识仅保存在本地且被 Git 忽略的 `archive/legacy-knowledge/`，不会作为新项目的初始化内容。根目录 `skills/` 只保留当前可独立安装的执行 skill，不会被当作 wiki 工作区。
 
 pi 扩展按推理、维护、提案阶段限制工具访问，并执行候选应用、分数门控和技能回滚。详见[工作流及读写约束边界](.pi/extensions/decx/README.md)。
 
@@ -79,6 +79,7 @@ pi 扩展独立安装，不复制到 `.decxwiki/`。
 ```bash
 cd subprojects/decx-afe && cargo build --release && cargo test
 cd decx && npm ci && npm test
+npm ci --prefix .pi/extensions/decx
 python3 skills/check-skills.py && node --test .pi/extensions/decx/*.test.ts
 project=$(mktemp -d); node .pi/extensions/decx/cli.ts init --root "$project" && node .pi/extensions/decx/cli.ts check --root "$project"
 ```

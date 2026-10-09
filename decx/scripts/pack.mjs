@@ -55,7 +55,7 @@ fs.mkdirSync(path.join(piStage, 'extensions'), { recursive: true });
 fs.mkdirSync(path.join(piStage, 'skills'), { recursive: true });
 fs.cpSync(path.join(repoRoot, '.pi', 'extensions', 'decx'), path.join(piStage, 'extensions', 'decx'), {
   recursive: true,
-  filter: (source) => !source.endsWith('.test.ts'),
+  filter: (source) => !source.endsWith('.test.ts') && path.basename(source) !== 'node_modules',
 });
 for (const entry of fs.readdirSync(path.join(repoRoot, 'skills'), { withFileTypes: true })) {
   if (entry.isDirectory() && fs.existsSync(path.join(repoRoot, 'skills', entry.name, 'SKILL.md'))) {
@@ -65,6 +65,7 @@ for (const entry of fs.readdirSync(path.join(repoRoot, 'skills'), { withFileType
 fs.writeFileSync(path.join(piStage, 'package.json'), `${JSON.stringify({
   name: '@jygzyc/decx-pi', version, private: true, type: 'module',
   engines: { node: '>=24.21.0' },
+  dependencies: JSON.parse(fs.readFileSync(path.join(repoRoot, '.pi/extensions/decx/package.json'), 'utf8')).dependencies,
   peerDependencies: { '@earendil-works/pi-coding-agent': '*', typebox: '*' },
   pi: { extensions: ['./extensions/decx/index.ts'], skills: [] }, // npx skills installs the bundled execution skill separately
 }, null, 2)}\n`);

@@ -74,6 +74,7 @@ jobs:
       - name: Wiki extension and portable skill checks
         if: ${{ matrix.os == 'ubuntu-latest' && matrix.node == '24' }}
         run: |
+          npm ci --prefix .pi/extensions/decx --no-audit --no-fund
           node --test .pi/extensions/decx/*.test.ts
           project=$(mktemp -d)
           trap 'rm -rf "$project"' EXIT
@@ -184,6 +185,7 @@ jobs:
           npm run pack
       - name: check bundled wiki and skills
         run: |
+          npm ci --prefix .pi/extensions/decx --no-audit --no-fund
           node --test .pi/extensions/decx/*.test.ts
           project=$(mktemp -d)
           trap 'rm -rf "$project"' EXIT
@@ -292,6 +294,7 @@ jobs:
           test -f "$bundle/extensions/decx/wiki-command.ts"
           test ! -e "$bundle/skills/decx-wiki/SKILL.md"
           node -e 'const p=require(process.argv[1]); if (!p.pi.extensions.length || p.pi.skills.length) process.exit(1)' "$bundle/package.json"
+          (cd "$bundle/extensions/decx" && npm ci --no-audit --no-fund)
           mkdir wiki-project
           node "$bundle/extensions/decx/cli.ts" init --root "$PWD/wiki-project"
           test -d wiki-project/.agents/skills

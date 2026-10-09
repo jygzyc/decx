@@ -94,9 +94,9 @@ async function main(): Promise<number> {
     return 0;
   }
 
-  const fs = nodeFs();
   // The CLI and extension both discover only this project's initialized wiki.
   const root = resolve(options.root);
+  const fs = nodeFs(() => [{ root, paths: ['.decxwiki', '.agents/skills'] }]);
   if (options.command === 'init') {
     if (options.workspace !== undefined) {
       throw new Error('init always targets <root>/.decxwiki; omit --workspace');

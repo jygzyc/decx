@@ -31,7 +31,6 @@ import {
   withFileMutationQueue,
 } from '@earendil-works/pi-coding-agent';
 import { Type } from 'typebox';
-import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { nodeFs, operationQueue, withWorkspaceLock } from './node-fs.ts';
 import { PHASES, toolBlock, type Phase } from './policy.ts';
@@ -129,11 +128,12 @@ interface WorkspaceConfig {
 const DEFAULT_CHECKPOINTS: CheckpointSettings = { every: 7, unit: 'round', inject: true };
 
 /** `decx.json` is optional: a missing file is fine, a broken one is reported. */
-async function readConfig(cwd: string): Promise<RawConfig | undefined> {
+async function readConfig(cwd: string, fs: WikiFs): Promise<RawConfig | undefined> {
   const path = join(cwd, CONFIG_DIR_NAME, 'extensions', 'decx.json');
   let raw: string;
   try {
-    raw = await readFile(path, 'utf8');
+    if (!(await fs.exists(path))) return undefined;
+    raw = await fs.readFile(path);
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined;
     throw new WikiError('BAD_CONFIG', `cannot read ${path}: ${String(error)}`);
@@ -175,7 +175,11 @@ function sessionKey(ctx: SessionCtx): string {
 }
 
 export default function decx(pi: ExtensionAPI): void {
-  const base = nodeFs();
+  let activeCwd = process.cwd();
+  const base = nodeFs(() => [
+    { root: activeCwd, paths: ['.decxwiki', '.agents/skills', '.pi/extensions/decx.json'] },
+    { root: getAgentDir(), paths: ['decx/sessions'] },
+  ]);
   const serialize = operationQueue();
   let phase: Phase = 'inference';
   let maintenanceContext = false;
@@ -197,11 +201,12 @@ export default function decx(pi: ExtensionAPI): void {
 
   let configNotified = '';
   const config = async (cwd: string): Promise<WorkspaceConfig> => {
+    activeCwd = cwd;
     if (cache === undefined || cache.cwd !== cwd) {
       let parsed: RawConfig | undefined;
       let error: string | undefined;
       try {
-        parsed = await readConfig(cwd);
+        parsed = await readConfig(cwd, fs);
       } catch (problem) {
         // A broken config must not quietly disable checkpoints and workspaces.
         error = failure(problem).message;
@@ -229,6 +234,7 @@ export default function decx(pi: ExtensionAPI): void {
   };
 
   const initialize = async (cwd: string): Promise<Workspace> => {
+    activeCwd = cwd;
     const target = join(cwd, '.decxwiki');
     await fs.exists(target); // reject directory aliases before taking the workspace lock
     const { workspace } = await serialize(() => withWorkspaceLock(target, () => initLocalWiki(cwd, fs)));

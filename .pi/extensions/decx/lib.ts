@@ -33,6 +33,7 @@ export {
   type Workspace,
 } from './workspace.ts';
 
+import { posix } from 'node:path';
 import { WikiError } from './errors.ts';
 import type { WikiFs } from './types.ts';
 import {
@@ -903,8 +904,11 @@ async function linkFindings(fs: WikiFs, area: 'wiki' | 'skill', file: string, te
   const findings: LintFinding[] = [];
   const exists = async (candidates: string[]): Promise<boolean> => {
     for (const candidate of candidates) {
-      if (await fs.exists(candidate)) {
-        return true;
+      try {
+        // Markdown references may ascend inside a capability; public paths still reject '..'.
+        if (await fs.exists(posix.normalize(candidate.replaceAll('\\', '/')))) return true;
+      } catch (error) {
+        if (!(error instanceof WikiError) || error.code !== 'UNSAFE_PATH') throw error;
       }
     }
     return false;

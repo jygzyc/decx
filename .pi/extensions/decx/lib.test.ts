@@ -38,8 +38,8 @@ import {
 } from './lib.ts';
 import { nodeFs } from './node-fs.ts';
 
-const fs = nodeFs();
 const roots: string[] = [];
+const fs = nodeFs(() => roots.map((root) => ({ root })));
 
 function page(name: string, track: string, match: string): string {
   return `---\nname: ${name}\ntrack: ${track}\n---\n\n# ${name}\n\n## Match\n${match}\n\n## Non-obvious\n- the subtle mechanism\n\n## Reject\nnot reportable on its own\n`;
@@ -660,7 +660,8 @@ describe('candidate validation and rollback', () => {
     await rm(escaped, { force: true });
     await fs.writeFile(path, JSON.stringify({ ...pending, target: '../escaped.md' }));
     await assert.rejects(gateCandidate(ws, { reject: true, outcome: 'tampered' }, fs, state), throwsCode('BAD_CANDIDATE'));
-    assert.equal(await fs.exists(escaped), false);
+    await assert.rejects(fs.exists(escaped), throwsCode('UNSAFE_PATH'));
+    await assert.rejects(readFile(escaped), { code: 'ENOENT' });
     await fs.writeFile(path, 'not json');
     await assert.rejects(gateCandidate(ws, { reject: true, outcome: 'broken' }, fs, state), throwsCode('BAD_STATE'));
   });

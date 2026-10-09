@@ -10,8 +10,10 @@ structural checks never count as performance measurements.
 
 Download `decx-pi-<version>.tar.gz` and `decx-pi-SHA256SUMS.txt` from a
 `decx-v<version>` release. Verify the archive checksum, unpack it outside the
-project, then run `pi install /absolute/path/to/decx-pi-<version>` (a local pi
-package). No repository clone is needed. The package contains the wiki extension
+project, change into `/absolute/path/to/decx-pi-<version>/extensions/decx`
+and run `npm ci` to install its pinned `@openclaw/fs-safe` dependency, then run
+`pi install /absolute/path/to/decx-pi-<version>` (a local pi package).
+Pi does not install dependencies for local packages. No repository clone is needed. The package contains the wiki extension
 (including `/decx-wiki`) and separately installable execution skills. Install a
 skill in the target project with `npx skills add jygzyc/decx --skill <skill-name>`
 (for example `--skill decx-tool` or `--skill antifrida-bypass`; choose
@@ -113,7 +115,14 @@ Do not run unrelated analysis against a workspace while a candidate is applied.
 | `decx_check` | Blocked | Structural checks | Structural checks |
 | `decx_checkpoint` | Session state | Session state | Session state |
 
-Managed API paths reject traversal, symlinks and hard links. `decx_read` has an
+Extension-owned I/O uses `@openclaw/fs-safe` roots, limited to the project's
+`.decxwiki/`, `.agents/skills/`, `.pi/extensions/decx.json` and the pi agent's
+`decx/sessions/`. Traversal and symlinks are rejected; reads reject hard links,
+and replacement writes never modify the external inode behind an alias.
+The library defaults to native support when available (`FS_SAFE_NATIVE_MODE=auto`);
+Linux openat2 opens can be kernel-atomic, while guarded macOS, Windows and JavaScript
+operations remain best-effort. This is not OS isolation. Reads have a 16 MiB budget.
+`decx_read` has an
 explicit page allowlist, not a general workspace-file fallback. Raw writes use
 exclusive creation and never overwrite an existing trace. Maintenance patches are
 validated together in memory before file writes begin; validation errors leave
@@ -123,7 +132,10 @@ can interrupt a commit. Repair the affected pages and run CLI `resync`/`check`.
 Mutations share a workspace lock (`.pi/decx-write.lock`) across cooperating sessions
 and the CLI, plus pi's file mutation queue. A competing operation fails with
 `WORKSPACE_BUSY` instead of losing updates. After a process crash, verify no writer
-is active before removing the stale lock directory. Individual replacement writes use a temporary file and rename. Recovery data precedes skill
+is active before removing the stale lock file (or a legacy lock directory).
+Workspace locking uses fs-safe's exclusive file lock with retained ownership;
+cleanup never deletes a replacement writer's lock. Stale locks are not reclaimed automatically.
+Replacement writes use fs-safe's guarded atomic publication. Recovery data precedes skill
 application; use `decx_gate` with `reject: true` to recover an interrupted proposal.
 A durable gate decision is completed unchanged on retry after an interrupted write.
 External skill edits are detected and never silently overwritten by rollback.
@@ -140,7 +152,9 @@ it does not independently verify the truth of submitted scores or trace contents
 ## Verification
 
 ```sh
-node --test .pi/extensions/decx/lib.test.ts
+npm ci --prefix .pi/extensions/decx
+node --test .pi/extensions/decx/*.test.ts
+FS_SAFE_NATIVE_MODE=off node --test .pi/extensions/decx/*.test.ts
 project=$(mktemp -d)
 node .pi/extensions/decx/cli.ts init --root "$project"
 node .pi/extensions/decx/cli.ts check --root "$project"

@@ -1,81 +1,69 @@
-import { access, lstat, mkdir, readdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
-import { randomUUID } from 'node:crypto';
-import { dirname, parse, resolve, sep } from 'node:path';
+import { root, FsSafeError, type Root } from '@openclaw/fs-safe';
+import { withFileLock } from '@openclaw/fs-safe/file-lock';
+import { dirname, isAbsolute, relative, resolve, sep } from 'node:path';
 import { WikiError, type WikiFs } from './lib.ts';
 
-/** Managed layers cannot contain symlinks or hard-linked files. Ancestors such
- * as macOS /tmp may be aliases; layer directories themselves may not. This is
- * an API boundary, not protection against a hostile concurrent local process. */
-async function guard(path: string): Promise<void> {
-  const absolute = resolve(path);
-  const root = parse(absolute).root;
-  const parts = absolute.slice(root.length).split(sep);
-  let managed = false;
-  let current = root;
-
-  for (const part of parts) {
-    current = resolve(current, part);
-    managed ||= ['.decxwiki', 'raw', 'wiki', 'skills'].includes(part);
-    if (!managed) continue;
-
-    try {
-      const stat = await lstat(current);
-      if (stat.isSymbolicLink() || (stat.isFile() && stat.nlink > 1)) {
-        throw new WikiError('UNSAFE_PATH', `managed path is a link: ${current}`);
-      }
-    } catch (error) {
-      if (!['ENOENT', 'ENOTDIR'].includes((error as NodeJS.ErrnoException).code ?? '')) throw error;
-    }
-  }
+export interface FsScope {
+  /** Existing, trusted directory; never derive this from an operation's input. */
+  root: string;
+  /** Optional narrower capabilities, relative to root. */
+  paths?: readonly string[];
 }
 
-export function nodeFs(): WikiFs {
+export function nodeFs(scopes: () => readonly FsScope[]): WikiFs {
+  const handles = new Map<string, Promise<Root>>();
+  async function within<T>(path: string, run: (fs: Root, rel: string) => Promise<T>): Promise<T> {
+    const absolute = resolve(path);
+    const scope = scopes().find(({ root: anchor, paths }) => {
+      const rel = relative(resolve(anchor), absolute);
+      if (isAbsolute(rel) || rel === '..' || rel.startsWith(`..${sep}`)) return false;
+      return paths === undefined || paths.some((prefix) => {
+        const allowed = prefix.split('/').join(sep);
+        return rel === allowed || rel.startsWith(`${allowed}${sep}`);
+      });
+    });
+    if (!scope || path.split(/[\\/]/).includes('..')) {
+      throw new WikiError('UNSAFE_PATH', `path is outside the extension's filesystem capabilities: ${path}`);
+    }
+    const anchor = resolve(scope.root);
+    try {
+      let handle = handles.get(anchor);
+      if (!handle) {
+        handle = root(anchor, { symlinks: 'reject', mutationSymlinks: 'reject', hardlinks: 'reject', mkdir: true });
+        handles.set(anchor, handle);
+        void handle.catch(() => handles.delete(anchor));
+      }
+      return await run(await handle, relative(anchor, absolute) || '.');
+    } catch (error) {
+      if (error instanceof FsSafeError && error.code === 'not-found') {
+        throw Object.assign(new Error(error.message, { cause: error }), { code: 'ENOENT' });
+      }
+      if (error instanceof FsSafeError && error.category === 'policy' && error.code !== 'already-exists') {
+        throw new WikiError('UNSAFE_PATH', `${error.code}: ${error.message}`);
+      }
+      throw error;
+    }
+  }
   return {
-    async readFile(path) {
-      await guard(path);
-      return readFile(path, 'utf8');
-    },
+    readFile: (path) => within(path, (fs, rel) => fs.readText(rel)),
     async writeFile(path, text) {
       if (/(?:^|[\\/])raw[\\/]traces(?:[\\/]|$)/.test(resolve(path))) {
-        throw new WikiError(
-          'IMMUTABLE_RAW',
-          'raw files can only be created once; record a new trace for corrections',
-        );
+        throw new WikiError('IMMUTABLE_RAW', 'raw files can only be created once; record a new trace for corrections');
       }
-
-      await guard(path);
-      await mkdir(dirname(path), { recursive: true });
-      const temporary = `${path}.${randomUUID()}.tmp`;
-      try {
-        await writeFile(temporary, text, { encoding: 'utf8', flag: 'wx' });
-        await rename(temporary, path);
-      } finally {
-        await rm(temporary, { force: true });
-      }
+      await within(path, (fs, rel) => fs.write(rel, text));
     },
     async createFile(path, text) {
-      await guard(path);
-      await mkdir(dirname(path), { recursive: true });
       try {
-        await writeFile(path, text, { encoding: 'utf8', flag: 'wx' });
+        await within(path, (fs, rel) => fs.create(rel, text, { atomic: true }));
         return true;
       } catch (error) {
-        if ((error as NodeJS.ErrnoException).code === 'EEXIST') return false;
+        if ((error instanceof FsSafeError && error.code === 'already-exists') || (error as NodeJS.ErrnoException).code === 'EEXIST') return false;
         throw error;
       }
     },
-    async exists(path) {
-      await guard(path);
-      try {
-        await access(path);
-        return true;
-      } catch (error) {
-        if (['ENOENT', 'ENOTDIR'].includes((error as NodeJS.ErrnoException).code ?? '')) return false;
-        throw error;
-      }
-    },
-    async listDir(path) { await guard(path); return readdir(path); },
-    async mkdirp(path) { await guard(path); await mkdir(path, { recursive: true }); },
+    exists: (path) => within(path, (fs, rel) => fs.exists(rel)),
+    listDir: (path) => within(path, (fs, rel) => fs.list(rel)),
+    mkdirp: (path) => within(path, (fs, rel) => rel === '.' ? Promise.resolve() : fs.mkdir(rel)),
   };
 }
 
@@ -89,27 +77,28 @@ export function operationQueue() {
   };
 }
 
-/** All cooperating pi sessions and the CLI use the same workspace lock. */
-export async function withWorkspaceLock<T>(root: string, run: () => Promise<T>): Promise<T> {
-  const lock = resolve(root, '.pi', 'decx-write.lock');
-  await mkdir(dirname(lock), { recursive: true });
-
+/** fs-safe retains lock ownership and does not delete a replacement writer's lock. */
+export async function withWorkspaceLock<T>(workspace: string, run: () => Promise<T>): Promise<T> {
+  const lock = resolve(workspace, '.pi', 'decx-write.lock');
   try {
-    await mkdir(lock);
+    const lockRoot = await root(dirname(resolve(workspace)), {
+      symlinks: 'reject', mutationSymlinks: 'reject', hardlinks: 'reject', mkdir: true,
+    });
+    return await withFileLock(resolve(workspace), {
+      lockRoot, lockPath: lock,
+      payload: () => ({ pid: process.pid }),
+      staleMs: Number.POSITIVE_INFINITY,
+      retry: { retries: 0 }, timeoutMs: 0,
+      staleRecovery: 'fail-closed', retainOnExit: true,
+    }, run);
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === 'EEXIST') {
-      throw new WikiError(
-        'WORKSPACE_BUSY',
-        `another operation holds ${lock}`,
-        'retry after it finishes; after a crash, verify no writer is running before removing this lock directory',
-      );
+    if ((error as NodeJS.ErrnoException).code === 'file_lock_timeout') {
+      throw new WikiError('WORKSPACE_BUSY', `another operation holds ${lock}`,
+        'retry after it finishes; after a crash, verify no writer is running before removing this lock file');
+    }
+    if (error instanceof FsSafeError && error.category === 'policy') {
+      throw new WikiError('UNSAFE_PATH', `${error.code}: ${error.message}`);
     }
     throw error;
-  }
-
-  try {
-    return await run();
-  } finally {
-    await rm(lock, { recursive: true });
   }
 }
