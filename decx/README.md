@@ -197,10 +197,47 @@ the requested version.
 
 ```console
 $ npm ci                      # dev deps only (esbuild, typescript, @types/node)
-$ npm test                    # offline JS, Python wheel/venv and native binary install + decx -m tests
+$ npm test                    # supplemental offline manager/security regression tests
 $ npm run typecheck           # tsc --noEmit
 $ node src/cli.ts version
 ```
+
+### Real analyzer functional acceptance
+
+`npm test` alone does **not** prove decompilation works. Install the actual
+upstream tools into an explicit isolated prefix, build the manager, then run
+`npm run test:functional` with `DECX_HOME` pointing at that prefix:
+
+```console
+$ node src/cli.ts install droidasc --home /tmp/decx-functional --no-links
+$ node src/cli.ts install kuna --home /tmp/decx-functional --no-links
+$ npm run build
+$ DECX_HOME=/tmp/decx-functional npm run test:functional
+```
+
+On PowerShell, use `$env:DECX_HOME` and a unique directory under `$env:TEMP`.
+Installation uses real PyPI/GitHub distributions and may access the network;
+the tests themselves do not download or install tools. Missing prerequisites
+fail rather than silently skipping. A host C compiler is required (`cc` on
+macOS/Linux; `cl` in a Visual Studio developer environment on Windows).
+
+- DroidASC decodes the existing real Sieve APK's binary manifest, enumerates
+  DEX classes, decompiles the SQL provider to Java and locates a real URI
+  reference. Written files, class-name normalization and missing-class errors
+  are checked through subprocesses, not imported analyzer functions.
+- Kuna analyzes a freshly compiled real Mach-O/ELF/PE executable, exports a
+  project, recompiles the recovered C and compares its execution with the
+  original on seven branch/negative inputs. This checks semantics, not just
+  exit status or whether output contains `return`.
+- `test:functional:droidasc` and `test:functional:kuna` select one suite. The
+  existing tool workflows run these gates on Linux, macOS and Windows using
+  real installed tools; no mocks replace them. Offline security/rollback
+  tests remain complementary coverage, not functional acceptance.
+
+Set `DECX_FUNCTIONAL_MANAGER` to an absolute built native manager executable
+to run the same functional suite through scriptc instead of `dist/decx.mjs`.
+The test prefix must be explicit; never install into the user's real home.
+Fixture origins and hashes are documented in `tests/fixtures/real-analysis/`.
 
 ## Single-file release
 

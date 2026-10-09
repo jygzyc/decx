@@ -56,8 +56,11 @@ jobs:
       - name: Install from PyPI with DECX
         run: node decx/src/cli.ts install droidasc --home "$DECX_HOME" --no-links --pretty
 
-      - name: Run the installed tool
-        run: node decx/src/cli.ts --home "$DECX_HOME" -m droidasc --help
+      - name: Build the manager
+        run: npm ci --prefix decx && npm --prefix decx run build
+
+      - name: Decompile a real APK and verify Java, manifest and references
+        run: npm --prefix decx run test:functional:droidasc
 
       - name: PROVENANCE records the PyPI package and version
         run: |

@@ -83,8 +83,8 @@ jobs:
 
   release-install:
     name: Release install (${{ matrix.os }})
-    # Exercise the upstream download weekly and on branch pushes, not PRs.
-    if: ${{ github.event_name != 'pull_request' && (github.event_name != 'schedule' || github.event.schedule == '17 4 * * 1') }}
+    # Exercise real installation and decompilation on changes and weekly.
+    if: ${{ github.event_name != 'schedule' || github.event.schedule == '17 4 * * 1' }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30
     strategy:
@@ -104,10 +104,15 @@ jobs:
           DECX_HOME: ${{ runner.temp }}/decx-home
           GH_TOKEN: ${{ github.token }}
         run: node decx/src/cli.ts install kuna --home "$DECX_HOME" --no-links --pretty
-      - name: The installed binary answers
+      - name: Set up the Windows C compiler
+        if: runner.os == 'Windows'
+        uses: ilammy/msvc-dev-cmd@a102174a2b586eec2ea151a69e6fd14404a8ce7c # v1.13.0
+      - name: Build the manager
+        run: npm ci --prefix decx && npm --prefix decx run build
+      - name: Decompile a real executable, recompile recovered C and compare behavior
         env:
           DECX_HOME: ${{ runner.temp }}/decx-home
-        run: node decx/src/cli.ts --home "$DECX_HOME" -m kuna --version
+        run: npm --prefix decx run test:functional:kuna
       - name: The specs archive was unpacked
         env:
           DECX_HOME: ${{ runner.temp }}/decx-home

@@ -149,18 +149,24 @@ a `--help` smoke on Linux, macOS and Windows;
 Windows arm64 cross check; tag `tools-v*`, checked against
 `subprojects/decx-afe/Cargo.toml`, builds the six `afe-<version>-<platform>` archives plus
 `afe-SHA256SUMS.txt`), `decx-droidasc.yml` (the manager creates a private venv,
-installs the published PyPI package and invokes `droidasc --help` across platforms;
+installs the published PyPI package and functionally tests real APK decompilation,
+manifest decoding and DEX references across platforms;
 no source archive is published) and
 `decx-kuna.yml` (pin, manifest and
-upstream-skill-copy contract on every change; release install on Linux, macOS and Windows
-weekly and on demand; every 12 hours a scheduled job compares the pinned tag with upstream's
+upstream-skill-copy contract on every change; release install and real native binary
+decompilation on Linux, macOS and Windows, including recompilation/behavior checks,
+on changes, weekly and on demand; every 12 hours a scheduled job compares the pinned tag with upstream's
 latest release and pushes nothing when there is nothing newer — a new release moves the
 submodule gitlink, re-copies the skill reference and pushes the commit. No local Kuna
 release mirror is published because installs use the official upstream assets directly).
 The manager and crate jobs are offline — the manager's install tests use fixture
 archives, fake toolchains and temporary prefixes — while the two tool workflows
 deliberately exercise the real install paths (`pip install` into the tool's venv, the Kuna
-release and specs archives); no workflow compiles the vendored upstream checkouts.
+release and specs archives) and require `npm run test:functional:droidasc` /
+`npm run test:functional:kuna`. `npm test` is supplemental offline regression coverage,
+not proof of decompilation. The real suites fail on absent tools (no silent skips),
+use explicit temporary prefixes, and can target a built native manager through
+`DECX_FUNCTIONAL_MANAGER`; no workflow compiles the vendored upstream checkouts.
 The kuna manifest installs from official upstream releases — manifest 2 resolves the
 newest stable `v*` tag and verifies each asset against its GitHub REST SHA-256 digest.
 Keep README.md and README_zh.md aligned with the actual tools and launcher runtime requirements; do not document removed `decx` commands as current functionality.
