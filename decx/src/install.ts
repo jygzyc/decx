@@ -422,14 +422,6 @@ function isoTimestamp(): string {
   return new Date().toISOString().replace(/\.\d{3}Z$/, 'Z');
 }
 
-function fromEntries(entries: ReadonlyArray<readonly [string, string]>): Record<string, string> {
-  const record: Record<string, string> = {};
-  for (const [key, value] of entries) {
-    record[key] = value;
-  }
-  return record;
-}
-
 function firstLine(result: CommandResult): string {
   const text = `${result.stdout}\n${result.stderr}`.trim();
   return text.split(/\r?\n/)[0] ?? '';
@@ -489,23 +481,6 @@ function findSpecsDir(extract: string): string | null {
     }
   }
   return null;
-}
-
-function copyTree(source: string, dest: string): void {
-  const entry = fs.lstatSync(source);
-  if (entry.isSymbolicLink()) {
-    // Match cpSync's default: resolve the target relative to the source link.
-    fs.symlinkSync(path.resolve(path.dirname(source), fs.readlinkSync(source)), dest);
-  } else if (entry.isDirectory()) {
-    fs.mkdirSync(dest, { recursive: true });
-    for (const name of fs.readdirSync(source)) {
-      copyTree(path.join(source, name), path.join(dest, name));
-    }
-  } else if (entry.isFile()) {
-    fs.copyFileSync(source, dest);
-  } else {
-    throw new InstallError('UNSAFE_ENTRY', `unsupported filesystem entry: ${source}`);
-  }
 }
 
 function applyExecutableMode(file: string): void {
@@ -826,14 +801,15 @@ function stageJavascriptRelease(
   const binaries: string[] = [];
   let verifyScript = '';
   const app = path.join(stage, 'share', manifest.id, 'app');
-  copyTree(extract, app);
+  fs.mkdirSync(path.dirname(app), { recursive: true });
+  fs.renameSync(extract, app);
   fs.mkdirSync(path.join(stage, 'bin'), { recursive: true });
   for (const name of manifest.launch.commands) {
-    const found = findFile(extract, [`${name}.mjs`, `${name}.cjs`, `${name}.js`]);
+    const found = findFile(app, [`${name}.mjs`, `${name}.cjs`, `${name}.js`]);
     if (found === null) {
       throw new InstallError('ASSET_LAYOUT', `'${asset}' does not contain a Node script for '${name}' (.mjs, .cjs or .js)`);
     }
-    const script = path.relative(extract, found).split(path.sep).join('/');
+    const script = path.relative(app, found).split(path.sep).join('/');
     if (!isSafeRelativePath(script)) {
       throw new InstallError('ASSET_LAYOUT', `'${asset}' has an unsafe Node script path: ${script}`);
     }
@@ -882,14 +858,15 @@ async function stageRelease(
   const launcherName = pickLauncher(manifest, binaries);
   let specsInstalled = 0;
   if (specsAsset !== undefined) {
-    const specsSource = findSpecsDir(extract);
+    const payload = manifest.launch.type === 'js' ? path.join(stage, 'share', manifest.id, 'app') : extract;
+    const specsSource = findSpecsDir(payload);
     if (specsSource === null) {
       throw new InstallError(
         'SPECS_MISSING',
         `the downloaded archives do not contain a specs/ tree with compiled .sla files. Try another --version.`,
       );
     }
-    copyTree(specsSource, path.join(stage, 'specs'));
+    fs.renameSync(specsSource, path.join(stage, 'specs'));
     specsInstalled = countBySuffix(path.join(stage, 'specs'), '.sla');
     if (specsInstalled === 0) {
       throw new InstallError('SPECS_MISSING', 'no .sla files found in the downloaded specs tree; refusing to install an uncompiled tree.');
@@ -952,7 +929,7 @@ async function stageRelease(
     ['prefix', prefix],
   );
   return {
-    provenance: { ...fromEntries(entries), ...extraProvenance },
+    provenance: { ...Object.fromEntries(entries), ...extraProvenance },
     binaries,
     launcherName,
     method: 'release download',
@@ -1489,7 +1466,7 @@ export async function installTool(
       if (initialize !== undefined) await initialize();
     }, (committed) => {
       storeLauncher = committed.launcher ?? outcome.launcherName;
-      provenance = fromEntries(Object.entries(outcome.provenance));
+      provenance = { ...outcome.provenance };
       provenance.binary = path.join(binDir, storeLauncher);
       provenance.binaries = committed.bins.join(' ');
       provenance.bin_dir = binDir;
@@ -1515,7 +1492,7 @@ export async function installTool(
       try {
         links = createLinks({ home, files: committed.bins, linkDir, force: options.force === true, log: ctx.log });
         const linked = links.filter((link) => link.status !== 'conflict');
-        const linkedProvenance = fromEntries(Object.entries(provenance));
+        const linkedProvenance = { ...provenance };
         linkedProvenance.link_dir = linkDir;
         if (linked.length > 0) linkedProvenance.links = linked.map((link) => link.path).join(' ');
         // An atomic replacement leaves the core record valid if recording links fails.

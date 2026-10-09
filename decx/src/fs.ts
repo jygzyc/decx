@@ -1,6 +1,6 @@
 import * as fs from 'node:fs';
 
-/** Like lstatSync(..., { throwIfNoEntry: false }), without the options overload. */
+/** scriptc 0.2.7 supports the one-argument lstatSync form only. */
 export function lstatIfPresent(file: string): fs.Stats | undefined {
   try {
     return fs.lstatSync(file);

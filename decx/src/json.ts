@@ -16,9 +16,8 @@ export interface FailureEnvelope {
 }
 
 export function ok(command: string, payload: Record<string, unknown>): SuccessEnvelope {
-  const envelope: SuccessEnvelope = { ok: true, command };
-  for (const key of Object.keys(payload)) envelope[key] = payload[key];
-  return envelope;
+  const envelope: Record<string, unknown> = {};
+  return Object.assign(envelope, { ok: true as const, command }, payload);
 }
 
 export function fail(command: string | null, code: string, message: string, hint?: string): FailureEnvelope {
