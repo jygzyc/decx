@@ -5,7 +5,7 @@ import path from 'node:path';
 import test from 'node:test';
 import { analyze, compile, execute, fixtures } from './helpers.ts';
 
-interface FunctionRecord { name: string; address: number; size: number; code: string; error: string | null }
+interface FunctionRecord { name: string; address: number; code: string; error: string | null }
 interface FunctionsResult { error: string | null; functions: FunctionRecord[] }
 
 test('real executable: run, discover, decompile, recompile and compare behavior through DECX', { timeout: 180_000 }, async (t) => {
@@ -21,10 +21,12 @@ test('real executable: run, discover, decompile, recompile and compare behavior 
   assert.equal(listed.error, null);
   const targets = ['decx_score', 'decx_mix'].map(name => {
     const matches = listed.functions.filter(fn => fn.name.replace(/^_/, '') === name);
-    assert.ok(matches.length, `Actual executable symbol missing: ${name}`);
-    // PE debug builds can expose both the body and an incremental-link thunk.
-    // Select the full body and use its address, never an ambiguous name selector.
-    return matches.reduce((body, candidate) => candidate.size > body.size ? candidate : body);
+    // Link the fixture non-incrementally: exports must be the actual bodies,
+    // not synthetic ILT trampolines whose inferred size can exceed the body.
+    assert.equal(matches.length, 1, `Expected a unique body for ${name}: ${JSON.stringify(matches)}`);
+    const body = matches[0];
+    assert.ok(body);
+    return body;
   });
   const recovered: FunctionRecord[] = [];
 
