@@ -3,7 +3,7 @@
 DECX is not a decompiler and not a wrapper around one.  This CLI installs and manages
 the native analysis tools the DECX skills drive (`droidasc`, `kuna`, `afe`), so an agent
 can go from a bare machine to a working toolkit with one command.  The tools stay where
-they belong: upstream releases where they exist, `subprojects/` checkouts where DECX is
+they belong: upstream releases where they exist, `third_party/` checkouts where DECX is
 the maintainer.
 
 - **Node only.** No runtime dependencies, no build step: Node 24.21+ runs the
@@ -90,7 +90,7 @@ inherits stdio and forwards the exit code; it never translates analysis
 commands. The selected install root is passed as `DECX_HOME`. Python launchers
 initialize `VIRTUAL_ENV` and prepend the private interpreter directory to `PATH`,
 so the installed package works without activating a shell.
-These changes apply only to the launched process and its children.  Options before the module (`--home`, `--subprojects`, `--pretty`)
+These changes apply only to the launched process and its children.  Options before the module (`--home`, `--third-party`, `--pretty`)
 belong to decx, so `decx -m kuna --version` asks Kuna for its version.
 
 The portable `decx-tool` skill works without any pi extension: install the CLI
@@ -121,7 +121,7 @@ decx/
 ```
 
 One manifest per tool lives inside that tool's subproject —
-`subprojects/decx-<id>/decx-<id>.json` — so the manager's tool list is exactly the
+`third_party/decx-<id>/decx-<id>.json` — so the manager's tool list is exactly the
 subproject list.
 
 Installs live under `$DECX_HOME` (default `~/.decx`; `--home`, alias
@@ -165,7 +165,7 @@ A manifest is data, never code; adding a tool means adding a JSON file.
 }
 ```
 
-Every tool JSON uses the same [JSON Schema](../subprojects/decx-tool.schema.json) for editor completion. `src/manifest.ts` validates cross-field recipe rules; no separate schema is needed for each runtime.
+Every tool JSON uses the same [JSON Schema](../third_party/decx-tool.schema.json) for editor completion. `src/manifest.ts` validates cross-field recipe rules; no separate schema is needed for each runtime.
 
 | Field | Meaning |
 |---|---|
@@ -253,10 +253,10 @@ Node itself and the tools being installed are not bundled.
 After extracting, run `node decx-<version>/decx.mjs install <tool>`.
 `npm run build` also runs an offline smoke check by copying only the executable
 into a temporary empty directory and checking version, help, tool discovery and
-the `--subprojects` override.
+the `--third-party` override.
 
 Direct source execution (`node src/cli.ts …`) still reads package.json and the
-repository's `subprojects/`. In either mode, `--subprojects <dir>` replaces the
+repository's `third_party/`. In either mode, `--third-party <dir>` replaces the
 default manifest set with that directory's manifests; it does not merge them.
 
 ## scriptc native manager
@@ -324,10 +324,10 @@ unsupported. CI tests independent tool compilation on the same four hosts as
 the native manager; macOS x64 is not part of the release matrix. Because scriptc is installed separately for builds,
 the manager's lockfile and `npm ci` do not depend on its platform packages.
 
-Adding a tool: create `subprojects/decx-<id>/` with its own `README.md` and the
+Adding a tool: create `third_party/decx-<id>/` with its own `README.md` and the
 `decx-<id>.json` manifest (the tool id is the subproject directory name without the
 `decx-` prefix), add its contract to `skills/decx-tool/` (a routing-gate row in
 `SKILL.md` plus `references/<id>.md`), then run `npm test` — the manifest tests load
-every manifest under `subprojects/` and hold each shipped manifest to the platform,
+every manifest under `third_party/` and hold each shipped manifest to the platform,
 release-asset and launcher rules.  The skill is validated by
 `python3 skills/check-skills.py`, which validates the packaged execution skills.

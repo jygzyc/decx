@@ -1,5 +1,5 @@
 /**
- * Tool manifests.  One JSON file per tool under `subprojects/decx-<id>/decx-<id>.json`
+ * Tool manifests.  One JSON file per tool under `third_party/decx-<id>/decx-<id>.json`
  * describes where the tool comes from, how it is installed and how it is
  * launched.  A manifest is data only: the CLI never grows per-tool code.
  *
@@ -384,7 +384,7 @@ function isBareDirectoryName(value: unknown): value is string {
 
 /**
  * Loads every tool manifest under `dir`: each subproject directory holds
- * `decx-<id>.json` in `subprojects/decx-<id>/`. Unreadable or invalid manifests are
+ * `decx-<id>.json` in `third_party/decx-<id>/`. Unreadable or invalid manifests are
  * reported as issues instead of failing the whole command, so a broken tool
  * never blocks the others.
  */

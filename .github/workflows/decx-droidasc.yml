@@ -7,9 +7,9 @@ on:
   push:
     branches: ['**']
     tags: ['droidasc-v*']
-    paths: ['subprojects/decx-droidasc/**', 'decx/**', 'skills/decx-tool/**', '.github/workflows/decx-droidasc.yml']
+    paths: ['third_party/decx-droidasc/**', 'decx/**', 'skills/decx-tool/**', '.github/workflows/decx-droidasc.yml']
   pull_request:
-    paths: ['subprojects/decx-droidasc/**', 'decx/**', 'skills/decx-tool/**', '.github/workflows/decx-droidasc.yml']
+    paths: ['third_party/decx-droidasc/**', 'decx/**', 'skills/decx-tool/**', '.github/workflows/decx-droidasc.yml']
   schedule:
     - cron: '17 4 * * 1'
   workflow_dispatch:

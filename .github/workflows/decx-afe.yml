@@ -2,8 +2,8 @@ name: AFE
 
 # Android Framework Extract is DECX's own crate -- the Android collection,
 # ext4/EROFS parsing and archive packing that the framework skills drive -- and
-# the only Rust in this repository. `subprojects/decx-droidasc/source` and
-# `subprojects/decx-kuna/source` are vendored upstream checkouts with CI of their
+# the only Rust in this repository. `third_party/decx-droidasc/source` and
+# `third_party/decx-kuna/source` are vendored upstream checkouts with CI of their
 # own; the vendored trees are only compiled by the release jobs, never here.
 #
 # The same workflow publishes the prebuilt release assets `decx install afe`
@@ -11,7 +11,7 @@ name: AFE
 # platform, so these jobs are what makes a toolchain-free install possible): a
 # `tools-v*` tag push (or a dispatch with the `tag` input set) runs the
 # validate/build/publish jobs instead of the checks. The names are part of that
-# contract: the manifest (subprojects/decx-afe/decx-afe.json) looks for
+# contract: the manifest (third_party/decx-afe/decx-afe.json) looks for
 # `afe-{version}-<platform>.tar.gz|zip` plus `afe-SHA256SUMS.txt` under a
 # `tools-v*` tag, where `{version}` is the tag without its prefix. Rename an
 # asset here and installs silently degrade to a local Rust build (or fail on a
@@ -23,9 +23,9 @@ on:
   push:
     branches: ['**']
     tags: ['tools-v*']
-    paths: ['subprojects/decx-afe/**', '.github/workflows/decx-afe.yml']
+    paths: ['third_party/decx-afe/**', '.github/workflows/decx-afe.yml']
   pull_request:
-    paths: ['subprojects/decx-afe/**', '.github/workflows/decx-afe.yml']
+    paths: ['third_party/decx-afe/**', '.github/workflows/decx-afe.yml']
   workflow_dispatch:
     inputs:
       tag:
@@ -54,7 +54,7 @@ jobs:
     defaults:
       run:
         shell: bash
-        working-directory: subprojects/decx-afe
+        working-directory: third_party/decx-afe
     steps:
       - uses: actions/checkout@v7.0.1
 
@@ -64,7 +64,7 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
         with:
-          workspaces: subprojects/decx-afe
+          workspaces: third_party/decx-afe
 
       # Formatting and lints are platform-independent, so they run once instead
       # of on every leg of the test matrix.
@@ -84,7 +84,7 @@ jobs:
     defaults:
       run:
         shell: bash
-        working-directory: subprojects/decx-afe
+        working-directory: third_party/decx-afe
     steps:
       - uses: actions/checkout@v7.0.1
 
@@ -92,7 +92,7 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
         with:
-          workspaces: subprojects/decx-afe
+          workspaces: third_party/decx-afe
 
       # Unit and integration tests, including the image-parsing fixtures, on a
       # native runner for every platform the crate claims to support.
@@ -114,7 +114,7 @@ jobs:
     defaults:
       run:
         shell: bash
-        working-directory: subprojects/decx-afe
+        working-directory: third_party/decx-afe
     steps:
       - uses: actions/checkout@v7.0.1
 
@@ -124,7 +124,7 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
         with:
-          workspaces: subprojects/decx-afe
+          workspaces: third_party/decx-afe
 
       # `decx install afe` ships a native windows-11-arm build from the release
       # jobs below; keep the cheap type-check here so MSVC-specific breakage
@@ -158,7 +158,7 @@ jobs:
               echo "::error::tag version '$version' must be numeric like 0.1.0"
               exit 1 ;;
           esac
-          crate="$(sed -n 's/^version = "\(.*\)"/\1/p' subprojects/decx-afe/Cargo.toml | head -1)"
+          crate="$(sed -n 's/^version = "\(.*\)"/\1/p' third_party/decx-afe/Cargo.toml | head -1)"
           if [ "$crate" != "$version" ]; then
             echo "::error::tag version '$version' does not match the afe crate version '$crate'"
             exit 1
@@ -211,10 +211,10 @@ jobs:
           targets: ${{ matrix.target }}
       - uses: Swatinem/rust-cache@v2
         with:
-          workspaces: subprojects/decx-afe
+          workspaces: third_party/decx-afe
           key: ${{ matrix.target }}
       - name: Build ${{ matrix.target }}
-        run: cargo build --release --locked --target ${{ matrix.target }} --manifest-path subprojects/decx-afe/Cargo.toml
+        run: cargo build --release --locked --target ${{ matrix.target }} --manifest-path third_party/decx-afe/Cargo.toml
       # Cross-compiled slices (darwin-amd64 on the arm64 runner) cannot execute;
       # only smoke the binary the runner can natively run.
       - name: Smoke the release binary
@@ -223,7 +223,7 @@ jobs:
         run: |
           ext=""
           if [ "${{ runner.os }}" = "Windows" ]; then ext=".exe"; fi
-          "subprojects/decx-afe/target/${{ matrix.target }}/release/afe$ext" --version
+          "third_party/decx-afe/target/${{ matrix.target }}/release/afe$ext" --version
       - name: Package (Unix)
         if: runner.os != 'Windows'
         shell: bash
@@ -231,7 +231,7 @@ jobs:
           set -eu
           name="afe-${{ needs.validate.outputs.version }}-${{ matrix.platform }}"
           mkdir -p dist
-          cp "subprojects/decx-afe/target/${{ matrix.target }}/release/afe" dist/afe
+          cp "third_party/decx-afe/target/${{ matrix.target }}/release/afe" dist/afe
           tar -czf "$name.tar.gz" -C dist afe
           ls -l "$name.tar.gz"
       - name: Package (Windows)
@@ -240,7 +240,7 @@ jobs:
         run: |
           $name = "afe-${{ needs.validate.outputs.version }}-${{ matrix.platform }}"
           New-Item -ItemType Directory -Force dist | Out-Null
-          Copy-Item "subprojects/decx-afe/target/${{ matrix.target }}/release/afe.exe" dist/afe.exe
+          Copy-Item "third_party/decx-afe/target/${{ matrix.target }}/release/afe.exe" dist/afe.exe
           Compress-Archive -Path dist/afe.exe -DestinationPath "$name.zip" -Force
           Get-Item "$name.zip" | Format-List Name, Length
       - uses: actions/upload-artifact@v7

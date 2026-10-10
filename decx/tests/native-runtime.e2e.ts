@@ -35,7 +35,7 @@ test(`native manager ${suffix}: install, argv/env, update, rollback and remove o
   t.after(() => fs.rmSync(temporary, { recursive: true, force: true }));
   const home = path.join(temporary, 'install with spaces 中文');
   const links = path.join(temporary, 'links with spaces');
-  const projects = path.join(temporary, 'subprojects');
+  const thirdParty = path.join(temporary, 'third_party');
   const emptyPath = path.join(temporary, 'empty-path');
   fs.mkdirSync(emptyPath);
   const name = process.platform === 'win32' ? 'demo.exe' : 'demo';
@@ -79,7 +79,7 @@ else {
     '/repos/acme/demo/releases': { location: `${redirected.url}/releases` },
   });
   t.after(() => server.close());
-  writeFile(path.join(projects, 'decx-demo/decx-demo.json'), JSON.stringify({
+  writeFile(path.join(thirdParty, 'decx-demo/decx-demo.json'), JSON.stringify({
     manifest: 2, id: 'demo', summary: 'offline native fixture', install: ['github-release'],
     launch: { type: 'bin', commands: ['demo'] },
     env: { DECX_NATIVE_MARKER: 'launcher环境' },
@@ -91,7 +91,7 @@ else {
     DECX_HOME: home, DECX_LINKS_DIR: links, DECX_NATIVE_MARKER: '环境变量', GITHUB_TOKEN: 'fixture-secret',
     DECX_GITHUB_API_BASE: server.url, DECX_GITHUB_DOWNLOAD_BASE: server.url,
   };
-  const execute = (args: string[]): Promise<NativeResult> => runNative(['--subprojects', projects, ...args], temporary, env);
+  const execute = (args: string[]): Promise<NativeResult> => runNative(['--third-party', thirdParty, ...args], temporary, env);
   const installed = await execute(['install', 'demo', '--version', '1.0.0']);
   assert.equal(installed.status, 0, JSON.stringify(installed));
   assert.equal(JSON.parse(installed.stdout).ok, true);
@@ -140,12 +140,12 @@ test('native manager creates a real Python venv offline and launches its entry p
   t.after(() => fs.rmSync(temporary, { recursive: true, force: true }));
   const home = path.join(temporary, 'install with spaces');
   const wheelhouse = path.join(temporary, 'wheels');
-  const projects = path.join(temporary, 'subprojects');
+  const thirdParty = path.join(temporary, 'third_party');
   const links = path.join(temporary, 'links');
   fs.mkdirSync(wheelhouse);
   writePythonWheel(wheelhouse);
   const manifest = fileURLToPath(new URL('./fixtures/python-tool/decx-pyprobe.json', import.meta.url));
-  writeFile(path.join(projects, 'decx-pyprobe/decx-pyprobe.json'), fs.readFileSync(manifest));
+  writeFile(path.join(thirdParty, 'decx-pyprobe/decx-pyprobe.json'), fs.readFileSync(manifest));
   const python = spawnSync(process.platform === 'win32' ? 'python' : 'python3', ['-c', 'import sys; print(sys.executable)'], { encoding: 'utf8' });
   assert.equal(python.status, 0, python.stderr);
   const executable = python.stdout.trim();
@@ -163,7 +163,7 @@ test('native manager creates a real Python venv offline and launches its entry p
     PIP_CONFIG_FILE: os.devNull, PIP_CACHE_DIR: path.join(temporary, 'pip-cache'),
     PIP_DISABLE_PIP_VERSION_CHECK: '1', PYTHONPATH: '', PYTHONIOENCODING: 'utf-8',
   };
-  const execute = (args: string[]): Promise<NativeResult> => runNative(['--subprojects', projects, ...args], temporary, env);
+  const execute = (args: string[]): Promise<NativeResult> => runNative(['--third-party', thirdParty, ...args], temporary, env);
   const installed = await execute(['install', 'pyprobe', '--version', '1.0.0']);
   assert.equal(installed.status, 0, JSON.stringify(installed));
   assert.equal(JSON.parse(installed.stdout).method, 'python venv');

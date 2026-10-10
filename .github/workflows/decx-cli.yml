@@ -1,7 +1,7 @@
 name: decx CLI
 
 # The manager is plain Node with no runtime dependencies: it discovers the tools
-# in `subprojects/*/decx-*.json`, installs them under `$DECX_HOME` and runs their
+# in `third_party/*/decx-*.json`, installs them under `$DECX_HOME` and runs their
 # launchers untouched. Its tests are offline by construction -- fixture archives
 # served locally, a local wheel installed into a private venv, fake toolchains
 # for other branches, and temporary `--home` roots -- so the matrix can be
@@ -15,9 +15,9 @@ on:
   push:
     branches: ['**']
     tags: ['decx-v*']
-    paths: ['decx/**', 'subprojects/**', 'skills/**', '.pi/extensions/decx/**', 'skills/check-skills.py', '.github/workflows/decx-cli.yml']
+    paths: ['decx/**', 'third_party/**', 'skills/**', '.pi/extensions/decx/**', 'skills/check-skills.py', '.github/workflows/decx-cli.yml']
   pull_request:
-    paths: ['decx/**', 'subprojects/**', 'skills/**', '.pi/extensions/decx/**', 'skills/check-skills.py', '.github/workflows/decx-cli.yml']
+    paths: ['decx/**', 'third_party/**', 'skills/**', '.pi/extensions/decx/**', 'skills/check-skills.py', '.github/workflows/decx-cli.yml']
   workflow_dispatch:
     inputs:
       tag:

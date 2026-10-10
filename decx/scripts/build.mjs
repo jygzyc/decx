@@ -14,7 +14,7 @@ const repoRoot = path.resolve(packageRoot, '..');
 const distRoot = path.join(packageRoot, 'dist');
 const packageInfo = JSON.parse(fs.readFileSync(path.join(packageRoot, 'package.json'), 'utf8'));
 
-const manifests = loadManifests(path.join(repoRoot, 'subprojects'));
+const manifests = loadManifests(path.join(repoRoot, 'third_party'));
 if (manifests.issues.length || manifests.tools.length === 0) {
   throw new Error(`cannot bundle tool manifests: ${JSON.stringify(manifests)}`);
 }
@@ -59,8 +59,8 @@ try {
   fs.writeFileSync(path.join(override, 'decx-fixture', 'decx-fixture.json'), JSON.stringify({
     manifest: 2, id: 'fixture', summary: 'Offline fixture', install: ['github-release'], launch: { type: 'bin', commands: ['fixture'] }, release: { asset: 'fixture.zip' },
   }));
-  assert.equal(JSON.parse(run(['--subprojects', override, '-m', 'fixture'], 1)).error.code, 'NOT_INSTALLED');
-  assert.equal(JSON.parse(run(['--subprojects', override, '-m', 'afe'], 2)).error.code, 'UNKNOWN_TOOL');
+  assert.equal(JSON.parse(run(['--third-party', override, '-m', 'fixture'], 1)).error.code, 'NOT_INSTALLED');
+  assert.equal(JSON.parse(run(['--third-party', override, '-m', 'afe'], 2)).error.code, 'UNKNOWN_TOOL');
   console.log(`smoke ok: decx ${version.version} (isolated single file)`);
 } finally {
   fs.rmSync(cwd, { recursive: true, force: true });

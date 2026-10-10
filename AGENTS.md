@@ -8,7 +8,7 @@ It is not a decompiler, unified analysis CLI, plugin runtime, or analysis server
 
 - APK analysis uses upstream [DroidASC](https://github.com/MG1937/ASC) directly.
 - Native binary analysis uses upstream [Kuna](https://github.com/Noelo-Lab/kuna) directly.
-- `subprojects/` holds every subproject: its own `README.md`, the toolkit manifest
+- `third_party/` holds every subproject: its own `README.md`, the toolkit manifest
   `decx-<id>.json` the manager reads, and for a vendored tool its pinned `source/`
   checkout. The portable execution skills live in root `skills/`; the tool-routing
   skill is `skills/decx-tool/`, each tool's contract in `references/<id>.md`; Kuna's reference
@@ -17,12 +17,12 @@ It is not a decompiler, unified analysis CLI, plugin runtime, or analysis server
   `decx-afe/` sits beside the vendored upstream checkouts `decx-droidasc/source` and
   `decx-kuna/source`, which are git submodules pinned by `.gitmodules` and the
   superproject gitlinks.
-- Android framework collection and preprocessing lives in `subprojects/decx-afe/`.
+- Android framework collection and preprocessing lives in `third_party/decx-afe/`.
 - The portable execution skills live in root `skills/`; read `skills/AGENTS.md`
   before editing it. The wiki-maintenance process is built into the extension,
   not a separate skill.
 - `decx/` is the toolkit installer and manager: a TypeScript CLI that discovers the tools in
-  `subprojects/decx-<id>/decx-<id>.json`, installs, locates and runs them, and reports what is
+  `third_party/decx-<id>/decx-<id>.json`, installs, locates and runs them, and reports what is
   installed and what this host supports. Development runs TypeScript directly on
   Node 24.21+; releases ship bundled JavaScript and scriptc-native executables with
   embedded tool manifests. Native executables require no external Node. It prints
@@ -69,7 +69,7 @@ The manager in `decx/` manages tools, not runtimes: it probes for Node, Python, 
 Git and reports the exact shortfall instead of installing them (agents run on Node
 already; `mise`/`nvm`/`rustup` remain the user's choice). It also does not translate
 analysis commands — `decx -m <tool>` reaches a tool's own help and output unchanged. Keep it
-manifest-driven: a new tool is a new `subprojects/decx-<id>/decx-<id>.json` (with its own
+manifest-driven: a new tool is a new `third_party/decx-<id>/decx-<id>.json` (with its own
 `README.md` and a reference in `decx-tool`), never new
 special-cased code. Installs keep every executable in `$DECX_HOME/bin` and each payload
 in `$DECX_HOME/share/<id>/PROVENANCE`, and link the executables into `~/.local/bin`
@@ -100,7 +100,7 @@ ledger lives under the pi agent directory, outside the three knowledge layers.
 
 ## Validation
 
-- AFE: `cd subprojects/decx-afe && cargo build --release && cargo test` (stable Rust);
+- AFE: `cd third_party/decx-afe && cargo build --release && cargo test` (stable Rust);
   `cargo fmt --check` and `cargo clippy --all-targets -- -D warnings` must stay clean.
 - Manager: `cd decx && npm ci && npm run typecheck && npm test && npm run build`; `node src/cli.ts version` must keep printing one JSON
   envelope. Run `npm run setup:scriptc` before `npm run build:scriptc` or the independent TS-tool test;
@@ -148,7 +148,7 @@ skills), and smokes the bundles and launchers on all four architectures before p
 release build and
 a `--help` smoke on Linux, macOS and Windows;
 Windows arm64 cross check; tag `tools-v*`, checked against
-`subprojects/decx-afe/Cargo.toml`, builds the six `afe-<version>-<platform>` archives plus
+`third_party/decx-afe/Cargo.toml`, builds the six `afe-<version>-<platform>` archives plus
 `afe-SHA256SUMS.txt`), `decx-droidasc.yml` (the manager creates a private venv,
 installs the published PyPI package and functionally tests real APK decompilation,
 manifest decoding and DEX references across platforms;

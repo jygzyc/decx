@@ -10,8 +10,8 @@ test('CLI stages verified resources before verification and launches executable 
   const root = tempDir('decx-resources-');
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   const home = path.join(root, '安装目录 with spaces');
-  const projects = path.join(root, 'subprojects');
-  const project = path.join(projects, 'decx-resources');
+  const thirdParty = path.join(root, 'third_party');
+  const project = path.join(thirdParty, 'decx-resources');
   const name = process.platform === 'win32' ? 'resources.exe' : 'resources';
   const envKey = process.platform === 'win32' ? 'PATH' : 'Path';
   fs.mkdirSync(project, { recursive: true });
@@ -37,7 +37,7 @@ test('CLI stages verified resources before verification and launches executable 
   const server = await startFixtureServer(routes);
   t.after(() => server.close());
   const env = { HOME: root, USERPROFILE: root, GITHUB_TOKEN: 'test-only-token', DECX_GITHUB_API_BASE: server.url, DECX_GITHUB_DOWNLOAD_BASE: server.url };
-  const common = ['--home', home, '--subprojects', projects];
+  const common = ['--home', home, '--third-party', thirdParty];
   const installed = await runCliAsync([...common, 'install', 'resources', '--version', 'v1.0.0', '--no-links'], env);
   assert.equal(installed.status, 0, installed.stderr + installed.stdout);
   assert.equal(server.requested.filter(url => url === releasePath).length, 1);
@@ -81,10 +81,10 @@ test('CLI discovery, usage, manifest errors and explicit home operate as user co
   const pretty = runCli(['--pretty', 'version'], env);
   assert.equal(pretty.status, 0);
   assert.match(pretty.stdout, /\n  /);
-  const projects = path.join(root, 'subprojects');
-  fs.mkdirSync(path.join(projects, 'decx-broken'), { recursive: true });
-  fs.writeFileSync(path.join(projects, 'decx-broken/decx-broken.json'), '{broken');
-  const broken = runCli(['--subprojects', projects, 'install', 'broken'], env);
+  const thirdParty = path.join(root, 'third_party');
+  fs.mkdirSync(path.join(thirdParty, 'decx-broken'), { recursive: true });
+  fs.writeFileSync(path.join(thirdParty, 'decx-broken/decx-broken.json'), '{broken');
+  const broken = runCli(['--third-party', thirdParty, 'install', 'broken'], env);
   assert.notEqual(broken.status, 0);
   assert.equal(fs.existsSync(path.join(env.DECX_HOME, 'bin')), false);
   const missing = runCli(['update', 'kuna'], env);
@@ -98,9 +98,9 @@ for (const format of ['zip', 'tar.gz']) {
     t.after(() => fs.rmSync(root, { recursive: true, force: true }));
     const home = path.join(root, '安装目录 with spaces');
     const links = path.join(root, 'links');
-    const projects = path.join(root, 'subprojects');
+    const thirdParty = path.join(root, 'third_party');
     const name = process.platform === 'win32' ? 'probe.exe' : 'probe';
-    const project = path.join(projects, 'decx-probe');
+    const project = path.join(thirdParty, 'decx-probe');
     fs.mkdirSync(project, { recursive: true });
     fs.writeFileSync(path.join(project, 'decx-probe.json'), JSON.stringify({
       manifest: 2, id: 'probe', summary: 'real native payload', install: ['github-release'],
@@ -129,7 +129,7 @@ for (const format of ['zip', 'tar.gz']) {
     });
     t.after(() => server.close());
     const env = { HOME: root, USERPROFILE: root, GITHUB_TOKEN: 'test-only-token', DECX_GITHUB_API_BASE: server.url, DECX_GITHUB_DOWNLOAD_BASE: server.url };
-    const execute = (args: string[]) => runCliAsync(['--home', home, '--subprojects', projects, ...args], env);
+    const execute = (args: string[]) => runCliAsync(['--home', home, '--third-party', thirdParty, ...args], env);
     const installed = await execute(['install', 'probe', '--version', version, '--links', links]);
     assert.equal(installed.status, 0, installed.stdout + installed.stderr);
     const provenance = path.join(home, 'share/probe/PROVENANCE');

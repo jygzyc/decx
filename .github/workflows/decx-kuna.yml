@@ -6,9 +6,9 @@ name: Kuna
 on:
   push:
     branches: ['**']
-    paths: ['subprojects/decx-kuna/**', 'decx/**', 'skills/decx-tool/**', '.github/workflows/decx-kuna.yml']
+    paths: ['third_party/decx-kuna/**', 'decx/**', 'skills/decx-tool/**', '.github/workflows/decx-kuna.yml']
   pull_request:
-    paths: ['subprojects/decx-kuna/**', 'decx/**', 'skills/decx-tool/**', '.github/workflows/decx-kuna.yml']
+    paths: ['third_party/decx-kuna/**', 'decx/**', 'skills/decx-tool/**', '.github/workflows/decx-kuna.yml']
   schedule:
     - cron: '0 */12 * * *'
     - cron: '17 4 * * 1'
@@ -37,7 +37,7 @@ jobs:
           submodules: recursive
       - name: The pin is initialised and clean
         run: |
-          status=$(git submodule status subprojects/decx-kuna/source)
+          status=$(git submodule status third_party/decx-kuna/source)
           echo "$status"
           case "$status" in
             ' '*) ;;
@@ -45,18 +45,18 @@ jobs:
           esac
       - name: The checkout still looks like Kuna
         run: |
-          test -f subprojects/decx-kuna/source/decompiler/Cargo.toml
-          test -d subprojects/decx-kuna/source/specs/Ghidra
-          cat subprojects/decx-kuna/source/VERSION
+          test -f third_party/decx-kuna/source/decompiler/Cargo.toml
+          test -d third_party/decx-kuna/source/specs/Ghidra
+          cat third_party/decx-kuna/source/VERSION
       - name: The Kuna reference is upstream's copy
         run: |
           awk 'NR==1 && $0=="---" {skip=1; next} skip && $0=="---" {skip=0; next} !skip' \
-            subprojects/decx-kuna/source/skills/kuna/SKILL.md > "$RUNNER_TEMP/kuna-ref.md"
+            third_party/decx-kuna/source/skills/kuna/SKILL.md > "$RUNNER_TEMP/kuna-ref.md"
           diff -u "$RUNNER_TEMP/kuna-ref.md" skills/decx-tool/references/kuna.md
       - name: The manifest covers every supported platform
         run: |
           node -e '
-            const manifest = require("./subprojects/decx-kuna/decx-kuna.json");
+            const manifest = require("./third_party/decx-kuna/decx-kuna.json");
             const keys = ["linux-amd64", "linux-arm64", "darwin-amd64", "darwin-arm64", "win-amd64"];
             const { repository, tagPrefix, assets, checksums } = manifest.release;
             if (repository !== "Noelo-Lab/kuna" || tagPrefix !== "v") {
@@ -156,9 +156,9 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -eu
-          git -C subprojects/decx-kuna/source fetch --tags --force origin
-          pinned="$(bash .github/scripts/pinned-gitlink.sh subprojects/decx-kuna/source)"
-          pinned_tag="$(git -C subprojects/decx-kuna/source describe --tags --exact-match "$pinned")"
+          git -C third_party/decx-kuna/source fetch --tags --force origin
+          pinned="$(bash .github/scripts/pinned-gitlink.sh third_party/decx-kuna/source)"
+          pinned_tag="$(git -C third_party/decx-kuna/source describe --tags --exact-match "$pinned")"
           latest_tag="$(gh api repos/Noelo-Lab/kuna/releases/latest --jq .tag_name)"
           echo "pinned: $pinned_tag ($pinned)"
           echo "upstream latest: $latest_tag"
@@ -191,12 +191,12 @@ jobs:
           UPSTREAM_TAG: ${{ steps.upstream.outputs.tag }}
         run: |
           set -eu
-          git -C subprojects/decx-kuna/source checkout --detach "$UPSTREAM_TAG"
+          git -C third_party/decx-kuna/source checkout --detach "$UPSTREAM_TAG"
           awk 'NR==1 && $0=="---" {skip=1; next} skip && $0=="---" {skip=0; next} !skip' \
-            subprojects/decx-kuna/source/skills/kuna/SKILL.md > skills/decx-tool/references/kuna.md
+            third_party/decx-kuna/source/skills/kuna/SKILL.md > skills/decx-tool/references/kuna.md
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add subprojects/decx-kuna/source skills/decx-tool/references/kuna.md
+          git add third_party/decx-kuna/source skills/decx-tool/references/kuna.md
           git commit -m "pin kuna to $UPSTREAM_TAG"
           branch="${{ github.event.repository.default_branch }}"
           git push origin "HEAD:refs/heads/$branch"

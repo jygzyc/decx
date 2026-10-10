@@ -27,7 +27,7 @@ import { installedCommand } from './launch.ts';
 import { removeTool } from './remove.ts';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
-const SUBPROJECTS_DIR = path.resolve(HERE, '..', '..', 'subprojects');
+const THIRD_PARTY_DIR = path.resolve(HERE, '..', '..', 'third_party');
 
 const HELP = `decx -- DECX toolkit installer and manager
 
@@ -49,7 +49,7 @@ run:
 
 options:
   --home/--prefix <dir>  install root (default $DECX_HOME, else ~/.decx)
-  --subprojects <dir>  tool subproject directory (overrides embedded/repository tools)
+  --third-party <dir>  tool project directory (overrides embedded/repository tools)
   --pretty             indent the JSON output
   -h, --help           print help (decx <command> --help for one command)
   -V, --version        print the CLI version
@@ -77,7 +77,7 @@ committed until every check, including the tool's own verify command, has
 succeeded.
 
 options: --version <tag>, --force, --links <dir>, --no-links, --home <dir>,
-         --subprojects <dir>, --pretty
+         --third-party <dir>, --pretty
 `,
 };
 
@@ -175,8 +175,8 @@ export async function run(argv: readonly string[], env: NodeJS.ProcessEnv = proc
 
   const home = resolveHome(args.home, env);
   const manifests = (): LoadResult => {
-    if (args.subprojects !== undefined) return loadManifests(path.resolve(args.subprojects));
-    return embeddedManifests ?? loadManifests(SUBPROJECTS_DIR);
+    if (args.thirdParty !== undefined) return loadManifests(path.resolve(args.thirdParty));
+    return embeddedManifests ?? loadManifests(THIRD_PARTY_DIR);
   };
 
   if (moduleId !== undefined) {

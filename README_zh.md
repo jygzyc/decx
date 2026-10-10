@@ -8,7 +8,7 @@ DECX 不实现反编译器，也不再提供统一命令包装层。直接使用
 | --- | --- |
 | APK / DEX 分析 | [DroidASC](https://github.com/MG1937/ASC) |
 | 原生二进制分析 | [Kuna](https://github.com/Noelo-Lab/kuna) |
-| Android Framework 收集和预处理 | [AFE](subprojects/decx-afe/README.md) |
+| Android Framework 收集和预处理 | [AFE](third_party/decx-afe/README.md) |
 | 分析方法、漏洞证据、报告和 PoC | [执行 Skill](skills/decx-tool/) |
 
 ## 安装与管理工具
@@ -18,12 +18,12 @@ DECX 不实现反编译器，也不再提供统一命令包装层。直接使用
 ```bash
 decx install kuna        # 下载该平台的上游 release 与编译好的 SLEIGH specs
 decx install droidasc    # 创建私有 venv，直接从 PyPI pip install droidasc
-decx install afe         # 优先下载 tools release，否则用 cargo 构建 subprojects/decx-afe
+decx install afe         # 下载匹配平台的 tools release；缺少资产时报错，不自动回退到 cargo 构建
 decx -m kuna --help      # 直接运行工具本身，不翻译参数
 decx help install        # 查看管理器或单个命令的用法
 ```
 
-工具以数据形式声明在 `subprojects/decx-<id>/decx-<id>.json` 中，不写代码。可执行文件与载荷位于 `$DECX_HOME`（`bin/`、`share/<id>/`，其中 `PROVENANCE` 记录来源与校验值）；管理器只安装工具、不安装语言运行时，各工具保留自己的参数与输出。完整布局、`--links` 与安装规则见 [`decx/README.md`](decx/README.md)。
+工具以数据形式声明在 `third_party/decx-<id>/decx-<id>.json` 中，不写代码。可执行文件与载荷位于 `$DECX_HOME`（`bin/`、`share/<id>/`，其中 `PROVENANCE` 记录来源与校验值）；管理器只安装工具、不安装语言运行时，各工具保留自己的参数与输出。完整布局、`--links` 与安装规则见 [`decx/README.md`](decx/README.md)。
 
 ### 平台支持
 
@@ -45,9 +45,9 @@ decx help install        # 查看管理器或单个命令的用法
 
 - **DroidASC** — Python >=3.10 与 `venv`；DECX 在私有虚拟环境内运行 pip 安装 PyPI 发布包及其依赖。
 - **Kuna** — 安装上游 release（macOS/Linux arm64+x86_64、Windows x86_64），SLEIGH specs 为单独资产；生成的启动器导出 `KUNA_SPECS`。上游没有 Windows arm64 产物，`decx install kuna` 会直接报出来，而不是去编译参考用的源码。
-- **AFE** — 安装匹配平台的预编译 GitHub Release 产物（由 `subprojects/decx-afe` 构建）；目前缺少对应资产时会报错，尚无 cargo 回退安装。ext4/EROFS/ZIP 由原生解析器处理，无需外部提取工具。
+- **AFE** — 安装匹配平台的预编译 GitHub Release 产物（由 `third_party/decx-afe` 构建）；目前缺少对应资产时会报错，尚无 cargo 回退安装。ext4/EROFS/ZIP 由原生解析器处理，无需外部提取工具。
 
-AFE 只产出文件：设备收集需要 ADB，不支持的文件系统特性会以明确错误失败，产物该用哪个分析器由调用方决定。详见 [AFE README](subprojects/decx-afe/README.md)。
+AFE 只产出文件：设备收集需要 ADB，不支持的文件系统特性会以明确错误失败，产物该用哪个分析器由调用方决定。详见 [AFE README](third_party/decx-afe/README.md)。
 
 ## Skills
 
@@ -77,7 +77,7 @@ pi 扩展独立安装，不复制到 `.decxwiki/`。
 ## 开发验证
 
 ```bash
-cd subprojects/decx-afe && cargo build --release && cargo test
+cd third_party/decx-afe && cargo build --release && cargo test
 cd decx && npm ci && npm test
 npm ci --prefix .pi/extensions/decx
 python3 skills/check-skills.py && node --test .pi/extensions/decx/*.test.ts
@@ -90,7 +90,7 @@ project=$(mktemp -d); node .pi/extensions/decx/cli.ts init --root "$project" && 
 
 DECX 不提供分析 CLI、会话管理、分析器注册表、分析插件运行时、JADX 集成或分析服务端，也不把一个分析器的命令树翻译成另一个；`decx/` 只做安装、定位与报告，并把参数原样传给工具。DroidASC 与 Kuna 是按原样使用的上游工具。只有在上游工具确有无法覆盖的能力缺口时才增加适配。
 
-`subprojects/` 存放所有子项目，每个子项目都是自包含的：自己的 `README.md`、它的工具契约（在 `skills/decx-tool/references/` 中）、以及管理器读取的工具清单 `decx-<id>.json`。`decx-afe/` 是 DECX 自己维护的 Rust 工具；`decx-droidasc/` 与 `decx-kuna/` 把上游源码作为固定版本的 git submodule 放在 `source/`（见 `.gitmodules`）。
+`third_party/` 存放所有子项目，每个子项目都是自包含的：自己的 `README.md`、它的工具契约（在 `skills/decx-tool/references/` 中）、以及管理器读取的工具清单 `decx-<id>.json`。`decx-afe/` 是 DECX 自己维护的 Rust 工具；`decx-droidasc/` 与 `decx-kuna/` 把上游源码作为固定版本的 git submodule 放在 `source/`（见 `.gitmodules`）。
 
 ## 许可证
 

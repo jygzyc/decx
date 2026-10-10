@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://raw.githubusercontent.com/jygzyc/decx/main/subprojects/decx-tool.schema.json",
+  "$id": "https://raw.githubusercontent.com/jygzyc/decx/main/third_party/decx-tool.schema.json",
   "title": "DECX tool manifest",
   "type": "object",
   "additionalProperties": false,

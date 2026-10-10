@@ -20,8 +20,8 @@ test('scriptc builds an independent TS tool; decx installs its verified native r
     fs.rmSync(home, { recursive: true, force: true });
     fs.rmSync(repoRoot, { recursive: true, force: true });
   });
-  const subprojects = path.join(repoRoot, 'subprojects');
-  const project = path.join(subprojects, 'decx-scriptcprobe');
+  const thirdParty = path.join(repoRoot, 'third_party');
+  const project = path.join(thirdParty, 'decx-scriptcprobe');
   fs.mkdirSync(project, { recursive: true });
   fs.copyFileSync(manifestFile, path.join(project, 'decx-scriptcprobe.json'));
 
@@ -47,7 +47,7 @@ test('scriptc builds an independent TS tool; decx installs its verified native r
     [`${releasePath}SHA256SUMS`]: `${sha256(archive)}  ${asset}\n`,
   });
   try {
-    const installed = await runCliAsync(['--home', home, '--subprojects', subprojects, 'install', 'scriptcprobe', '--version', '1.0.0', '--no-links'], {
+    const installed = await runCliAsync(['--home', home, '--third-party', thirdParty, 'install', 'scriptcprobe', '--version', '1.0.0', '--no-links'], {
       HOME: repoRoot, USERPROFILE: repoRoot, DECX_GITHUB_API_BASE: server.url, DECX_GITHUB_DOWNLOAD_BASE: server.url,
     });
     assert.equal(installed.status, 0, installed.stderr + installed.stdout);
@@ -56,7 +56,7 @@ test('scriptc builds an independent TS tool; decx installs its verified native r
     assert.equal(result.provenance.reported_version, 'scriptcprobe 1.0.0');
     assert.equal(result.checksum, `verified (${sha256(archive)})`);
     const args = ['two words', '中文', '--home', 'a"b'];
-    const launched = runCli(['--home', home, '--subprojects', subprojects, '-m', 'scriptcprobe', ...args], {
+    const launched = runCli(['--home', home, '--third-party', thirdParty, '-m', 'scriptcprobe', ...args], {
       HOME: repoRoot, USERPROFILE: repoRoot,
     });
     assert.equal(launched.status, 0, launched.stderr);

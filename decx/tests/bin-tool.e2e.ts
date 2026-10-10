@@ -19,8 +19,8 @@ test('binary fixture downloads a verified native executable and runs through dec
     fs.rmSync(home, { recursive: true, force: true });
     fs.rmSync(repoRoot, { recursive: true, force: true });
   });
-  const subprojects = path.join(repoRoot, 'subprojects');
-  const subproject = path.join(subprojects, 'decx-binprobe');
+  const thirdParty = path.join(repoRoot, 'third_party');
+  const subproject = path.join(thirdParty, 'decx-binprobe');
   fs.mkdirSync(subproject, { recursive: true });
   fs.copyFileSync(manifestFile, path.join(subproject, 'decx-binprobe.json'));
 
@@ -37,7 +37,7 @@ test('binary fixture downloads a verified native executable and runs through dec
   });
   try {
     const linkDir = path.join(home, 'links');
-    const installed = await runCliAsync(['--home', home, '--subprojects', subprojects, 'install', 'binprobe', '--version', version, '--links', linkDir], {
+    const installed = await runCliAsync(['--home', home, '--third-party', thirdParty, 'install', 'binprobe', '--version', version, '--links', linkDir], {
       HOME: repoRoot, USERPROFILE: repoRoot, DECX_GITHUB_API_BASE: server.url, DECX_GITHUB_DOWNLOAD_BASE: server.url,
     });
     assert.equal(installed.status, 0, installed.stderr + installed.stdout);
@@ -56,7 +56,7 @@ test('binary fixture downloads a verified native executable and runs through dec
     }
 
     const args = ['two words', '中文', '--home', 'a"b'];
-    const invoked = runCli(['--home', home, '--subprojects', subprojects, '-m', 'binprobe', '-e', argvProgram, '--', ...args], {
+    const invoked = runCli(['--home', home, '--third-party', thirdParty, '-m', 'binprobe', '-e', argvProgram, '--', ...args], {
       HOME: repoRoot,
       USERPROFILE: repoRoot,
     });

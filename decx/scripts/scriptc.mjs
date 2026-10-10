@@ -92,7 +92,7 @@ function buildManager() {
   const packageInfo = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'));
   const compilerVersion = JSON.parse(fs.readFileSync(path.join(root, 'scriptc.json'), 'utf8')).version;
   assert.equal(run(compiler, ['--version']).trim(), compilerVersion, 'run setup:scriptc to install the pinned compiler');
-  const manifests = loadManifests(path.resolve(root, '..', 'subprojects'));
+  const manifests = loadManifests(path.resolve(root, '..', 'third_party'));
   assert.equal(manifests.issues.length, 0, 'native metadata must contain valid manifests');
   assert.ok(manifests.tools.length > 0, 'native metadata must contain tools');
   // Stage under the package for @types/node resolution. Shared application modules are unchanged.

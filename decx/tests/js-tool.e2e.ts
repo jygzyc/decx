@@ -11,8 +11,8 @@ for (const format of ['tar.gz', 'zip']) {
     const root = tempDir('decx-js-functional-');
     t.after(() => fs.rmSync(root, { recursive: true, force: true }));
     const home = path.join(root, '安装目录');
-    const projects = path.join(root, 'subprojects');
-    const project = path.join(projects, 'decx-jsprobe');
+    const thirdParty = path.join(root, 'third_party');
+    const project = path.join(thirdParty, 'decx-jsprobe');
     fs.mkdirSync(project, { recursive: true });
     const manifest = JSON.parse(fs.readFileSync(path.join(fixture, 'decx-jsprobe.json'), 'utf8'));
     manifest.release.asset = `jsprobe-{version}.${format}`;
@@ -35,11 +35,11 @@ for (const format of ['tar.gz', 'zip']) {
     const server = await startFixtureServer(routes);
     t.after(() => server.close());
     const env = { HOME: root, USERPROFILE: root, DECX_GITHUB_DOWNLOAD_BASE: server.url };
-    const execute = (args: string[]) => runCliAsync(['--home', home, '--subprojects', projects, ...args], env);
+    const execute = (args: string[]) => runCliAsync(['--home', home, '--third-party', thirdParty, ...args], env);
     const installed = await execute(['install', 'jsprobe', '--version', '1.0.0', '--no-links']);
     assert.equal(installed.status, 0, installed.stdout + installed.stderr);
     const args = ['two words', '中文', '--home', 'a"b', '&', '%PATH%', '!x!'];
-    const invoked = runCli(['--home', home, '--subprojects', projects, '-m', 'jsprobe', ...args], env);
+    const invoked = runCli(['--home', home, '--third-party', thirdParty, '-m', 'jsprobe', ...args], env);
     assert.equal(invoked.status, 0, invoked.stderr);
     assert.deepEqual(JSON.parse(invoked.stdout), args);
     const provenance = path.join(home, 'share/jsprobe/PROVENANCE');
@@ -48,7 +48,7 @@ for (const format of ['tar.gz', 'zip']) {
     assert.notEqual(replaced.status, 0);
     assert.match(replaced.stdout, /ASSET_LAYOUT/);
     assert.deepEqual(fs.readFileSync(provenance), before);
-    const stillWorks = runCli(['--home', home, '--subprojects', projects, '-m', 'jsprobe', ...args], env);
+    const stillWorks = runCli(['--home', home, '--third-party', thirdParty, '-m', 'jsprobe', ...args], env);
     assert.equal(stillWorks.status, 0, stillWorks.stderr);
     assert.deepEqual(JSON.parse(stillWorks.stdout), args);
     const removed = await execute(['remove', 'jsprobe']);

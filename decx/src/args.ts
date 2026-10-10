@@ -8,7 +8,7 @@ export interface CliArgs {
   module?: string;
   toolArgs: string[];
   home?: string;
-  subprojects?: string;
+  thirdParty?: string;
   links?: string;
   releaseTag?: string;
   force: boolean;
@@ -19,8 +19,8 @@ export interface CliArgs {
   error?: string;
 }
 
-const GLOBAL_VALUE_FLAGS: Record<string, 'home' | 'subprojects' | 'links'> = {
-  '--home': 'home', '--prefix': 'home', '--subprojects': 'subprojects', '--links': 'links',
+const GLOBAL_VALUE_FLAGS: Record<string, 'home' | 'thirdParty' | 'links'> = {
+  '--home': 'home', '--prefix': 'home', '--third-party': 'thirdParty', '--links': 'links',
 };
 const RELEASE_VALUE_FLAGS: Record<string, 'releaseTag'> = {
   '--version': 'releaseTag', '--release-tag': 'releaseTag',
@@ -94,7 +94,7 @@ export function parseArgs(argv: readonly string[]): CliArgs {
     index += 1;
     switch (globalKey) {
       case 'home': args.home = value; break;
-      case 'subprojects': args.subprojects = value; break;
+      case 'thirdParty': args.thirdParty = value; break;
       case 'links': args.links = value; break;
       default:
         if (releaseKey === 'releaseTag') args.releaseTag = value;
