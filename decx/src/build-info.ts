@@ -1,7 +1,7 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import type { LoadResult } from './manifest.ts';
+import type { LoadResult } from './catalog/manifest.ts';
 
 /** esbuild defines these; native builds generate this metadata module instead. */
 declare const __DECX_VERSION__: string;

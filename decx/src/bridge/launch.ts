@@ -1,7 +1,7 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import { toolPrefix } from './config.ts';
-import type { CommandSpec } from './runner.ts';
+import { toolPrefix } from '../core/config.ts';
+import type { CommandSpec } from './process.ts';
 
 /** Installed executable and its fixed arguments; never a shell command line. */
 export interface LaunchEntry {

@@ -1,11 +1,11 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import { binRoot, resolveLinkDir, runtimePath, toolPrefix } from './config.ts';
-import { InstallError } from './install.ts';
-import { provenanceBinaries, readProvenance } from './inspect.ts';
-import type { ToolManifest } from './manifest.ts';
+import { binRoot, resolveLinkDir, runtimePath, toolPrefix } from '../core/config.ts';
+import { InstallError } from '../core/errors.ts';
+import { provenanceBinaries, readProvenance } from './state.ts';
+import type { ToolManifest } from '../catalog/manifest.ts';
 import { linkFileName, linkName, removeManagedLink } from './links.ts';
-import { isWindows } from './platform.ts';
+import { isWindows } from '../core/platform.ts';
 
 /** Delete only files recorded by this install; never follow links or remove foreign PATH entries. */
 export function removeTool(manifest: ToolManifest, home: string, links?: string, env: NodeJS.ProcessEnv = process.env): { id: string; removed: string[] } {

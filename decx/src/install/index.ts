@@ -5,14 +5,18 @@
  * Runtimes are probed, never installed.
  */
 
-import { defaultRunner, type CommandResult } from './runner.ts';
-import { launcherText, shellQuote, type LaunchEntry } from './launch.ts';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
+import { runCommand, type BridgeContext } from '../bridge/process.ts';
+import { launcherText, shellQuote, type LaunchEntry } from '../bridge/launch.ts';
+import { javascriptEntry, requireNode, stageJavascriptRelease } from '../bridge/javascript.ts';
+import { stageVenv } from '../bridge/python.ts';
+import { InstallError } from '../core/errors.ts';
+import type { InstallContext, InstallOptions, InstallResult, StagedOutcome } from './types.ts';
 import { extractArchive } from './archive.ts';
-import { lstatIfPresent } from './fs.ts';
-import { binRoot, resolveLinkDir, runtimePath, toolPrefix } from './config.ts';
+import { applyExecutableMode, findFile, listDirEntries, lstatIfPresent, walkFiles } from '../core/fs.ts';
+import { binRoot, resolveLinkDir, runtimePath, toolPrefix } from '../core/config.ts';
 import { createLinks, removeManagedLink, type LinkOutcome } from './links.ts';
 import {
   DEFAULT_API_BASE,
@@ -25,93 +29,14 @@ import {
   releaseAssetDigests,
   releaseDownloadUrl,
   resolveRelease,
-} from './gh.ts';
-import { isSafeRelativePath, type ReleaseSpec, type ToolManifest } from './manifest.ts';
-import { provenanceBinaries, readProvenance } from './inspect.ts';
-import { currentPlatformKey, isWindows, type PlatformKey } from './platform.ts';
+} from '../download/github.ts';
+import { isSafeRelativePath, verifyArgs, type ReleaseSpec, type ToolManifest } from '../catalog/manifest.ts';
+import { isoTimestamp, provenanceBinaries, readProvenance } from './state.ts';
+import { currentPlatformKey, isWindows, type PlatformKey } from '../core/platform.ts';
 
-export type InstallMethod = 'release download' | 'python venv';
-
-export interface InstallContext {
-  /** DECX_HOME root; the tool prefix is `<home>/share/<id>`. */
-  home: string;
-  env?: NodeJS.ProcessEnv;
-  /** Overrides the host platform key (tests use it to pin an asset). */
-  platform?: PlatformKey | null;
-  apiBase?: string;
-  downloadBase?: string;
-}
-
-export interface InstallOptions {
-  /** Explicit release tag or version; `1.544` and `kuna-v1.544` are normalised. */
-  version?: string;
-  /** Link directory for the PATH entries; `--links`/`$DECX_LINKS_DIR`, else ~/.local/bin. */
-  links?: string;
-  /** Skip creating PATH links entirely. */
-  noLinks?: boolean;
-  /** Replace files in the store or link directory that decx did not create. */
-  force?: boolean;
-}
-
-export interface InstallResult {
-  id: string;
-  method: InstallMethod;
-  prefix: string;
-  binDir: string;
-  launcher: string;
-  binaries: string[];
-  version?: string;
-  releaseTag?: string;
-  releaseSource?: string;
-  asset?: string;
-  specsAsset?: string;
-  specsInstalled?: number;
-  checksum?: string;
-  provenance: Record<string, string>;
-  pathHint: string;
-  /** PATH links created or refreshed by this install. */
-  links?: LinkOutcome[];
-  linkDir?: string;
-}
-
-export class InstallError extends Error {
-  readonly code: string;
-  readonly hint: string | undefined;
-  readonly exitCode: number;
-
-  constructor(code: string, message: string, options: { hint?: string; exitCode?: number } = {}) {
-    super(message);
-    this.name = 'InstallError';
-    this.code = code;
-    this.hint = options.hint;
-    this.exitCode = options.exitCode ?? 1;
-  }
-}
-
-interface ResolvedContext {
-  home: string;
-  env: NodeJS.ProcessEnv;
-  platform: PlatformKey | null;
+interface ResolvedContext extends BridgeContext {
   apiBase: string;
   downloadBase: string;
-  log: (line: string) => void;
-}
-
-interface StagedOutcome {
-  entry: LaunchEntry;
-  /** Runs after the payload reaches its permanent path, while backups still exist. */
-  initialize?: () => Promise<void>;
-  provenance: Record<string, string>;
-  binaries: string[];
-  launcherName: string;
-  method: InstallMethod;
-  version?: string;
-  releaseTag?: string;
-  releaseSource?: string;
-  asset?: string;
-  specsAsset?: string;
-  specsInstalled?: number;
-  checksum?: string;
 }
 
 function resolveContext(context: InstallContext): ResolvedContext {
@@ -123,16 +48,6 @@ function resolveContext(context: InstallContext): ResolvedContext {
     downloadBase: context.downloadBase ?? DEFAULT_DOWNLOAD_BASE,
     log: (line: string) => process.stderr.write(`${line}\n`),
   };
-}
-
-async function runCommand(
-  ctx: ResolvedContext,
-  command: string,
-  args: string[],
-  mode: 'capture' | 'stream' = 'capture',
-  extraEnv?: Record<string, string>,
-): Promise<CommandResult> {
-  return defaultRunner({ command, args, mode, env: { ...ctx.env, ...extraEnv } });
 }
 
 function assertInstallRoot(home: string): string {
@@ -183,14 +98,6 @@ export function releaseAssetName(release: ReleaseSpec, platform: PlatformKey | n
   }
   const template = (platform === null ? undefined : release.assets?.[platform]) ?? release.assets?.any;
   return template === undefined ? null : template.replaceAll('{version}', version);
-}
-
-/** The `verify` command split into arguments, e.g. `--version --json`. */
-export function verifyArgs(manifest: ToolManifest): string[] {
-  return (manifest.verify ?? '')
-    .trim()
-    .split(/\s+/)
-    .filter((part) => part !== '');
 }
 
 /** `key: value` lines with indented continuations for multi-line values. */
@@ -245,51 +152,6 @@ export function launcherStoreName(staged: string): string {
   return /\.exe$/i.test(staged) ? `${staged.slice(0, -4)}.cmd` : staged;
 }
 
-function isoTimestamp(): string {
-  return new Date().toISOString().replace(/\.\d{3}Z$/, 'Z');
-}
-
-function firstLine(result: CommandResult): string {
-  const text = `${result.stdout}\n${result.stderr}`.trim();
-  return text.split(/\r?\n/)[0] ?? '';
-}
-
-function listDirEntries(dir: string): fs.Dirent[] {
-  try {
-    return fs.readdirSync(dir, { withFileTypes: true });
-  } catch {
-    return [];
-  }
-}
-
-function walkFiles(root: string): string[] {
-  const files: string[] = [];
-  const stack = [root];
-  while (stack.length > 0) {
-    const dir = stack.pop() as string;
-    for (const entry of listDirEntries(dir)) {
-      const full = path.join(dir, entry.name);
-      if (entry.isDirectory()) {
-        stack.push(full);
-      } else if (entry.isFile() || entry.isSymbolicLink()) {
-        files.push(full);
-      }
-    }
-  }
-  return files;
-}
-
-function findFile(root: string, names: readonly string[]): string | null {
-  const files = walkFiles(root);
-  for (const name of names) {
-    const hit = files.find((file) => path.basename(file) === name);
-    if (hit !== undefined) {
-      return hit;
-    }
-  }
-  return null;
-}
-
 function countBySuffix(root: string, suffix: string): number {
   return walkFiles(root).filter((file) => file.endsWith(suffix)).length;
 }
@@ -310,26 +172,10 @@ function findSpecsDir(extract: string): string | null {
   return null;
 }
 
-function applyExecutableMode(file: string): void {
-  if (process.platform === 'win32') {
-    return;
-  }
-  fs.chmodSync(file, 0o755);
-}
-
 function copyExecutable(source: string, dest: string): void {
   fs.mkdirSync(path.dirname(dest), { recursive: true });
   fs.copyFileSync(source, dest);
   applyExecutableMode(dest);
-}
-
-function isExecutable(file: string): boolean {
-  try {
-    fs.accessSync(file, fs.constants.X_OK);
-    return true;
-  } catch {
-    return false;
-  }
 }
 
 function pickLauncher(manifest: ToolManifest, binaries: readonly string[]): string {
@@ -343,111 +189,6 @@ function pickLauncher(manifest: ToolManifest, binaries: readonly string[]): stri
     throw new InstallError('INSTALL_EMPTY', `${manifest.id} produced no binaries`);
   }
   return first;
-}
-
-/** First `1.2` / `1.2.3` in a version banner. */
-function firstVersion(text: string): string | undefined {
-  return /(\d+)\.(\d+)(?:\.\d+)?/.exec(text)?.[0];
-}
-
-function compareVersions(a: string, b: string): number {
-  const left = a.split('.').map((part) => Number.parseInt(part, 10) || 0);
-  const right = b.split('.').map((part) => Number.parseInt(part, 10) || 0);
-  for (let index = 0; index < Math.max(left.length, right.length); index += 1) {
-    const difference = (left[index] ?? 0) - (right[index] ?? 0);
-    if (difference !== 0) {
-      return difference > 0 ? 1 : -1;
-    }
-  }
-  return 0;
-}
-
-/** `>=3.10` and bare `3.10` are the only requirement forms the manifests use. */
-function meetsRequirement(version: string, requirement: string): boolean {
-  const match = /^(>=|>|=)?\s*(\d+(?:\.\d+)*)$/.exec(requirement.trim());
-  if (match === null) {
-    return true;
-  }
-  const comparator = match[1] ?? '>=';
-  const difference = compareVersions(version, match[2] as string);
-  if (comparator === '>') {
-    return difference > 0;
-  }
-  return comparator === '=' ? difference === 0 : difference >= 0;
-}
-
-interface PythonCandidate {
-  /** Interpreter command name, e.g. `python3.12`. */
-  command: string;
-  /** Leading arguments the command needs, e.g. `-3.12` for the Windows launcher. */
-  args: string[];
-  /** Human-readable form for messages and PROVENANCE, e.g. `python3.12` or `py -3.12`. */
-  label: string;
-}
-
-/** Interpreter names to probe for a venv install, PATH defaults first. */
-function pythonCandidates(ctx: ResolvedContext): PythonCandidate[] {
-  // An explicit `DECX_PYTHON` is used as given: the caller knows the machine.
-  const override = (ctx.env.DECX_PYTHON ?? '').trim();
-  if (override !== '') {
-    return [{ command: override, args: [], label: override }];
-  }
-  const candidates: PythonCandidate[] = [
-    { command: 'python3', args: [], label: 'python3' },
-    { command: 'python', args: [], label: 'python' },
-  ];
-  if (isWindows()) {
-    candidates.push({ command: 'py', args: ['-3'], label: 'py -3' });
-  }
-  // Newest first: the first candidate that satisfies the manifest wins, so a
-  // too-old default is skipped in favour of an explicitly versioned interpreter.
-  for (const minor of [15, 14, 13, 12, 11, 10]) {
-    candidates.push({ command: `python3.${minor}`, args: [], label: `python3.${minor}` });
-    if (isWindows()) {
-      candidates.push({ command: 'py', args: [`-3.${minor}`], label: `py -3.${minor}` });
-    }
-  }
-  return candidates;
-}
-
-/**
- * Finds the interpreter a venv install will use.  `python3`/`python` win when
- * they satisfy the manifest; otherwise the versioned names are probed and the
- * first satisfying one is used, so a manifest that needs `>=3.10` still
- * installs on a machine whose default `python3` is the system 3.9.
- */
-async function findPython(
-  ctx: ResolvedContext,
-  id: string,
-  requirement: string | undefined,
-): Promise<PythonCandidate & { output: string }> {
-  let fallback: (PythonCandidate & { output: string }) | null = null;
-  for (const candidate of pythonCandidates(ctx)) {
-    const probe = await runCommand(ctx, candidate.command, [...candidate.args, '--version']);
-    if (probe.error !== undefined || probe.status !== 0) {
-      continue;
-    }
-    const output = firstLine(probe);
-    if (!output.startsWith('Python 3')) {
-      continue;
-    }
-    const found = { command: candidate.command, args: candidate.args, label: candidate.label, output };
-    fallback ??= found;
-    const version = firstVersion(output);
-    if (requirement === undefined || version === undefined || meetsRequirement(version, requirement)) {
-      return found;
-    }
-  }
-  if (fallback !== null) {
-    throw new InstallError(
-      'PYTHON_TOO_OLD',
-      `${fallback.output} (${fallback.label}) is too old: ${id} requires python ${requirement}. Install a newer Python 3 (macOS: 'brew install python@3.12'; Debian/Ubuntu: 'apt install python3 python3-venv'; Windows: python.org or 'winget install Python.Python.3') and re-run; decx does not install it for you.`,
-    );
-  }
-  throw new InstallError(
-    'PYTHON_NOT_FOUND',
-    "no Python 3 interpreter found in PATH (looked for python3, python and versioned names such as python3.12). Install Python 3 with the venv module (Debian/Ubuntu: 'apt install python3 python3-venv'; macOS: 'brew install python3'; Windows: python.org or 'winget install Python.Python.3') and re-run; decx does not install it for you.",
-  );
 }
 
 async function resolveInstallTag(ctx: ResolvedContext, release: ReleaseSpec, options: InstallOptions): Promise<string> {
@@ -582,41 +323,6 @@ async function downloadRelease(
   return { extract, version, asset, sha256, checksum, extraProvenance, ...(specsAsset !== undefined ? { specsAsset } : {}) };
 }
 
-function stageJavascriptRelease(
-  manifest: ToolManifest,
-  extract: string,
-  stage: string,
-  asset: string,
-  windows: boolean,
-  prefix: string,
-): { binaries: string[]; verifyScript: string } {
-  const binaries: string[] = [];
-  let verifyScript = '';
-  const app = path.join(stage, 'share', manifest.id, 'app');
-  fs.mkdirSync(path.dirname(app), { recursive: true });
-  fs.renameSync(extract, app);
-  fs.mkdirSync(path.join(stage, 'bin'), { recursive: true });
-  for (const name of manifest.launch.commands) {
-    const found = findFile(app, [`${name}.mjs`, `${name}.cjs`, `${name}.js`]);
-    if (found === null) {
-      throw new InstallError('ASSET_LAYOUT', `'${asset}' does not contain a Node script for '${name}' (.mjs, .cjs or .js)`);
-    }
-    const script = path.relative(app, found).split(path.sep).join('/');
-    if (!isSafeRelativePath(script)) {
-      throw new InstallError('ASSET_LAYOUT', `'${asset}' has an unsafe Node script path: ${script}`);
-    }
-    const launcher = windows ? `${name}.cmd` : name;
-    fs.writeFileSync(
-      path.join(stage, 'bin', launcher),
-      launcherText({ command: 'node', args: [path.join(prefix, 'app', script)] }, windows),
-    );
-    if (!windows) fs.chmodSync(path.join(stage, 'bin', launcher), 0o755);
-    binaries.push(launcher);
-    if (verifyScript === '') verifyScript = path.join(app, script);
-  }
-  return { binaries, verifyScript };
-}
-
 async function stageRelease(
   ctx: ResolvedContext,
   manifest: ToolManifest,
@@ -673,9 +379,8 @@ async function stageRelease(
   if (args.length > 0) {
     // The payload is still the stage here, so `{prefix}` has to resolve to the
     // staged tree -- that is the copy the probe is about to exercise.
-    const command = verifyScript === undefined ? launcherPath : 'node';
-    const probeArgs = verifyScript === undefined ? args : [verifyScript, ...args];
-    const result = await runCommand(ctx, command, probeArgs, 'capture', launcherEnv(manifest, share, version));
+    const probe = verifyScript === undefined ? { command: launcherPath, args } : javascriptEntry(verifyScript, args);
+    const result = await runCommand(ctx, probe.command, probe.args, 'capture', launcherEnv(manifest, share, version));
     const output = `${result.stdout}\n${result.stderr}`.trim();
     if (result.error !== undefined || result.status !== 0) {
       throw new InstallError(
@@ -724,7 +429,7 @@ async function stageRelease(
   );
   const entry: LaunchEntry = verifyScript === undefined
     ? { command: path.join(binRoot(ctx.home), launcherName), args: [] }
-    : { command: 'node', args: [path.join(prefix, 'app', path.relative(path.join(share, 'app'), verifyScript))] };
+    : javascriptEntry(path.join(prefix, 'app', path.relative(path.join(share, 'app'), verifyScript)));
   return {
     entry,
     provenance: { ...Object.fromEntries(entries), ...extraProvenance },
@@ -738,106 +443,6 @@ async function stageRelease(
     ...(specsAsset !== undefined ? { specsAsset } : {}),
     specsInstalled,
     checksum,
-  };
-}
-
-async function stageVenv(
-  ctx: ResolvedContext,
-  manifest: ToolManifest,
-  prefix: string,
-  stage: string,
-  options: InstallOptions,
-): Promise<StagedOutcome> {
-  const packageName = manifest.install[2] as string;
-  const provenance: Record<string, string> = {};
-  const python = await findPython(ctx, manifest.id, manifest.requires?.python);
-  const platformOs = ctx.platform !== null ? ctx.platform.split('-')[0] ?? 'unknown' : isWindows() ? 'win' : process.platform;
-  const windows = platformOs === 'win';
-  const venvBin = windows ? 'Scripts' : 'bin';
-  const venvPythonName = windows ? 'python.exe' : 'python';
-  const venvDir = runtimePath(ctx.home, manifest.id);
-  fs.mkdirSync(path.join(stage, 'bin'), { recursive: true });
-  const name = manifest.launch.commands[0] as string;
-  const launcherName = windows ? `${name}.cmd` : name;
-  const consoleScript = path.join(venvDir, venvBin, windows ? `${name}.exe` : name);
-  const entry: LaunchEntry = { command: windows ? consoleScript : path.join(venvDir, venvBin, venvPythonName),
-    args: windows ? [] : [consoleScript], env: { VIRTUAL_ENV: venvDir }, prependPath: path.join(venvDir, venvBin) };
-  fs.writeFileSync(path.join(stage, 'bin', launcherName), launcherText(entry, windows));
-  applyExecutableMode(path.join(stage, 'bin', launcherName));
-  const binaries = [launcherName];
-  return {
-    entry,
-    provenance,
-    binaries,
-    launcherName,
-    method: 'python venv',
-    // Console scripts (including Windows .exe launchers) embed the interpreter
-    // path. Build the environment here, never in a staging path that will move.
-    initialize: async () => {
-      ctx.log(`creating virtualenv in ${venvDir} (${platformOs})`);
-      const venv = await runCommand(ctx, python.command, [...python.args, '-m', 'venv', venvDir], 'stream');
-      if (venv.error !== undefined || venv.status !== 0) {
-        throw new InstallError(
-          'VENV_FAILED',
-          `${python.label} -m venv failed. Make sure the venv module is available (Debian/Ubuntu: 'apt install python3-venv'; macOS: 'brew install python3'; Windows: the python.org build bundles it) and that ${prefix} is writable.`,
-        );
-      }
-      const venvPython = path.join(venvDir, venvBin, venvPythonName);
-      if (!isExecutable(venvPython)) {
-        throw new InstallError(
-          'VENV_LAYOUT',
-          `the virtualenv at ${venvDir} does not contain ${venvBin}/${venvPythonName}, which is what platform '${platformOs}' expects. Remove it and retry with a CPython 3 build from python.org or your distribution.`,
-        );
-      }
-      const installArgs = manifest.install.slice(2);
-      if (options.version !== undefined && options.version !== 'latest') {
-        const requested = options.version.replace(/^v/, '');
-        if (!/^[0-9][A-Za-z0-9.!+_-]*$/.test(requested)) {
-          throw new InstallError('INVALID_VERSION', `invalid PyPI package version: ${options.version}`);
-        }
-        const index = installArgs.indexOf(packageName);
-        installArgs[index] = `${packageName}==${requested}`;
-      }
-      ctx.log(`running pip install for ${manifest.id} into ${venvDir}`);
-      const install = await runCommand(ctx, venvPython, ['-m', 'pip', 'install', ...installArgs], 'stream');
-      if (install.error !== undefined || install.status !== 0) {
-        throw new InstallError('PIP_FAILED', `pip install failed. Check the declared install command and Python package dependencies for ${manifest.id}.`);
-      }
-      const versionResult = await runCommand(ctx, venvPython, ['-c', `import importlib.metadata; print(importlib.metadata.version(${JSON.stringify(packageName)}))`], 'capture');
-      const installedVersion = versionResult.stdout.trim();
-      if (versionResult.error !== undefined || versionResult.status !== 0 || installedVersion === '') {
-        throw new InstallError('PACKAGE_VERSION', `could not determine installed version of ${packageName} in ${venvDir}`);
-      }
-      if (!isExecutable(consoleScript)) {
-        throw new InstallError('ENTRY_MISSING', `${manifest.id} did not install its declared console script: ${consoleScript}`);
-      }
-      const args = verifyArgs(manifest);
-      if (args.length > 0) {
-        const result = await runCommand(ctx, consoleScript, args, 'capture');
-        if (result.error !== undefined || result.status !== 0) {
-          throw new InstallError('VERIFY_FAILED', `${manifest.id} verification failed: ${firstLine(result) || result.error || 'no output'}`);
-        }
-      }
-      const entries: Array<[string, string]> = [
-        ['tool', manifest.id],
-        ['installer', 'decx install'],
-        ['install_method', 'python venv'],
-        ['installed', isoTimestamp()],
-        ['install_command', ['pip', 'install', ...installArgs].join(' ')],
-        ['version', installedVersion],
-        ['platform', ctx.platform ?? platformOs],
-        ['python', `${python.output} (${python.label})`],
-        ['python_manager', 'pip'],
-        ['venv', path.join(venvDir, venvBin, venvPythonName)],
-        ['binaries', binaries.join(' ')],
-        ['bin_dir', binRoot(ctx.home)],
-        [
-          'launcher',
-          `${path.join(binRoot(ctx.home), launcherName)} -> ${consoleScript}`,
-        ],
-      ];
-      Object.assign(provenance, Object.fromEntries(entries));
-    },
   };
 }
 
@@ -1014,12 +619,7 @@ export async function installTool(
   if (lstatIfPresent(prefix) !== undefined && previousRecord?.tool !== manifest.id) {
     throw new InstallError('PAYLOAD_CONFLICT', `${prefix} exists without a valid ${manifest.id} PROVENANCE; refusing to replace unrelated files`);
   }
-  if (manifest.launch.type === 'js') {
-    const node = await runCommand(ctx, 'node', ['--version']);
-    if (node.error !== undefined || node.status !== 0) {
-      throw new InstallError('NODE_NOT_FOUND', 'JS tools require Node on PATH; install Node before running decx install');
-    }
-  }
+  if (manifest.launch.type === 'js') await requireNode(ctx);
   fs.mkdirSync(home, { recursive: true });
   // The stage sits in DECX_HOME rather than in the payload (which is swapped as
   // a whole), and the executables it holds are moved into <home>/bin, so every

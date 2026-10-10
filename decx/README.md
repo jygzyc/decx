@@ -16,13 +16,16 @@ the maintainer.
 
 ## Source layout
 
-- `src/cli.ts`: command dispatch, JSON responses and process entry point.
-- `src/args.ts`: manager flags and the `-m` pass-through boundary.
-- `src/launch.ts`: platform-specific subprocess invocation.
-- `src/install.ts`: release resolution, staging, verification and atomic install.
-- `src/remove.ts`: uninstall using recorded binary ownership.
-- `src/config.ts`, `src/links.ts`, `src/inspect.ts`: install paths, PATH entries and state.
-- `src/manifest.ts`, `src/gh.ts`, `src/archive.ts`: tool declarations and release assets.
+- `src/cli.ts`, `src/build-info.ts`: command dispatch, process entry and build metadata.
+- `src/cli/`: manager flags, the `-m` pass-through boundary and JSON output envelopes.
+- `src/core/`: install paths, shared filesystem helpers, platform keys and install errors.
+- `src/catalog/manifest.ts`: tool declarations, loading and validation.
+- `src/download/`: GitHub release discovery, HTTP transport and download types.
+- `src/install/`: release resolution, downloads/checksums, archive extraction, shared
+  verification, ownership, staging/commit/rollback, PATH links, state and removal.
+- `src/bridge/`: shell-free process execution and launch descriptors, Python interpreter
+  probes/private venv initialization, and Node probes/JavaScript release launchers.
+  Native tools execute their command/argv directly; bridges never translate analysis commands.
 
 ## Usage
 
@@ -107,16 +110,14 @@ that project's `.agents/skills/`, without cloning this repository.
 ```
 decx/
 ├── src/
-│   ├── cli.ts          argument parsing, dispatch, output envelope
-│   ├── platform.ts     `win`/`darwin`/`linux` × `arm64`/`amd64` platform keys
-│   ├── config.ts       DECX_HOME resolution and paths
-│   ├── manifest.ts     tool manifest schema, loading and validation
-│   ├── gh.ts           GitHub release resolution and asset downloads
-│   ├── archive.ts      tar.gz/zip extraction, no external tools
-│   ├── install.ts      install orchestration: resolve, verify, stage, commit
-│   ├── links.ts        PATH links: symlinks on POSIX, `.cmd` shims on Windows
-│   ├── inspect.ts      install state: launcher and PROVENANCE
-│   └── json.ts         success/failure envelopes and pretty printing
+│   ├── cli.ts          command dispatch and process entry point
+│   ├── build-info.ts   source/bundled/native build metadata
+│   ├── cli/            args.ts, output.ts
+│   ├── core/           config.ts, fs.ts, platform.ts, errors.ts
+│   ├── catalog/        manifest.ts
+│   ├── download/       github.ts, http.ts, types.ts
+│   ├── install/        index.ts, archive.ts, links.ts, state.ts, remove.ts, types.ts
+│   └── bridge/         process.ts, launch.ts, python.ts, javascript.ts
 └── tests/              node:test suite (run against the .ts sources)
 ```
 
@@ -165,7 +166,7 @@ A manifest is data, never code; adding a tool means adding a JSON file.
 }
 ```
 
-Every tool JSON uses the same [JSON Schema](../third_party/decx-tool.schema.json) for editor completion. `src/manifest.ts` validates cross-field recipe rules; no separate schema is needed for each runtime.
+Every tool JSON uses the same [JSON Schema](../third_party/decx-tool.schema.json) for editor completion. `src/catalog/manifest.ts` validates cross-field recipe rules; no separate schema is needed for each runtime.
 
 | Field | Meaning |
 |---|---|

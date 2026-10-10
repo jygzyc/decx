@@ -8,8 +8,8 @@
 
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import { binRoot } from './config.ts';
-import { isWindows } from './platform.ts';
+import { binRoot } from '../core/config.ts';
+import { isWindows } from '../core/platform.ts';
 
 export type LinkStatus = 'created' | 'updated' | 'unchanged' | 'conflict';
 

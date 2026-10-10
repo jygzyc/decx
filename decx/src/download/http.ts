@@ -1,4 +1,4 @@
-import type { HttpResponse } from './http-types.ts';
+import type { HttpResponse } from './types.ts';
 
 /** Shared Node/scriptc transport; gh.ts owns redirect and authentication policy. */
 export async function openResponse(url: string, headers: Record<string, string>): Promise<HttpResponse> {

@@ -21,7 +21,7 @@
 
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import { SUPPORTED_PLATFORMS } from './platform.ts';
+import { SUPPORTED_PLATFORMS } from '../core/platform.ts';
 
 export type LaunchType = 'bin' | 'python' | 'js';
 
@@ -89,6 +89,14 @@ export interface ToolManifest {
   verify?: string;
 }
 
+/** The `verify` command split into arguments, e.g. `--version --json`. */
+export function verifyArgs(manifest: ToolManifest): string[] {
+  return (manifest.verify ?? '')
+    .trim()
+    .split(/\s+/)
+    .filter((part) => part !== '');
+}
+
 export interface ManifestIssue {
   file: string;
   message: string;
@@ -98,7 +106,6 @@ export interface LoadResult {
   tools: ToolManifest[];
   issues: ManifestIssue[];
 }
-
 
 const PLATFORM_ASSET_KEYS = [...SUPPORTED_PLATFORMS, 'any'];
 

@@ -7,8 +7,8 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { extractArchive } from '../src/archive.ts';
-import { loadManifests } from '../src/manifest.ts';
+import { extractArchive } from '../src/install/archive.ts';
+import { loadManifests } from '../src/catalog/manifest.ts';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
 const executable = process.platform === 'win32' ? 'scriptc.exe' : 'scriptc';
@@ -101,7 +101,7 @@ function buildManager() {
     const sources = path.join(temporary, 'src');
     fs.cpSync(path.join(root, 'src'), sources, { recursive: true });
     fs.writeFileSync(path.join(sources, 'build-info.ts'), [
-      "import type { LoadResult } from './manifest.ts';",
+      "import type { LoadResult } from './catalog/manifest.ts';",
       `export const embeddedManifests: LoadResult | undefined = ${JSON.stringify(manifests)};`,
       `export const runtimeInfo = { runtime: 'scriptc', compiler: ${JSON.stringify(compilerVersion)} };`,
       `export function packageVersion(): string { return ${JSON.stringify(packageInfo.version)}; }`,

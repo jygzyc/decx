@@ -6,7 +6,7 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import assert from 'node:assert/strict';
 import { build } from 'esbuild';
-import { loadManifests } from '../src/manifest.ts';
+import { loadManifests } from '../src/catalog/manifest.ts';
 import { fileURLToPath } from 'node:url';
 
 const packageRoot = fileURLToPath(new URL('../', import.meta.url));

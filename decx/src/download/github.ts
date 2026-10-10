@@ -12,8 +12,8 @@ import * as childProcess from 'node:child_process';
 import { createHash } from 'node:crypto';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import { openResponse } from './transport.ts';
-import type { HttpResponse } from './http-types.ts';
+import { openResponse } from './http.ts';
+import type { HttpResponse } from './types.ts';
 
 export const DEFAULT_API_BASE = 'https://api.github.com';
 export const DEFAULT_DOWNLOAD_BASE = 'https://github.com';

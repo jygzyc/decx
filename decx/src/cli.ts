@@ -15,16 +15,18 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { embeddedManifests, packageVersion, runtimeInfo } from './build-info.ts';
 import { fileURLToPath } from 'node:url';
-import { KNOWN_COMMANDS, parseArgs, type CliArgs } from './args.ts';
-import { binRoot, resolveHome } from './config.ts';
-import { InstallError, installTool, type InstallOptions, type InstallResult } from './install.ts';
-import { defaultRunner } from './runner.ts';
-import { toolState } from './inspect.ts';
-import { fail, ok, stringify } from './json.ts';
-import { loadManifests, type LoadResult, type ToolManifest } from './manifest.ts';
-import { currentPlatformKey } from './platform.ts';
-import { installedCommand } from './launch.ts';
-import { removeTool } from './remove.ts';
+import { KNOWN_COMMANDS, parseArgs, type CliArgs } from './cli/args.ts';
+import { binRoot, resolveHome } from './core/config.ts';
+import { InstallError } from './core/errors.ts';
+import { installTool } from './install/index.ts';
+import type { InstallOptions, InstallResult } from './install/types.ts';
+import { defaultRunner } from './bridge/process.ts';
+import { toolState } from './install/state.ts';
+import { fail, ok, stringify } from './cli/output.ts';
+import { loadManifests, type LoadResult, type ToolManifest } from './catalog/manifest.ts';
+import { currentPlatformKey } from './core/platform.ts';
+import { installedCommand } from './bridge/launch.ts';
+import { removeTool } from './install/remove.ts';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const THIRD_PARTY_DIR = path.resolve(HERE, '..', '..', 'third_party');
@@ -80,8 +82,6 @@ options: --version <tag>, --force, --links <dir>, --no-links, --home <dir>,
          --third-party <dir>, --pretty
 `,
 };
-
-export { parseArgs } from './args.ts';
 
 function emit(value: unknown, pretty: boolean): void {
   process.stdout.write(`${stringify(value, pretty)}\n`);

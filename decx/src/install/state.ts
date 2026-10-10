@@ -6,8 +6,12 @@
 
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import { binRoot, provenanceFile, toolPrefix } from './config.ts';
-import type { ToolManifest } from './manifest.ts';
+import { binRoot, provenanceFile, toolPrefix } from '../core/config.ts';
+import type { ToolManifest } from '../catalog/manifest.ts';
+
+export function isoTimestamp(): string {
+  return new Date().toISOString().replace(/\.\d{3}Z$/, 'Z');
+}
 
 export interface ToolState {
   id: string;

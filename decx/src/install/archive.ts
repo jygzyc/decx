@@ -11,7 +11,7 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as zlib from 'node:zlib';
-import { lstatIfPresent } from './fs.ts';
+import { lstatIfPresent } from '../core/fs.ts';
 
 export class ArchiveError extends Error {
   readonly code = 'ARCHIVE_ERROR';

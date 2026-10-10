@@ -1,4 +1,12 @@
 import { spawn } from 'node:child_process';
+import type { PlatformKey } from '../core/platform.ts';
+
+export interface BridgeContext {
+  home: string;
+  env: NodeJS.ProcessEnv;
+  platform: PlatformKey | null;
+  log: (line: string) => void;
+}
 
 export interface CommandSpec {
   command: string;
@@ -13,6 +21,16 @@ export interface CommandResult {
   stdout: string;
   stderr: string;
   error?: string;
+}
+
+export async function runCommand(
+  ctx: Pick<BridgeContext, 'env'>,
+  command: string,
+  args: string[],
+  mode: 'capture' | 'stream' = 'capture',
+  extraEnv?: Record<string, string>,
+): Promise<CommandResult> {
+  return defaultRunner({ command, args, mode, env: { ...ctx.env, ...extraEnv } });
 }
 
 /** Execute an argv vector directly, without a shell or runtime-specific adapter. */
