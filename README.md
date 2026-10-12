@@ -28,8 +28,15 @@ decx -m kuna --help      # equivalent explicit form
 decx help install        # usage for the manager or one command
 ```
 
-Tools are declared as manifest-2 entries with explicit IDs in the central
-`third_party/tools.json` catalog, never as code. Executables
+Tools are unversioned entries with explicit `id` and GitHub `repo: "owner/repo"`
+in `third_party/tools.json`, whose root requires `manifest: 1`, never code.
+Optional `requires` is `bin`/`python`/`js` and must match `launch.type` (inferred
+when omitted); empty `env: {}` is valid for any runtime. Archive installs discover
+the newest stable release carrying all declared host assets, skipping unrelated
+releases. Omitted/null `checksums` mandates GitHub REST SHA-256 digests for primary
+and extra assets; explicit checksum filenames and tag prefixes remain supported.
+Bare versions match listed tags/assets without assuming `v`; full tags can be
+selected directly, still verified. Executables
 and payloads live under `$DECX_HOME` (`bin/`, `share/<id>/` with a `PROVENANCE` record); the
 manager installs tools, not language runtimes, and each tool keeps its own arguments and output.
 Layout, `--links` and install rules: [`decx/README.md`](decx/README.md). Direct native compilation
@@ -51,8 +58,8 @@ and install `.exe`/`.cmd` names there; tool installation needs no Git Bash, `una
 
 What each platform needs:
 
-- **DroidASC** — Python >=3.10 with `venv`; DECX installs the published PyPI package
-  and its dependencies using the virtualenv's pip.
+- **DroidASC** — Python 3 with `venv`; DECX probes the interpreter, while the
+  published PyPI package metadata/pip enforces its minimum (currently >=3.10).
 - **Kuna** — installs the upstream release (macOS/Linux arm64+x86_64, Windows x86_64) with the
   compiled SLEIGH specs as a separate asset; the generated launcher exports `KUNA_SPECS`. There is
   no Windows arm64 release, and `decx install kuna` reports that instead of building the reference
@@ -130,8 +137,11 @@ publish manager and AFE assets. DroidASC and Kuna use upstream distributions dir
 deliberately exercise the real install paths, and the PR workflows never compile the
 vendored upstream checkouts. Releases: `decx-v*` → `decx-<version>.tar.gz` +
 `decx-SHA256SUMS.txt` and `decx-pi-<version>.tar.gz` +
-`decx-pi-SHA256SUMS.txt`; `tools-v*` → the six `afe-<version>-<platform>` archives +
-`afe-SHA256SUMS.txt`. Neither DroidASC nor Kuna needs a repository release.
+`decx-pi-SHA256SUMS.txt`; `tools-v*` → the six `afe-v<version>-<platform>` archives +
+`afe-SHA256SUMS.txt`. The catalog uses REST digests by default; the checksum file
+remains available for explicit custom configurations. Existing `afe-<version>`
+archives do not match the new names: matching assets must be published; no legacy
+name fallback is provided. Neither DroidASC nor Kuna needs a repository release.
 Kuna tracks upstream on its own: every 12 hours its workflow compares the pinned tag
 with upstream's latest release and pushes nothing when there is nothing newer — a new
 release moves the submodule pin, re-copies the skill reference and pushes the commit.

@@ -35,7 +35,7 @@ export function writeFile(file: string, data: string | Buffer, mode?: number): v
 
 /** Writes the same central catalog shape used by source and compiled managers. */
 export function writeCatalog(directory: string, tools: readonly unknown[]): void {
-  writeFile(path.join(directory, 'tools.json'), JSON.stringify({ tools }));
+  writeFile(path.join(directory, 'tools.json'), JSON.stringify({ manifest: 1, tools }));
 }
 
 export interface CliResult {
@@ -226,7 +226,7 @@ export interface FixtureServer {
   close(): Promise<void>;
 }
 
-/** Serves fixed files by pathname; unknown paths answer 404. */
+/** Serves fixed files by exact path/query, falling back to pathname; unknown paths answer 404. */
 export async function startFixtureServer(
   routes: Record<string, Buffer | string>,
   statuses: Record<string, number> = {},
@@ -238,7 +238,7 @@ export async function startFixtureServer(
     const url = new URL(request.url ?? '/', 'http://127.0.0.1');
     requested.push(url.pathname);
     authorizations.push(request.headers.authorization);
-    const body = routes[url.pathname];
+    const body = routes[`${url.pathname}${url.search}`] ?? routes[url.pathname];
     if (body === undefined) {
       response.writeHead(404, { 'content-type': 'text/plain' });
       response.end('not found');

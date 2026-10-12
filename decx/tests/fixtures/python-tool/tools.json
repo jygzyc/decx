@@ -1,7 +1,10 @@
 {
+  "manifest": 1,
   "tools": [
     {
-      "manifest": 2,
+      "repo": "acme/pyprobe",
+      "requires": "python",
+      "env": {},
       "id": "pyprobe",
       "summary": "Offline Python virtualenv installer fixture (not a shipped tool)",
       "install": ["pip", "install", "pyprobe"],

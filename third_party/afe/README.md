@@ -6,12 +6,17 @@ results into a `framework.jar`.
 
 AFE is DECX's own utility, not an upstream repository. `decx install afe`
 requires a prebuilt `tools-v*` asset for the platform; a missing asset fails
-without a cargo fallback. The `afe` manifest-2 entry lives in the central
-[`../tools.json`](../tools.json) catalog. The agent skill is `skills/decx-tool/`
+without a cargo fallback. The unversioned `afe` entry (`repo: "jygzyc/decx"`)
+lives in the central [`../tools.json`](../tools.json) catalog with root `manifest: 1`. The agent skill is `skills/decx-tool/`
 (routing in its `SKILL.md`, the AFE contract in `references/afe.md`). The release jobs in
 `.github/workflows/decx-afe.yml` publish the
-assets the manifest looks for (`afe-{version}-<platform>.tar.gz|zip` plus
-`afe-SHA256SUMS.txt` under a `tools-v*` tag).
+assets the catalog looks for (`afe-v{version}-<platform>.tar.gz|zip` plus
+`afe-SHA256SUMS.txt` under a `tools-v*` tag). Without a declared tag prefix,
+generic stable discovery matches the host asset after candidate-version
+substitution, skipping unrelated DECX manager releases. Default integrity uses
+mandatory GitHub REST SHA-256 asset digests; the checksum file is for explicit
+custom configurations. Existing `afe-{version}` archives do not match the new
+names: matching assets must be published, with no legacy-name fallback.
 
 The command tree, JSON field names and error codes are a stable contract: `decx -m
 <tool>`, the skills and any script depend on them. Deliberate differences are listed

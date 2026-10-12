@@ -9,8 +9,8 @@ It is not a decompiler, unified analysis CLI, plugin runtime, or analysis server
 - APK analysis uses upstream [DroidASC](https://github.com/MG1937/ASC) directly.
 - Native binary analysis uses upstream [Kuna](https://github.com/Noelo-Lab/kuna) directly.
 - `third_party/` holds tool source projects and the central toolkit catalog
-  `tools.json`. Each manifest-2 entry has an explicit tool id; there are no
-  per-directory manifests. The portable execution skills live in root `skills/`;
+  `tools.json`. Its root requires `manifest: 1`; each unversioned entry has an
+  explicit tool id and `repo: "owner/repo"`; there are no per-directory manifests. The portable execution skills live in root `skills/`;
   the tool-routing skill is `skills/decx-tool/`, each tool's contract in
   `references/<id>.md`; Kuna's reference is upstream's own skill file copied
   verbatim (frontmatter dropped) and is re-copied, never edited, when the pin moves.
@@ -52,7 +52,17 @@ its compiled SLEIGH specs, both verified against GitHub REST asset SHA-256 diges
 droidasc a private venv installing the published PyPI package with pip,
 afe a prebuilt `tools-v*` archive for the platform. Missing assets fail explicitly;
 there is no automatic source-build fallback. The rules behind them (the `env`
-launcher contract, `release.tagPrefix` resolution and `--version <tag>`) are documented in `decx/README.md`.
+launcher contract, optional `release.tagPrefix` and `--version <tag>`) are documented in `decx/README.md`.
+Without a prefix, enumerate stable release pages and match every declared host
+primary/extra asset using the candidate version; never hardcode tool IDs or
+assume a bare version's tag. Omitted/null `checksums` requires GitHub REST SHA-256
+digests for every download. Explicit checksum files remain supported; missing
+integrity metadata fails without fallback. `release.repository` is internal,
+derived from required `repo`; raw nested repositories and per-entry `manifest`
+are invalid. Optional `requires` is `bin`/`python`/`js`, matching `launch.type`
+(or inferred from it); Python 3 probing remains, package-specific minimums belong
+to pip metadata. Empty `env: {}` is valid for any runtime, nonempty env remains
+binary-only.
 Python installs use published packages, never vendored/source-archive recipes.
 CI never modifies the pinned upstream checkouts; DroidASC installs directly from PyPI.
 Installation prefers upstream distribution; repository release assets are fallback sources.
@@ -150,7 +160,7 @@ skills), and smokes the bundles and launchers on all four architectures before p
 release build and
 a `--help` smoke on Linux, macOS and Windows;
 Windows arm64 cross check; tag `tools-v*`, checked against
-`third_party/afe/Cargo.toml`, builds the six `afe-<version>-<platform>` archives plus
+`third_party/afe/Cargo.toml`, builds the six `afe-v<version>-<platform>` archives plus
 `afe-SHA256SUMS.txt`), `decx-droidasc.yml` (the manager creates a private venv,
 installs the published PyPI package and functionally tests real APK decompilation,
 manifest decoding and DEX references across platforms;
@@ -172,6 +182,10 @@ checks offline manager functionality; real decompilation is required separately 
 both live tool workflows. The real suites fail on absent tools (no silent skips),
 use explicit temporary prefixes, and can target a built native manager through
 `DECX_FUNCTIONAL_MANAGER`; no workflow compiles the vendored upstream checkouts.
-The kuna manifest installs from official upstream releases — manifest 2 resolves the
-newest stable `v*` tag and verifies each asset against its GitHub REST SHA-256 digest.
+The Kuna entry installs official upstream releases using generic asset-aware
+stable discovery and verifies each asset against its GitHub REST SHA-256 digest.
+The tracking workflow filters canonical upstream `v*` tags; the CLI has no per-tool
+release rule. Existing `afe-<version>` release archives do not match the catalog's
+`afe-v<version>` names: publishing matching archives is required, never add a
+legacy-name fallback or silently rewrite the catalog.
 Keep README.md and README_zh.md aligned with the actual tools and launcher runtime requirements; do not document removed `decx` commands as current functionality.

@@ -53,8 +53,11 @@ decx install afe                  # prebuilt tools-v* asset when it carries this
 decx -m afe process
 ```
 
-- `install` looks for the `tools-v*` asset of the host platform (tag prefix
-  `tools-v`; the release carries `afe-SHA256SUMS.txt`, so the download is
-  checksum-verified). A missing asset currently produces an error; this manager
-  release does not implement a cargo fallback or `--from-source`.
+- `install` selects the newest stable release carrying the host's declared
+  `afe-v<version>-<platform>.tar.gz|zip` asset (published under `tools-v*`),
+  skipping unrelated manager releases. There is no implicit tag prefix.
+  Omitted/null `checksums` requires a GitHub REST SHA-256 asset digest; an explicit
+  checksum filename can use `afe-SHA256SUMS.txt` instead. Missing assets or digests
+  fail without a cargo fallback or `--from-source`. Old `afe-<version>` archive
+  names do not match: the matching new assets must be published, not substituted.
 - One launcher (`afe`); the payload lives in `<DECX_HOME>/share/afe/`.

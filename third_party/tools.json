@@ -1,52 +1,46 @@
 {
   "$schema": "./decx-tool.schema.json",
+  "manifest": 1,
   "tools": [
     {
       "id": "afe",
-      "manifest": 2,
       "summary": "Android framework collection and preprocessing: pull framework files, expand them and pack an analyzable jar (AFE)",
-      "homepage": "https://github.com/jygzyc/decx",
+      "repo": "jygzyc/decx",
       "license": "Apache-2.0",
-      "notes": "releases are published from this repository under tools-v* tags; every tag carries one archive per platform plus afe-SHA256SUMS.txt, so the manager downloads the asset that belongs to the host",
+      "install": ["github-release"],
       "release": {
-        "tagPrefix": "tools-v",
         "assets": {
-          "darwin-arm64": "afe-{version}-darwin-arm64.tar.gz",
-          "darwin-amd64": "afe-{version}-darwin-amd64.tar.gz",
-          "linux-amd64": "afe-{version}-linux-amd64.tar.gz",
-          "linux-arm64": "afe-{version}-linux-arm64.tar.gz",
-          "win-amd64": "afe-{version}-win-amd64.zip",
-          "win-arm64": "afe-{version}-win-arm64.zip"
+          "darwin-arm64": "afe-v{version}-darwin-arm64.tar.gz",
+          "darwin-amd64": "afe-v{version}-darwin-amd64.tar.gz",
+          "linux-amd64": "afe-v{version}-linux-amd64.tar.gz",
+          "linux-arm64": "afe-v{version}-linux-arm64.tar.gz",
+          "win-amd64": "afe-v{version}-win-amd64.zip",
+          "win-arm64": "afe-v{version}-win-arm64.zip"
         }
       },
-      "install": ["github-release"],
       "launch": { "type": "bin", "commands": ["afe"] },
-      "verify": "--version"
+      "verify": "--help"
     },
     {
       "id": "droidasc",
-      "manifest": 2,
       "summary": "APK/DEX analysis on demand: class lookup and reference search (upstream DroidASC, pure Python, no JVM)",
-      "homepage": "https://github.com/MG1937/ASC",
+      "repo": "MG1937/ASC",
       "license": "Apache-2.0",
-      "notes": "DECX creates a private virtualenv and installs the published droidasc package from PyPI; --version pins a PyPI package version",
-      "requires": { "python": ">=3.10" },
+      "env": {},
+      "requires": "python",
       "install": ["pip", "install", "droidasc"],
       "launch": { "type": "python", "commands": ["droidasc"] },
       "verify": "--help"
     },
     {
       "id": "kuna",
-      "manifest": 2,
       "summary": "Native decompiler for ELF/PE/Mach-O: functions, pseudo-C, xrefs, disassembly (upstream Kuna)",
-      "homepage": "https://github.com/Noelo-Lab/kuna",
+      "repo": "Noelo-Lab/kuna",
       "license": "Apache-2.0",
-      "notes": "installed from upstream Noelo-Lab/kuna releases; GitHub asset SHA-256 digests verify both the executable archive and compiled SLEIGH specs, and the launcher exports KUNA_SPECS",
       "env": { "KUNA_SPECS": "{prefix}/specs" },
+      "requires": "bin",
+      "install": ["github-release"],
       "release": {
-        "repository": "Noelo-Lab/kuna",
-        "tagPrefix": "v",
-        "checksums": null,
         "assets": {
           "darwin-arm64": "kuna-v{version}-macos-arm64.tar.gz",
           "darwin-amd64": "kuna-v{version}-macos-x86_64.tar.gz",
@@ -56,7 +50,6 @@
         },
         "extraAssets": { "specs": "kuna-v{version}-specs.tar.gz" }
       },
-      "install": ["github-release"],
       "launch": { "type": "bin", "commands": ["kuna", "decomp_dbg", "slacomp"] },
       "verify": "--version"
     }

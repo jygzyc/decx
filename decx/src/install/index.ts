@@ -29,6 +29,7 @@ import {
   releaseAssetDigests,
   releaseDownloadUrl,
   resolveRelease,
+  versionFromTag,
 } from '../download/github.ts';
 import { isSafeRelativePath, verifyArgs, type ReleaseSpec, type ToolManifest } from '../catalog/manifest.ts';
 import { isoTimestamp, provenanceBinaries, readProvenance } from './state.ts';
@@ -63,7 +64,7 @@ function assertInstallRoot(home: string): string {
   return resolved;
 }
 
-/** `1.508` -> `v1.508`, `0.1.0` with tag prefix `tools-v` -> `tools-v0.1.0`. */
+/** Explicit full tags stay untouched; bare versions use only an explicit prefix. */
 export function normalizeReleaseTag(tag: string, tagPrefix?: string): string {
   const value = tag.trim();
   if (value === '') {
@@ -73,19 +74,12 @@ export function normalizeReleaseTag(tag: string, tagPrefix?: string): string {
     if (value.startsWith(tagPrefix)) {
       return value;
     }
-    return `${tagPrefix}${value.startsWith('v') ? value.slice(1) : value}`;
+    return /^\d/.test(value) ? `${tagPrefix}${value}` : value;
   }
-  return /^\d/.test(value) ? `v${value}` : value;
+  return value;
 }
 
-/** `tools-v0.1.0` with prefix `tools-v` -> `0.1.0`; `v1.508` -> `1.508`. */
-export function releaseVersionFromTag(tag: string, tagPrefix?: string): string {
-  let value = tag;
-  if (tagPrefix !== undefined && tagPrefix !== '' && value.startsWith(tagPrefix)) {
-    value = value.slice(tagPrefix.length);
-  }
-  return value.startsWith('v') ? value.slice(1) : value;
-}
+export { versionFromTag as releaseVersionFromTag } from '../download/github.ts';
 
 /** The asset for one platform with `{version}`/`{os}`/`{arch}` substituted, or null. */
 export function releaseAssetName(release: ReleaseSpec, platform: PlatformKey | null, version: string): string | null {
@@ -93,11 +87,15 @@ export function releaseAssetName(release: ReleaseSpec, platform: PlatformKey | n
     if (platform === null) {
       return null;
     }
-    const [os, arch] = platform.split('-');
-    return release.asset.replaceAll('{version}', version).replaceAll('{os}', os ?? '').replaceAll('{arch}', arch ?? '');
+    return expandAssetTemplate(release.asset, platform, version);
   }
   const template = (platform === null ? undefined : release.assets?.[platform]) ?? release.assets?.any;
-  return template === undefined ? null : template.replaceAll('{version}', version);
+  return template === undefined ? null : expandAssetTemplate(template, platform, version);
+}
+
+function expandAssetTemplate(template: string, platform: PlatformKey | null, version: string): string {
+  const [os, arch] = platform?.split('-') ?? [];
+  return template.replaceAll('{version}', version).replaceAll('{os}', os ?? '').replaceAll('{arch}', arch ?? '');
 }
 
 /** `key: value` lines with indented continuations for multi-line values. */
@@ -193,14 +191,22 @@ function pickLauncher(manifest: ToolManifest, binaries: readonly string[]): stri
 
 async function resolveInstallTag(ctx: ResolvedContext, release: ReleaseSpec, options: InstallOptions): Promise<string> {
   const requested = options.version ?? release.version;
-  if (requested !== undefined && requested !== 'latest' && requested.trim() !== '') {
-    return normalizeReleaseTag(requested, release.tagPrefix);
+  const explicit = requested !== undefined && requested !== 'latest' && requested.trim() !== '' ? requested.trim() : undefined;
+  if (explicit !== undefined && (release.tagPrefix !== undefined || !/^\d/.test(explicit))) {
+    return normalizeReleaseTag(explicit, release.tagPrefix);
+  }
+  const asset = releaseAssetName(release, ctx.platform, '{version}');
+  if (asset === null) {
+    throw new InstallError('UNSUPPORTED_PLATFORM', `no archive is defined for this platform (${ctx.platform ?? `${process.platform}-${process.arch}`})`);
   }
   try {
     const token = githubToken(ctx.env);
     const resolved = await resolveRelease({
       repository: release.repository,
-      tagPrefix: release.tagPrefix,
+      ...(release.tagPrefix !== undefined ? { tagPrefix: release.tagPrefix } : {}),
+      ...(explicit !== undefined ? { version: explicit } : {}),
+      asset,
+      extraAssets: Object.values(release.extraAssets ?? {}).map(template => expandAssetTemplate(template, ctx.platform, '{version}')),
       ...(token !== undefined ? { token } : {}),
       apiBase: ctx.apiBase,
       userAgent: DEFAULT_USER_AGENT,
@@ -247,7 +253,7 @@ async function releaseChecksums(ctx: ResolvedContext, release: ReleaseSpec, tag:
     if (release.checksums === null) {
       return await releaseAssetDigests({ ...authentication, repository: release.repository, tag, apiBase: ctx.apiBase });
     }
-    const name = release.checksums.replaceAll('{version}', releaseVersionFromTag(tag, release.tagPrefix));
+    const name = release.checksums.replaceAll('{version}', versionFromTag(tag, release.tagPrefix));
     safeAssetName(name);
     await downloadAsset(releaseDownloadUrl(ctx.downloadBase, release.repository, tag, name), path.join(downloads, name), authentication);
     return parseChecksums(fs.readFileSync(path.join(downloads, name), 'utf8'));
@@ -288,7 +294,7 @@ async function downloadRelease(
   stage: string,
   tag: string,
 ): Promise<ReleaseArchive> {
-  const version = releaseVersionFromTag(tag, release.tagPrefix);
+  const version = versionFromTag(tag, release.tagPrefix);
   const asset = releaseAssetName(release, ctx.platform, version);
   if (asset === null) {
     throw new InstallError('UNSUPPORTED_PLATFORM', `no archive is defined for this platform (${ctx.platform ?? `${process.platform}-${process.arch}`})`, {
@@ -308,7 +314,7 @@ async function downloadRelease(
   let specsAsset: string | undefined;
   const extraProvenance: Record<string, string> = {};
   for (const [key, template] of Object.entries(release.extraAssets ?? {})) {
-    const extraName = template.replaceAll('{version}', version);
+    const extraName = expandAssetTemplate(template, ctx.platform, version);
     safeAssetName(extraName);
     const extraUrl = releaseDownloadUrl(ctx.downloadBase, release.repository, tag, extraName);
     const download = await downloadRequired(ctx, extraUrl, path.join(downloads, extraName));
@@ -391,7 +397,8 @@ async function stageRelease(
     // A tag can carry an upstream version that is not the tag itself; when the
     // user pinned one, the tool has to report it back.
     if (options.version !== undefined && args.includes('--version')) {
-      const pattern = new RegExp(`(^|[^0-9.])${version.replaceAll('.', '\\.')}([^0-9.]|$)`);
+      const escaped = version.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const pattern = new RegExp(`(^|[^0-9.])${escaped}([^0-9.]|$)`);
       if (!pattern.test(output)) {
         throw new InstallError(
           'VERSION_MISMATCH',

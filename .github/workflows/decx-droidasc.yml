@@ -56,10 +56,11 @@ jobs:
       - name: The catalog declares the published PyPI package
         run: |
           node -e '
-            const manifest = require("./third_party/tools.json").tools.find(tool => tool.id === "droidasc");
-            if (!manifest || JSON.stringify(manifest.install) !== JSON.stringify(["pip", "install", "droidasc"]) ||
+            const catalog = require("./third_party/tools.json");
+            const manifest = catalog.tools.find(tool => tool.id === "droidasc");
+            if (catalog.manifest !== 1 || !manifest || manifest.repo !== "MG1937/ASC" || JSON.stringify(manifest.install) !== JSON.stringify(["pip", "install", "droidasc"]) ||
                 manifest.launch.type !== "python" || manifest.launch.commands.join(",") !== "droidasc" ||
-                manifest.requires?.python !== ">=3.10") {
+                manifest.requires !== "python") {
               throw new Error("DroidASC must install the published package into a private Python venv");
             }
           '

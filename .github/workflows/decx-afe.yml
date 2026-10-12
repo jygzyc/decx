@@ -11,7 +11,7 @@ name: AFE
 # `tools-v*` tag push (or a dispatch with the `tag` input set) runs the
 # validate/build/publish jobs instead of the checks. The names are part of that
 # contract: the afe entry in third_party/tools.json looks for
-# `afe-{version}-<platform>.tar.gz|zip` plus `afe-SHA256SUMS.txt` under a
+# `afe-v{version}-<platform>.tar.gz|zip` plus `afe-SHA256SUMS.txt` under a
 # `tools-v*` tag, where `{version}` is the tag without its prefix. Rename an
 # asset here and installs fail, which is why the tag and the crate version have to
 # agree before anything is built. `paths` filters tag pushes as well -- the tag
@@ -227,7 +227,7 @@ jobs:
         shell: bash
         run: |
           set -eu
-          name="afe-${{ needs.validate.outputs.version }}-${{ matrix.platform }}"
+          name="afe-v${{ needs.validate.outputs.version }}-${{ matrix.platform }}"
           mkdir -p dist
           cp "third_party/afe/target/${{ matrix.target }}/release/afe" dist/afe
           tar -czf "$name.tar.gz" -C dist afe
@@ -236,7 +236,7 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          $name = "afe-${{ needs.validate.outputs.version }}-${{ matrix.platform }}"
+          $name = "afe-v${{ needs.validate.outputs.version }}-${{ matrix.platform }}"
           New-Item -ItemType Directory -Force dist | Out-Null
           Copy-Item "third_party/afe/target/${{ matrix.target }}/release/afe.exe" dist/afe.exe
           Compress-Archive -Path dist/afe.exe -DestinationPath "$name.zip" -Force
@@ -244,7 +244,7 @@ jobs:
       - uses: actions/upload-artifact@v7
         with:
           name: afe-${{ matrix.platform }}
-          path: afe-${{ needs.validate.outputs.version }}-${{ matrix.platform }}.*
+          path: afe-v${{ needs.validate.outputs.version }}-${{ matrix.platform }}.*
           if-no-files-found: error
 
   publish:
@@ -265,10 +265,10 @@ jobs:
           set -eu
           version="${{ needs.validate.outputs.version }}"
           for platform in linux-amd64 linux-arm64 darwin-amd64 darwin-arm64 win-amd64 win-arm64; do
-            ls "afe-$version-$platform".* > /dev/null
+            ls "afe-v$version-$platform".* > /dev/null
           done
           : > afe-SHA256SUMS.txt
-          for asset in afe-*.tar.gz afe-*.zip; do
+          for asset in afe-v*.tar.gz afe-v*.zip; do
             sha256sum "$asset" >> afe-SHA256SUMS.txt
           done
           cat afe-SHA256SUMS.txt

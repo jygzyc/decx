@@ -46,15 +46,15 @@ Failures use the DECX envelope:
 {"ok":false,"command":"install","error":{"code":"UNKNOWN_TOOL","message":"unknown tool: nope","hint":"run `decx help`"}}
 ```
 
-`decx install <tool>` resolves the host platform from the manifest and either
-installs the pinned release asset -- downloaded to a temp dir and
-sha256-verified against the manifest-declared checksum asset (a missing or
-unreadable declared checksum aborts installation),
-with any release `extraAssets` (Kuna's compiled SLEIGH specs) downloaded
-alongside.  A manifest that pins `release.version` is what an install
-reproduces: that is the tag whose asset names were verified against upstream,
-and upstream renames files between releases (Kuna's archives gained a `v` in the
-file name in v1.508); `--version <tag>` installs one specific tag instead.
+`decx install <tool>` resolves the host platform from the catalog and installs
+the newest stable GitHub release carrying the declared primary and all extra
+assets (Kuna's compiled SLEIGH specs), or a release selected by `release.version`
+or `--version`. Downloads are staged and SHA-256 verified: omitted or null
+`release.checksums` requires GitHub REST asset digests for every download.
+An explicit checksum filename instead requires that file and each asset's entry.
+Missing, null or mismatched digests fail; there is never an unverified fallback.
+Asset names must match the candidate version after template substitution, so
+unrelated manager releases in a shared repository are skipped.
 `decx install droidasc` creates a fresh `runtime/droidasc` virtualenv and
 runs `pip install droidasc` inside it. The published PyPI package supplies the
 entry point and dependencies: no vendored checkout, source archive or GitHub
@@ -122,7 +122,8 @@ decx/
 ```
 
 All tool manifests live in the central `third_party/tools.json` catalog.
-Each manifest-2 entry has an explicit `id`, independent of its source directory.
+The root requires `manifest: 1`; each unversioned tool entry has an explicit
+`id` and `repo`, independent of its source directory.
 `third_party/ASC` and `third_party/kuna` are direct pinned upstream gitlinks;
 `third_party/afe` is DECX's own Rust utility. There are no per-directory manifests.
 
@@ -148,23 +149,24 @@ reads installs that follow the layout above.
 ## Tool manifests
 
 A manifest is data, never code; adding a tool means adding an entry to
-`third_party/tools.json`. The catalog has only `$schema` (optional) and a nonempty
-`tools` array; entries do not have their own `$schema`.
+`third_party/tools.json`. The only root fields are `$schema` (optional),
+`manifest` (required, exactly `1`) and a nonempty `tools` array. Entries have
+neither `manifest` nor `$schema`; old per-tool versions, `homepage`, object
+`requires` and `release.repository` are rejected rather than migrated.
 
 ```json
 {
   "$schema": "./decx-tool.schema.json",
+  "manifest": 1,
   "tools": [{
     "id": "kuna",
-    "manifest": 2,
+    "repo": "Noelo-Lab/kuna",
+    "requires": "bin",
     "summary": "Native decompiler for ELF/PE/Mach-O (upstream Kuna)",
     "install": ["github-release"],
     "launch": { "type": "bin", "commands": ["kuna", "decomp_dbg", "slacomp"] },
     "env": { "KUNA_SPECS": "{prefix}/specs" },
     "release": {
-      "repository": "Noelo-Lab/kuna",
-      "tagPrefix": "v",
-      "checksums": null,
       "assets": { "darwin-arm64": "kuna-v{version}-macos-arm64.tar.gz" },
       "extraAssets": { "specs": "kuna-v{version}-specs.tar.gz" }
     },
@@ -178,26 +180,33 @@ The catalog uses one [JSON Schema](../third_party/decx-tool.schema.json) for edi
 | Field | Meaning |
 |---|---|
 | `id` | required explicit lowercase tool name, unique within the catalog |
+| `repo` | required GitHub `owner/repo`; archive release source (no default repository) |
 | `summary` | one-line tool description |
-| `release` | required for `bin` and `js`, omitted for PyPI packages. The install source: `repository` (`owner/repo`, default `jygzyc/decx`), `version` (`latest` or an exact version/tag), `tagPrefix` (default `<id>-v`), exactly one of `asset` (a single template) or `assets` (per-platform names); `{version}`, `{os}` and `{arch}` are substituted at install time. `checksums` names the `sha256  filename` asset (`<id>-SHA256SUMS.txt` by default); `null` instead requires a SHA-256 digest in GitHub REST asset metadata for **every** download. `extraAssets` are downloaded for every platform (Kuna's compiled SLEIGH specs) |
+| `release` | required for `bin` and `js`, omitted for PyPI packages. Optional `version` defaults to `latest`; optional `tagPrefix` filters discovery and normalizes bare versions, with no default prefix. Exactly one of `asset` (single template) or `assets` (per-platform names); `{version}`, `{os}` and `{arch}` are substituted at install time. Omitted or null `checksums` requires GitHub REST SHA-256 asset digests for **every** download; an explicit filename requires its `sha256  filename` entries instead. `extraAssets` are required on every platform. Repository is derived internally from `repo`, never accepted inside `release` |
 | `install` | required installer recipe: `["github-release"]` downloads and verifies the archive described by `release`; `["pip", "install", "droidasc"]` installs a published PyPI package (no shell). Python source-checkout/archive recipes are not supported. The manager creates the Python virtual environment itself; manifests do not contain venv commands. `--version` pins PyPI packages using `==`. Python source checkouts are not copied into `share/`; JS release assets retain their module tree under `share/<id>/app` |
-| `env` | `bin` tools only: environment the generated launchers export (`{prefix}` = the payload directory, `{version}` = the installed version); declaring it moves the binaries to `share/<id>/bin` and puts wrappers in `bin/` |
+| `env` | empty `{}` is valid for any runtime. Nonempty maps are supported for `bin` tools only: environment the launchers export (`{prefix}` = payload directory, `{version}` = installed version); these move binaries to `share/<id>/bin` and put wrappers in `bin/` |
 | `launch` | required object with `type` (`bin`, `python` or `js`) and `commands` (nonempty list of public command names). The first command is the default for `decx -m <tool>`. For `bin`, the release archive contains each executable; for `python`, the manager generates a wrapper to the venv console script; for `js`, the release archive contains `<command>.mjs`, `.cjs` or `.js` and the manager keeps the archive tree in `share/<id>/app` (including local imports and `package.json`), generating Node launchers (`.cmd` on Windows). JS installs require `node` on PATH. |
 | `verify` | the probe command run against the staged executable or Node script before committing, e.g. `--version` |
-| `requires` | runtime floors `install` checks before staging anything (`{ "python": ">=3.10" }`; Python tools only) |
+| `requires` | optional runtime string: `bin`, `python` or `js`, matching `launch.type`; omitted values are inferred from it. Python must be Python 3 with `venv`; pip/upstream package metadata enforces package-specific minimum Python versions |
 
 The venv install records the interpreter it used in PROVENANCE (`python`), the
 manager that installed the package (`python_manager`) and the interpreter
 path it will run (`venv`).
 
-The tool `id` is required; `repository`, `tagPrefix`, `version` and `checksums`
-have defaults. Manifests declare only values that differ from those defaults —
-`launch.type` selects the tool runtime. Platforms are two axes joined as
+The tool `id` and `repo` are required; `launch.type` selects the runtime.
+There is no implicit tool-specific repository, tag prefix or checksum filename. Platforms are two axes joined as
 `<os>-<arch>`: `win`, `darwin`, `linux` × `arm64`, `amd64` (e.g. `darwin-arm64`,
 `win-amd64`); an `assets` map may additionally use `any` for a
-platform-independent payload. For archive recipes, `--version <tag>` picks a
-release explicitly; otherwise `release.version` selects a tag (default
-`latest`, resolved through GitHub REST). For PyPI recipes, `--version` pins a
+platform-independent payload. For archive recipes, `latest` enumerates paginated GitHub releases and chooses
+the newest non-draft, non-prerelease candidate carrying every declared host
+primary/extra asset. Without a prefix, bare `--version 0.1.0` matches a listed
+release's extracted version and asset names, not an assumed `v0.1.0` tag.
+Version extraction strips `v` or the last namespace prefix before `v` followed
+by a digit: `v1.604`, `tools-v0.1.0` and `decx-v0.1.0` yield `1.604` and `0.1.0`.
+An explicit full tag downloads directly, still requiring integrity verification.
+Explicit `release.tagPrefix` filters discovery and prefixes bare numeric
+versions; full tags stay unchanged. `release.version` uses the same rules and
+defaults to `latest`. For PyPI recipes, `--version` pins a
 package version and the default is the newest available version. `update`
 selects the latest unless `--version` is specified. There is no checkout detection, source fallback, old manifest migration or
 legacy launch-record fallback. An install missing `launch.json` must be reinstalled.
@@ -337,7 +346,7 @@ unsupported. CI tests independent tool compilation on the same four hosts as
 the native manager; macOS x64 is not part of the release matrix. Because scriptc is installed separately for builds,
 the manager's lockfile and `npm ci` do not depend on its platform packages.
 
-Adding a tool: add a manifest-2 entry with an explicit unique `id` to
+Adding a tool: add an unversioned entry with an explicit unique `id` and `repo` to
 `third_party/tools.json` and its contract to `skills/decx-tool/` (a routing-gate
 row in `SKILL.md` plus `references/<id>.md`), then run `npm test`. If a source
 checkout is needed, retain its upstream repository name and pinned gitlink;

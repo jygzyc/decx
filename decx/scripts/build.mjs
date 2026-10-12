@@ -56,8 +56,8 @@ try {
   assert.deepEqual(fs.readdirSync(cwd), ['decx.mjs']);
   const override = path.join(cwd, 'custom');
   fs.mkdirSync(override, { recursive: true });
-  fs.writeFileSync(path.join(override, 'tools.json'), JSON.stringify({ tools: [{
-    manifest: 2, id: 'fixture', summary: 'Offline fixture', install: ['github-release'], launch: { type: 'bin', commands: ['fixture'] }, release: { asset: 'fixture.zip' },
+  fs.writeFileSync(path.join(override, 'tools.json'), JSON.stringify({ manifest: 1, tools: [{
+    repo: 'acme/fixture', id: 'fixture', summary: 'Offline fixture', install: ['github-release'], launch: { type: 'bin', commands: ['fixture'] }, release: { asset: 'fixture.zip' },
   }] }));
   assert.equal(JSON.parse(run(['--third-party', override, '-m', 'fixture'], 1)).error.code, 'NOT_INSTALLED');
   assert.equal(JSON.parse(run(['--third-party', override, '-m', 'afe'], 2)).error.code, 'UNKNOWN_TOOL');

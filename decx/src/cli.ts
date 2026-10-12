@@ -38,7 +38,7 @@ usage: decx <command> [options]
        decx -m <tool> [args...]  equivalent explicit form
 
 commands:
-  install <tool>       download or build a tool into DECX_HOME (JSON)
+  install <tool>       install a verified release or PyPI package into DECX_HOME (JSON)
   update <tool>        install the latest release, replacing the installed version
   remove <tool>        remove an installed tool
   version              print the CLI version (JSON)
@@ -57,7 +57,7 @@ options:
   -V, --version        print the CLI version
 
 install options:
-  --version <tag>      release tag to install (e.g. 1.508 or tools-v0.1.0)
+  --version <version|tag>  package version or release (e.g. 1.604 or tools-v0.1.0)
   --force              reinstall over an existing install, replacing links
   --links <dir>        PATH link directory (default ~/.local/bin)
   --no-links           install without PATH links
@@ -72,11 +72,13 @@ const COMMAND_HELP: Record<string, string> = {
 
 Install one tool into DECX_HOME: the executables go to $DECX_HOME/bin, the
 payload to $DECX_HOME/share/<tool>, and a PATH link to ~/.local/bin (or
---links).  Release installs download the platform asset and verify it against
-the release's checksums when the manifest declares them; kind "python-venv"
-tools install the declared package into a private virtualenv.  Nothing is
-committed until every check, including the tool's own verify command, has
-succeeded.
+--links). Release installs select the newest stable release carrying every
+declared host primary/extra asset. Omitted or null checksums requires GitHub
+REST SHA-256 digests for every asset; explicit checksum files remain supported.
+Bare versions match listed tags/assets unless an explicit tagPrefix is declared;
+full tags download directly, still verified. Python tools install the declared
+PyPI package into a private Python 3 virtualenv; pip metadata owns minimum Python
+versions. Nothing is committed until all checks, including verify, succeed.
 
 options: --version <tag>, --force, --links <dir>, --no-links, --home <dir>,
          --third-party <dir>, --pretty

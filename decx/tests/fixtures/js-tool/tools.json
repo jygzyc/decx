@@ -1,13 +1,13 @@
 {
+  "manifest": 1,
   "tools": [
     {
-      "manifest": 2,
+      "repo": "acme/jsprobe",
       "id": "jsprobe",
       "summary": "Offline Node launcher integration fixture",
       "install": ["github-release"],
       "launch": { "type": "js", "commands": ["jsprobe"] },
       "release": {
-        "repository": "acme/jsprobe",
         "tagPrefix": "v",
         "asset": "jsprobe-{version}.tar.gz",
         "checksums": "SHA256SUMS"

@@ -23,7 +23,7 @@ decx -m kuna --help      # 直接运行工具本身，不翻译参数
 decx help install        # 查看管理器或单个命令的用法
 ```
 
-工具以带显式 `id` 的 manifest-2 条目声明在中央目录 `third_party/tools.json` 中，不写代码。可执行文件与载荷位于 `$DECX_HOME`（`bin/`、`share/<id>/`，其中 `PROVENANCE` 记录来源与校验值）；管理器只安装工具、不安装语言运行时，各工具保留自己的参数与输出。完整布局、`--links` 与安装规则见 [`decx/README.md`](decx/README.md)。
+工具以不带版本的条目声明在中央目录 `third_party/tools.json` 中，根级必须为 `manifest: 1`，每个条目必须有 `id` 与 GitHub `repo: "owner/repo"`，不写代码。可选 `requires` 为 `bin`/`python`/`js`，必须匹配 `launch.type`，省略时推导；空 `env: {}` 对任意运行时合法。归档安装逐页选择带齐主机主资产与额外资产的最新稳定 release，跳过无关发布、draft 与 prerelease。省略或 null `checksums` 时，每个下载必须有 GitHub REST SHA-256 摘要；显式校验文件与 tagPrefix 仍可配置。裸版本匹配列表中的 tag 与资产，不假定 `v`；完整 tag 可直接下载，但仍必须校验。可执行文件与载荷位于 `$DECX_HOME`（`bin/`、`share/<id>/`，其中 `PROVENANCE` 记录来源与校验值）；管理器只安装工具、不安装语言运行时，各工具保留自己的参数与输出。完整布局、`--links` 与安装规则见 [`decx/README.md`](decx/README.md)。
 
 ### 平台支持
 
@@ -43,7 +43,7 @@ decx help install        # 查看管理器或单个命令的用法
 
 各平台依赖：
 
-- **DroidASC** — Python >=3.10 与 `venv`；DECX 在私有虚拟环境内运行 pip 安装 PyPI 发布包及其依赖。
+- **DroidASC** — Python 3 与 `venv`；DECX 探测解释器，在私有环境内用 pip 安装 PyPI 包；最低 Python 版本由上游包元数据/pip 决定（目前 >=3.10）。
 - **Kuna** — 安装上游 release（macOS/Linux arm64+x86_64、Windows x86_64），SLEIGH specs 为单独资产；生成的启动器导出 `KUNA_SPECS`。上游没有 Windows arm64 产物，`decx install kuna` 会直接报出来，而不是去编译参考用的源码。
 - **AFE** — 安装匹配平台的预编译 GitHub Release 产物（由 DECX 自有的 `third_party/afe` 构建）；目前缺少对应资产时会报错，尚无 cargo 回退安装。ext4/EROFS/ZIP 由原生解析器处理，无需外部提取工具。
 
@@ -84,7 +84,7 @@ python3 skills/check-skills.py && node --test .pi/extensions/decx/*.test.ts
 project=$(mktemp -d); node .pi/extensions/decx/cli.ts init --root "$project" && node .pi/extensions/decx/cli.ts check --root "$project"
 ```
 
-各区域的完整门禁见 AGENTS.md §Validation；CI 按对象拆成 `.github/workflows/` 下的多个流程（`decx-cli.yml`、`decx-afe.yml`、`decx-droidasc.yml`、`decx-kuna.yml`），各自用 `paths` 限定触发范围。DroidASC 由上游发布到 PyPI，Kuna 从上游 GitHub Release 安装；本仓库只检查这两个工具的安装，管理器和 AFE 的流程负责发布。管理器与 crate 的门禁全部离线运行（fixture 压缩包、伪工具链与临时 prefix）；DroidASC 与 Kuna 两个流程会真实跑一遍安装路径，PR 流程不编译 vendored 的上游源码。发布：`decx-v*` → `decx-<version>.tar.gz` + `decx-SHA256SUMS.txt`，以及 `decx-pi-<version>.tar.gz` + `decx-pi-SHA256SUMS.txt`，`tools-v*` → 六个平台的 `afe-<version>-<platform>` 包 + `afe-SHA256SUMS.txt`。DroidASC 不需要本仓库打包源码。kuna 自动跟踪上游：其流程每 12 小时把 pin 的 tag 与上游最新 release 对比，没有更新就什么都不推送；有更新则移动 submodule pin、重新复制 skill 引用，并推送提交。`decx install kuna` 直接安装官方上游 `v*` release，通过 GitHub REST asset 的 SHA-256 摘要校验下载文件。
+各区域的完整门禁见 AGENTS.md §Validation；CI 按对象拆成 `.github/workflows/` 下的多个流程（`decx-cli.yml`、`decx-afe.yml`、`decx-droidasc.yml`、`decx-kuna.yml`），各自用 `paths` 限定触发范围。DroidASC 由上游发布到 PyPI，Kuna 从上游 GitHub Release 安装；本仓库只检查这两个工具的安装，管理器和 AFE 的流程负责发布。管理器与 crate 的门禁全部离线运行（fixture 压缩包、伪工具链与临时 prefix）；DroidASC 与 Kuna 两个流程会真实跑一遍安装路径，PR 流程不编译 vendored 的上游源码。发布：`decx-v*` → `decx-<version>.tar.gz` + `decx-SHA256SUMS.txt`，以及 `decx-pi-<version>.tar.gz` + `decx-pi-SHA256SUMS.txt`，`tools-v*` → 六个平台的 `afe-v<version>-<platform>` 包 + `afe-SHA256SUMS.txt`。目录默认用 REST 摘要；校验文件仍供显式配置使用。旧 `afe-<version>` 归档不匹配新名称，必须发布匹配资产，不提供旧名称回退。DroidASC 不需要本仓库打包源码。kuna 自动跟踪上游：其流程每 12 小时把 pin 的 tag 与上游最新 release 对比，没有更新就什么都不推送；有更新则移动 submodule pin、重新复制 skill 引用，并推送提交。`decx install kuna` 直接安装官方上游 `v*` release，通过 GitHub REST asset 的 SHA-256 摘要校验下载文件。
 
 ## 范围与非目标
 

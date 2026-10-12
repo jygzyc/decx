@@ -1,8 +1,8 @@
 /**
  * GitHub release resolution and asset download for the installer.
  *
- * The manager needs the newest release tag of a repository (stable, or the
- * newest prerelease), the release assets themselves, and -- when the project
+ * The manager selects stable releases containing the declared assets,
+ * downloads those assets, and -- when the project
  * publishes one -- a `SHA256SUMS`-style file.  Downloads stream to disk while
  * hashing, so a large archive is never buffered twice, and redirects are
  * followed by hand so the bearer token stays bound to the initial origin.
@@ -50,8 +50,13 @@ export interface ResolveReleaseOptions extends GithubRequestOptions {
   repository: string;
   /** Explicit tag; when set the API is not queried. */
   tag?: string;
-  /** Restrict "latest" to tags starting with this prefix, e.g. `tools-v`. */
+  /** Restrict discovery to tags starting with this explicit prefix. */
   tagPrefix?: string;
+  /** Bare numeric version to find among stable releases, without assuming a tag. */
+  version?: string;
+  /** Host-expanded templates; only {version} remains for each candidate tag. */
+  asset?: string;
+  extraAssets?: string[];
 }
 
 export interface ResolvedRelease {
@@ -210,12 +215,13 @@ function releaseFromJson(repository: string, json: GithubReleaseJson, source: st
   return { repository, tag, prerelease: json.prerelease === true, assetNames };
 }
 
-/**
- * Resolves the tag to install.  An explicit tag is returned untouched (the
- * caller already knows it; no API round-trip and no rate limit), while
- * "latest" is the newest stable release, or the newest stable release matching
- * `tagPrefix` across the paginated release list.
- */
+/** Strip a tag prefix without consuming the version's prerelease/build suffix. */
+export function versionFromTag(tag: string, tagPrefix?: string): string {
+  const value = tagPrefix !== undefined && tag.startsWith(tagPrefix) ? tag.slice(tagPrefix.length) : tag;
+  return /^\d/.test(value) ? value : value.replace(/^(?:v|.*?-v)(?=\d)/, '');
+}
+
+/** Explicit tags stay untouched; discovery matches stable tags and all assets. */
 export async function resolveRelease(options: ResolveReleaseOptions): Promise<ResolvedRelease> {
   const repository = options.repository;
   const explicit = options.tag;
@@ -227,12 +233,8 @@ export async function resolveRelease(options: ResolveReleaseOptions): Promise<Re
     userAgent: options.userAgent ?? DEFAULT_USER_AGENT,
     ...(options.token !== undefined ? { token: options.token } : {}),
   };
-  const wantsList = options.tagPrefix !== undefined;
-  if (!wantsList) {
-    const json = await getJson<GithubReleaseJson>(`${apiBase}/repos/${repository}/releases/latest`, requestOptions);
-    return releaseFromJson(repository, json, `${apiBase}/repos/${repository}/releases/latest`);
-  }
   const listUrl = `${apiBase}/repos/${repository}/releases`;
+  const templates = [...(options.asset !== undefined ? [options.asset] : []), ...(options.extraAssets ?? [])];
   const pageSize = 100;
   for (let page = 1; ; page += 1) {
     const list = await getJson<GithubReleaseJson[]>(`${listUrl}?per_page=${pageSize}&page=${page}`, requestOptions);
@@ -243,7 +245,11 @@ export async function resolveRelease(options: ResolveReleaseOptions): Promise<Re
       if (options.tagPrefix !== undefined && !release.tag_name.startsWith(options.tagPrefix)) {
         return false;
       }
-      return release.prerelease !== true;
+      if (release.prerelease === true) return false;
+      const version = versionFromTag(release.tag_name, options.tagPrefix);
+      if (options.version !== undefined && version !== options.version) return false;
+      const candidate = releaseFromJson(repository, release, listUrl);
+      return templates.every(template => candidate.assetNames.includes(template.replaceAll('{version}', version)));
     });
     if (first !== undefined) {
       return releaseFromJson(repository, first, listUrl);
@@ -253,7 +259,8 @@ export async function resolveRelease(options: ResolveReleaseOptions): Promise<Re
     }
   }
   const prefix = options.tagPrefix !== undefined ? ` with tag prefix "${options.tagPrefix}"` : '';
-  throw new GithubError('RELEASE_NOT_FOUND', `no stable release${prefix} found in ${repository}`, {
+  const version = options.version !== undefined ? ` for version "${options.version}"` : '';
+  throw new GithubError('RELEASE_NOT_FOUND', `no stable release${prefix}${version} containing the declared assets found in ${repository}`, {
     hint: 'pass --version <tag> to pick a release explicitly',
   });
 }

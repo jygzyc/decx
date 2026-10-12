@@ -3,11 +3,9 @@
  * where each tool comes from, how it is installed and how it is
  * launched.  A manifest is data only: the CLI never grows per-tool code.
  *
- * Installation and launch are explicit; source/release naming defaults are conventions.
- * Defaults, applied when the file loads:
- *   release.repository  jygzyc/decx (only when a release is declared)
- *   release.tagPrefix   `<id>-v`
- *   release.checksums   `<id>-SHA256SUMS.txt`
+ * The catalog root declares manifest: 1; entries are unversioned.
+ * Installation and launch are explicit. Releases use tool.repo, discover stable
+ * tags by matching assets, and require GitHub REST SHA-256 digests by default.
  *
  * `release.asset` names the per-platform asset once — `{os}`/`{arch}` are the
  * host's axes (`win`/`darwin`/`linux`, `arm64`/`amd64`), `{version}` the version
@@ -30,19 +28,16 @@ export interface LaunchSpec {
   commands: string[];
 }
 
-/** Where every tool's releases live unless a manifest points elsewhere. */
-export const DEFAULT_RELEASE_REPOSITORY = 'jygzyc/decx';
-
 /** The tool's release; one release per version, assets named per platform. */
 export interface ReleaseSpec {
-  /** `owner/repo` on GitHub; `jygzyc/decx` unless a manifest overrides it. */
+  /** Internal GitHub repository, derived only from tool.repo. */
   repository: string;
   /**
    * Tag prefix of this tool's releases, e.g. `kuna-v` when versions are tagged
    * `kuna-v1.544`.  `decx install <id>` installs the newest matching release;
    * `--version <tag|version>` picks one explicitly.
    */
-  tagPrefix: string;
+  tagPrefix?: string;
   /** Release tag/version to install by default; `latest` resolves via GitHub REST API. */
   version?: string;
   /**
@@ -57,22 +52,22 @@ export interface ReleaseSpec {
   assets?: Record<string, string>;
   /** Extra assets that belong to every platform, e.g. Kuna's compiled specs. */
   extraAssets?: Record<string, string>;
-  /** Checksum file by default; null requires a GitHub REST asset digest instead. */
+  /** Explicit checksum file; null (the default) requires GitHub REST asset digests. */
   checksums: string | null;
 }
 
 export interface ToolManifest {
-  manifest: 2;
   id: string;
+  /** Required GitHub source repository, in owner/repo form. */
+  repo: string;
   /** Explicit installer recipe; DECX manages staging and the Python virtual environment. */
   install: string[];
   summary: string;
-  homepage?: string;
   license?: string;
   /** Free-form caveat shown by `list`. */
   notes?: string;
-  /** Runtime requirements, enforced by `install` before it stages anything. */
-  requires?: { python?: string };
+  /** Runtime kind; inferred from launch.type when omitted. */
+  requires: LaunchType;
   /**
    * Environment the tool's launchers export before running the packaged binary,
    * e.g. where a release payload keeps data the tool has to find by itself.
@@ -109,10 +104,9 @@ export interface LoadResult {
 const PLATFORM_ASSET_KEYS = [...SUPPORTED_PLATFORMS, 'any'];
 
 const TOP_LEVEL_KEYS = new Set([
-  'manifest',
   'id',
   'summary',
-  'homepage',
+  'repo',
   'license',
   'notes',
   'install',
@@ -122,8 +116,7 @@ const TOP_LEVEL_KEYS = new Set([
   'env',
   'verify',
 ]);
-const RELEASE_KEYS = new Set(['repository', 'tagPrefix', 'version', 'checksums', 'asset', 'assets', 'extraAssets']);
-const REQUIREMENT_KEYS = new Set(['python']);
+const RELEASE_KEYS = new Set(['tagPrefix', 'version', 'checksums', 'asset', 'assets', 'extraAssets']);
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -193,15 +186,16 @@ export function validateManifest(
       errors.push(`${file}: unknown field "${key}"`);
     }
   }
-  if (value.manifest !== 2) {
-    errors.push(`${file}: unsupported "manifest" version (expected 2)`);
-  }
   const id = requireString(value, 'id', file, errors);
   if (id !== '' && !/^[a-z0-9][a-z0-9-]*$/.test(id)) {
     errors.push(`${file}: id must be a safe lowercase tool name`);
   }
+  const repo = requireString(value, 'repo', file, errors);
+  if (repo !== '' && !/^[A-Za-z0-9][A-Za-z0-9_.-]*\/[A-Za-z0-9][A-Za-z0-9_.-]*$/.test(repo)) {
+    errors.push(`${file}: repo must be "owner/repo"`);
+  }
   const summary = requireString(value, 'summary', file, errors);
-  const optionalTextKeys: string[] = ['homepage', 'license', 'notes'];
+  const optionalTextKeys: string[] = ['license', 'notes'];
   for (const key of optionalTextKeys) {
     if (value[key] !== undefined && typeof value[key] !== 'string') {
       errors.push(`${file}: "${key}" must be a string`);
@@ -218,7 +212,7 @@ export function validateManifest(
   } else if (kind === 'python-venv' && (recipe.length < 3 || recipe[0] !== 'pip' || recipe[1] !== 'install')) {
     errors.push(`${file}: python launch requires install: ["pip", "install", ...]`);
   }
-  const release = kind === 'binary' ? validateRelease(value.release, id, `${file}: release`, errors) : undefined;
+  const release = kind === 'binary' ? validateRelease(value.release, repo, `${file}: release`, errors) : undefined;
   if (kind === 'python-venv' && value.release !== undefined) {
     errors.push(`${file}: PyPI install recipes must not declare release assets`);
   }
@@ -229,25 +223,15 @@ export function validateManifest(
   if (value.env !== undefined) {
     if (!isEnvRecord(value.env)) {
       errors.push(`${file}: env must map variable names to non-empty strings`);
-    } else if (launch?.type !== 'bin') {
+    } else if (Object.keys(value.env).length > 0 && launch?.type !== 'bin') {
       errors.push(`${file}: env is only supported for bin tools (interpreter launchers are generated)`);
     }
   }
-  if (kind === 'binary' && value.requires !== undefined) {
-    errors.push(`${file}: requires is only supported for Python tools`);
-  }
   if (value.requires !== undefined) {
-    if (!isRecord(value.requires)) {
-      errors.push(`${file}: requires must be an object`);
-    } else {
-      for (const key of Object.keys(value.requires)) {
-        if (!REQUIREMENT_KEYS.has(key)) {
-          errors.push(`${file}: requires has unknown field "${key}"`);
-        }
-      }
-      if (value.requires.python !== undefined) {
-        requireString(value.requires, 'python', `${file}: requires`, errors);
-      }
+    if (value.requires !== 'bin' && value.requires !== 'python' && value.requires !== 'js') {
+      errors.push(`${file}: requires must be "bin", "python" or "js"`);
+    } else if (value.requires !== launch?.type) {
+      errors.push(`${file}: requires must match launch.type`);
     }
   }
   if (value.verify !== undefined) {
@@ -261,14 +245,13 @@ export function validateManifest(
     return { errors };
   }
   const manifest: ToolManifest = {
-    manifest: 2,
     id,
+    repo,
     install: value.install as string[],
     summary,
-    ...(typeof value.homepage === 'string' ? { homepage: value.homepage } : {}),
     ...(typeof value.license === 'string' ? { license: value.license } : {}),
     ...(typeof value.notes === 'string' ? { notes: value.notes } : {}),
-    ...(isRecord(value.requires) ? { requires: value.requires as { python?: string } } : {}),
+    requires: launch!.type,
     ...(isEnvRecord(value.env) ? { env: value.env } : {}),
     launch: launch!,
     ...(release !== undefined ? { release } : {}),
@@ -279,7 +262,7 @@ export function validateManifest(
 
 function validateRelease(
   value: unknown,
-  id: string,
+  repository: string,
   where: string,
   errors: string[],
 ): ReleaseSpec | undefined {
@@ -292,15 +275,7 @@ function validateRelease(
       errors.push(`${where}: unknown field "${key}"`);
     }
   }
-  let repository = DEFAULT_RELEASE_REPOSITORY;
-  if (value.repository !== undefined) {
-    if (typeof value.repository !== 'string' || !/^[^/\s]+\/[^/\s]+$/.test(value.repository)) {
-      errors.push(`${where}.repository must be "owner/repo"`);
-    } else {
-      repository = value.repository;
-    }
-  }
-  const tagPrefix = typeof value.tagPrefix === 'string' && value.tagPrefix.trim() !== '' ? value.tagPrefix : `${id}-v`;
+  const tagPrefix = typeof value.tagPrefix === 'string' && value.tagPrefix.trim() !== '' ? value.tagPrefix : undefined;
   const version = typeof value.version === 'string' && value.version.trim() !== '' ? value.version : 'latest';
   if (value.version !== undefined && (typeof value.version !== 'string' || value.version.trim() === '')) {
     errors.push(`${where}.version must be a non-empty release version or "latest"`);
@@ -336,10 +311,7 @@ function validateRelease(
   if (value.extraAssets !== undefined && !isEnvRecord(value.extraAssets)) {
     errors.push(`${where}.extraAssets must map names to asset names`);
   }
-  const checksums = value.checksums === null ? null :
-    typeof value.checksums === 'string' && value.checksums.trim() !== ''
-      ? value.checksums
-      : `${id}-SHA256SUMS.txt`;
+  const checksums = typeof value.checksums === 'string' && value.checksums.trim() !== '' ? value.checksums : null;
   if (value.checksums !== undefined && value.checksums !== null && (typeof value.checksums !== 'string' || value.checksums.trim() === '')) {
     errors.push(`${where}.checksums must be a non-empty string or null for GitHub asset digests`);
   }
@@ -348,7 +320,7 @@ function validateRelease(
   }
   return {
     repository,
-    tagPrefix,
+    ...(tagPrefix !== undefined ? { tagPrefix } : {}),
     version,
     ...(asset !== undefined ? { asset } : {}),
     ...(isEnvRecord(value.assets) ? { assets: value.assets } : {}),
@@ -396,9 +368,12 @@ export function loadManifests(dir: string): LoadResult {
     return { tools, issues: [{ file, message: `${file}: not a JSON object` }] };
   }
   for (const key of Object.keys(parsed)) {
-    if (key !== '$schema' && key !== 'tools') {
+    if (key !== '$schema' && key !== 'manifest' && key !== 'tools') {
       issues.push({ file, message: `${file}: unknown field "${key}"` });
     }
+  }
+  if (parsed.manifest !== 1) {
+    issues.push({ file, message: `${file}: unsupported "manifest" version (expected 1)` });
   }
   if (parsed.$schema !== undefined && parsed.$schema !== './decx-tool.schema.json') {
     issues.push({ file, message: `${file}: "$schema" must be "./decx-tool.schema.json"` });

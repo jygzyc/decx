@@ -45,13 +45,14 @@ test('native manager reads central catalogs, retaining valid tools without Node'
   }
   const thirdParty = path.join(temporary, 'third_party');
   const tool = {
-    manifest: 2, id: 'demo', summary: 'catalog fixture', install: ['github-release'],
+    repo: 'acme/demo', id: 'demo', summary: 'catalog fixture', install: ['github-release'],
     launch: { type: 'bin', commands: ['demo'] }, release: { asset: 'demo-{version}.zip' },
   };
   writeCatalog(thirdParty, [null, { ...tool, id: undefined }, tool, tool]);
   await expectCode(thirdParty, 'demo', 'NOT_INSTALLED', 1);
   await expectCode(thirdParty, 'missing', 'UNKNOWN_TOOL', 2);
-  for (const catalog of [{ tools: [] }, { tools: {} }, { tools: [tool], unexpected: true }]) {
+  for (const catalog of [{ manifest: 1, tools: [] }, { manifest: 1, tools: {} }, { manifest: 1, tools: [tool], unexpected: true },
+    { tools: [tool] }, { manifest: 2, tools: [tool] }]) {
     writeFile(path.join(thirdParty, 'tools.json'), JSON.stringify(catalog));
     await expectCode(thirdParty, 'demo', 'UNKNOWN_TOOL', 2);
   }
@@ -102,7 +103,7 @@ else {
     routes[`${directory}/${asset}`] = data;
     routes[`${directory}/SHA256SUMS`] = `${version === '2.0.0' ? '0'.repeat(64) : sha256(data)}  ${asset}\n`;
   }
-  const releaseList = JSON.stringify([{ tag_name: 'v1.1.0', prerelease: false, draft: false }]);
+  const releaseList = JSON.stringify([{ tag_name: 'v1.1.0', prerelease: false, draft: false, assets: [{ name: `demo-1.1.0.${suffix}` }] }]);
   const redirected = await startFixtureServer({ '/releases': releaseList });
   t.after(() => redirected.close());
   routes['/repos/acme/demo/releases'] = '';
@@ -111,10 +112,10 @@ else {
   });
   t.after(() => server.close());
   writeCatalog(thirdParty, [{
-    manifest: 2, id: 'demo', summary: 'offline native fixture', install: ['github-release'],
+    repo: 'acme/demo', id: 'demo', summary: 'offline native fixture', install: ['github-release'],
     launch: { type: 'bin', commands: ['demo'] },
     env: { DECX_NATIVE_MARKER: 'launcher环境' },
-    release: {repository:'acme/demo', tagPrefix:'v', assets:{[HOST_PLATFORM]:`demo-{version}.${suffix}`}, checksums:'SHA256SUMS'},
+    release: {tagPrefix:'v', assets:{[HOST_PLATFORM]:`demo-{version}.${suffix}`}, checksums:'SHA256SUMS'},
     verify: '--version',
   }]);
   const env = {
@@ -157,6 +158,49 @@ else {
   assert.ok(redirected.requested.includes('/releases'), 'native transport must follow the explicit redirect');
   assert.deepEqual(redirected.authorizations, [undefined], 'credentials must not cross origins');
   assert.ok(server.authorizations.includes('Bearer fixture-secret'));
+  const genericVersion = '1.1.0+engine-v2';
+  const genericTag = `tools-v${genericVersion}`;
+  writeFile(source, fs.readFileSync(source, 'utf8').replace('demo 1.1.0', `demo ${genericVersion}`));
+  const genericCompiled = spawnSync(process.execPath, [compileScript, 'tool', source, '-o', fixture, '--no-keep-llvm'], { encoding: 'utf8', timeout: 90_000 });
+  assert.equal(genericCompiled.status, 0, genericCompiled.stderr);
+  const genericArchive = packFixture();
+  const resource = makeTarGz([{ name: 'specs/verified.sla', data: 'native verified resource' }]);
+  const genericAsset = `demo-${genericVersion}.${suffix}`;
+  const resourceAsset = `specs-${genericVersion}.tar.gz`;
+  const metadata = { tag_name: genericTag, assets: [
+    { name: genericAsset, digest: `sha256:${sha256(genericArchive)}` },
+    { name: resourceAsset, digest: `sha256:${sha256(resource)}` },
+  ] };
+  const metadataPath = `/generic/repos/acme/demo/releases/tags/${encodeURIComponent(genericTag)}`;
+  routes[metadataPath] = JSON.stringify(metadata);
+  routes[`/acme/demo/releases/download/${encodeURIComponent(genericTag)}/${encodeURIComponent(genericAsset)}`] = genericArchive;
+  routes[`/acme/demo/releases/download/${encodeURIComponent(genericTag)}/${encodeURIComponent(resourceAsset)}`] = resource;
+  routes['/generic/repos/acme/demo/releases?per_page=100&page=1'] = JSON.stringify([
+    { tag_name: 'manager-v9.0.0', assets: [{ name: 'manager-9.0.0.zip' }] }, metadata,
+  ]);
+  writeCatalog(thirdParty, [{
+    repo: 'acme/demo', id: 'demo', summary: 'generic native release', install: ['github-release'],
+    launch: { type: 'bin', commands: ['demo'] }, requires: 'bin', verify: '--version',
+    release: { asset: `demo-{version}.${suffix}`, extraAssets: { specs: 'specs-{version}.tar.gz' } },
+  }]);
+  const executeGeneric = (args: string[]) => runNative(['--third-party', thirdParty, ...args], temporary,
+    { ...env, DECX_GITHUB_API_BASE: `${server.url}/generic` });
+  for (const args of [[], ['--version', genericVersion], ['--version', genericTag]]) {
+    const generic = await executeGeneric(['update', 'demo', ...args]);
+    assert.equal(generic.status, 0, JSON.stringify(generic));
+    assert.equal(JSON.parse(generic.stdout).releaseTag, genericTag);
+    assert.match(fs.readFileSync(provenance, 'utf8'), /specs_checksum: verified/);
+    assert.equal(fs.readFileSync(path.join(home, 'share/demo/specs/verified.sla'), 'utf8'), 'native verified resource');
+  }
+  const genericRecord = fs.readFileSync(provenance);
+  routes[metadataPath] = JSON.stringify({ ...metadata, assets: metadata.assets.map(asset => ({ name: asset.name })) });
+  const noDigest = await executeGeneric(['update', 'demo', '--version', genericTag]);
+  assert.equal(noDigest.status, 1, JSON.stringify(noDigest));
+  assert.equal(JSON.parse(noDigest.stdout).error.code, 'CHECKSUM_MISSING');
+  assert.deepEqual(fs.readFileSync(provenance), genericRecord);
+  const genericLaunch = await execute(['-m', 'demo', '--version']);
+  assert.equal(genericLaunch.status, 0, JSON.stringify(genericLaunch));
+  assert.equal(genericLaunch.stdout.trim(), `demo ${genericVersion}`);
   const removed = await execute(['remove', 'demo']);
   assert.equal(removed.status, 0, JSON.stringify(removed));
   assert.equal(fs.existsSync(provenance), false);

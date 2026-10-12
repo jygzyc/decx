@@ -56,11 +56,12 @@ jobs:
       - name: The manifest covers every supported platform
         run: |
           node -e '
-            const manifest = require("./third_party/tools.json").tools.find(tool => tool.id === "kuna");
-            if (!manifest) throw new Error("tool catalog is missing kuna");
+            const catalog = require("./third_party/tools.json");
+            const manifest = catalog.tools.find(tool => tool.id === "kuna");
+            if (catalog.manifest !== 1 || !manifest) throw new Error("tool catalog is missing kuna");
             const keys = ["linux-amd64", "linux-arm64", "darwin-amd64", "darwin-arm64", "win-amd64"];
-            const { repository, tagPrefix, assets, checksums } = manifest.release;
-            if (repository !== "Noelo-Lab/kuna" || tagPrefix !== "v") {
+            const { tagPrefix, assets, checksums } = manifest.release;
+            if (manifest.repo !== "Noelo-Lab/kuna" || (tagPrefix !== undefined && tagPrefix !== "v")) {
               throw new Error("Kuna must install from the official v* release tags");
             }
             for (const key of keys) {
@@ -73,7 +74,7 @@ jobs:
               }
               console.log(key.padEnd(12) + name);
             }
-            if (checksums !== null) {
+            if (checksums !== undefined && checksums !== null) {
               throw new Error("official Kuna assets use GitHub REST SHA-256 digests");
             }
             if (manifest.env?.KUNA_SPECS !== "{prefix}/specs") {
@@ -131,7 +132,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           cat "$DECX_HOME/share/kuna/PROVENANCE"
-          tag="$(gh api repos/Noelo-Lab/kuna/releases/latest --jq .tag_name)"
+          tag="$(gh api --paginate --slurp repos/Noelo-Lab/kuna/releases --jq '[.[][] | select(.draft == false and .prerelease == false and (.tag_name | startswith("v")))] | first | .tag_name')"
           echo "official Kuna release: $tag"
           grep -qx "release_tag: $tag" "$DECX_HOME/share/kuna/PROVENANCE"
 
@@ -157,11 +158,11 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -eu
-          repository="$(node -p 'require("./third_party/tools.json").tools.find(tool => tool.id === "kuna").release.repository')"
+          repository="$(node -e 'const catalog = require("./third_party/tools.json"); if (catalog.manifest !== 1) throw new Error("expected catalog manifest 1"); console.log(catalog.tools.find(tool => tool.id === "kuna").repo)')"
           git -C third_party/kuna fetch --tags --force origin
           pinned="$(bash .github/scripts/pinned-gitlink.sh third_party/kuna)"
           pinned_tag="$(git -C third_party/kuna describe --tags --exact-match "$pinned")"
-          latest_tag="$(gh api "repos/$repository/releases/latest" --jq .tag_name)"
+          latest_tag="$(gh api --paginate --slurp "repos/$repository/releases" --jq '[.[][] | select(.draft == false and .prerelease == false and (.tag_name | startswith("v")))] | first | .tag_name')"
           echo "pinned: $pinned_tag ($pinned)"
           echo "upstream latest: $latest_tag"
           for t in "$pinned_tag" "$latest_tag"; do
@@ -177,7 +178,7 @@ jobs:
             exit 0
           fi
           latest_version="${latest_tag#v}"
-          names="$(gh api "repos/$repository/releases/latest" --jq '.assets[].name')"
+          names="$(gh api "repos/$repository/releases/tags/$latest_tag" --jq '.assets[].name')"
           for suffix in linux-x86_64.tar.gz linux-arm64.tar.gz macos-x86_64.tar.gz macos-arm64.tar.gz windows-x86_64.zip specs.tar.gz; do
             if ! grep -qx "kuna-v$latest_version-$suffix" <<<"$names"; then
               echo "::error::upstream $latest_tag is missing the asset kuna-v$latest_version-$suffix; leaving the pin alone"

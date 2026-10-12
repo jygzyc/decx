@@ -16,37 +16,6 @@ function firstLine(result: CommandResult): string {
   return text.split(/\r?\n/)[0] ?? '';
 }
 
-/** First `1.2` / `1.2.3` in a version banner. */
-function firstVersion(text: string): string | undefined {
-  return /(\d+)\.(\d+)(?:\.\d+)?/.exec(text)?.[0];
-}
-
-function compareVersions(a: string, b: string): number {
-  const left = a.split('.').map((part) => Number.parseInt(part, 10) || 0);
-  const right = b.split('.').map((part) => Number.parseInt(part, 10) || 0);
-  for (let index = 0; index < Math.max(left.length, right.length); index += 1) {
-    const difference = (left[index] ?? 0) - (right[index] ?? 0);
-    if (difference !== 0) {
-      return difference > 0 ? 1 : -1;
-    }
-  }
-  return 0;
-}
-
-/** `>=3.10` and bare `3.10` are the only requirement forms the manifests use. */
-function meetsRequirement(version: string, requirement: string): boolean {
-  const match = /^(>=|>|=)?\s*(\d+(?:\.\d+)*)$/.exec(requirement.trim());
-  if (match === null) {
-    return true;
-  }
-  const comparator = match[1] ?? '>=';
-  const difference = compareVersions(version, match[2] as string);
-  if (comparator === '>') {
-    return difference > 0;
-  }
-  return comparator === '=' ? difference === 0 : difference >= 0;
-}
-
 interface PythonCandidate {
   /** Interpreter command name, e.g. `python3.12`. */
   command: string;
@@ -70,8 +39,8 @@ function pythonCandidates(ctx: BridgeContext): PythonCandidate[] {
   if (isWindows()) {
     candidates.push({ command: 'py', args: ['-3'], label: 'py -3' });
   }
-  // Newest first: the first candidate that satisfies the manifest wins, so a
-  // too-old default is skipped in favour of an explicitly versioned interpreter.
+  // Also probe versioned interpreters when PATH defaults are absent or Python 2.
+  // Package metadata and pip enforce any package-specific minimum Python version.
   for (const minor of [15, 14, 13, 12, 11, 10]) {
     candidates.push({ command: `python3.${minor}`, args: [], label: `python3.${minor}` });
     if (isWindows()) {
@@ -81,39 +50,18 @@ function pythonCandidates(ctx: BridgeContext): PythonCandidate[] {
   return candidates;
 }
 
-/**
- * Finds the interpreter a venv install will use. `python3`/`python` win when
- * they satisfy the manifest; otherwise the versioned names are probed and the
- * first satisfying one is used, so a manifest that needs `>=3.10` still
- * installs on a machine whose default `python3` is the system 3.9.
- */
-async function findPython(
-  ctx: BridgeContext,
-  id: string,
-  requirement: string | undefined,
-): Promise<PythonCandidate & { output: string }> {
-  let fallback: (PythonCandidate & { output: string }) | null = null;
+/** Finds Python 3 for a private venv; pip owns package-version requirements. */
+async function findPython(ctx: BridgeContext): Promise<PythonCandidate & { output: string }> {
   for (const candidate of pythonCandidates(ctx)) {
     const probe = await runCommand(ctx, candidate.command, [...candidate.args, '--version']);
     if (probe.error !== undefined || probe.status !== 0) {
       continue;
     }
     const output = firstLine(probe);
-    if (!output.startsWith('Python 3')) {
+    if (!/^Python 3\./.test(output)) {
       continue;
     }
-    const found = { command: candidate.command, args: candidate.args, label: candidate.label, output };
-    fallback ??= found;
-    const version = firstVersion(output);
-    if (requirement === undefined || version === undefined || meetsRequirement(version, requirement)) {
-      return found;
-    }
-  }
-  if (fallback !== null) {
-    throw new InstallError(
-      'PYTHON_TOO_OLD',
-      `${fallback.output} (${fallback.label}) is too old: ${id} requires python ${requirement}. Install a newer Python 3 (macOS: 'brew install python@3.12'; Debian/Ubuntu: 'apt install python3 python3-venv'; Windows: python.org or 'winget install Python.Python.3') and re-run; decx does not install it for you.`,
-    );
+    return { command: candidate.command, args: candidate.args, label: candidate.label, output };
   }
   throw new InstallError(
     'PYTHON_NOT_FOUND',
@@ -130,7 +78,7 @@ export async function stageVenv(
 ): Promise<StagedOutcome> {
   const packageName = manifest.install[2] as string;
   const provenance: Record<string, string> = {};
-  const python = await findPython(ctx, manifest.id, manifest.requires?.python);
+  const python = await findPython(ctx);
   const platformOs = ctx.platform !== null ? ctx.platform.split('-')[0] ?? 'unknown' : isWindows() ? 'win' : process.platform;
   const windows = platformOs === 'win';
   const venvBin = windows ? 'Scripts' : 'bin';
@@ -181,7 +129,7 @@ export async function stageVenv(
       ctx.log(`running pip install for ${manifest.id} into ${venvDir}`);
       const install = await runCommand(ctx, venvPython, ['-m', 'pip', 'install', ...installArgs], 'stream');
       if (install.error !== undefined || install.status !== 0) {
-        throw new InstallError('PIP_FAILED', `pip install failed. Check the declared install command and Python package dependencies for ${manifest.id}.`);
+        throw new InstallError('PIP_FAILED', `pip install failed using ${python.output} (${python.label}). Check the pip output, declared package dependencies and minimum Python version for ${manifest.id}; install a compatible Python 3 and select it with DECX_PYTHON if needed.`);
       }
       const versionResult = await runCommand(ctx, venvPython, ['-c', `import importlib.metadata; print(importlib.metadata.version(${JSON.stringify(packageName)}))`], 'capture');
       const installedVersion = versionResult.stdout.trim();
