@@ -13,9 +13,10 @@ DECX 不实现反编译器，也不再提供统一命令包装层。直接使用
 
 ## 安装与管理工具
 
-工具管理器位于 [`decx/`](decx/README.md)：一个 Node CLI（Node 24.21+，直接执行 TypeScript 源码，无构建、无依赖，每条命令输出一个 JSON 对象），用于安装上述工具并报告当前主机支持的能力。
+工具管理器位于 [`decx/`](decx/README.md)：通过 npm 分发的 Node CLI（需要 Node 24.21+，无运行时依赖，内嵌工具目录，每条数据命令输出一个 JSON 对象），用于安装上述工具并报告当前主机支持的能力。`5.0.0` 发布后可这样安装（在此之前 npm `latest` 仍是旧版 `4.3.0`）：
 
 ```bash
+npm install -g @jygzyc/decx-cli
 decx install kuna        # 下载该平台的上游 release 与编译好的 SLEIGH specs
 decx install droidasc    # 创建私有 venv，直接从 PyPI pip install droidasc
 decx install afe         # 下载匹配平台的 tools release；缺少资产时报错，不自动回退到 cargo 构建
@@ -29,11 +30,9 @@ decx help install        # 查看管理器或单个命令的用法
 
 管理器按主机平台选择要安装与执行的文件：`<os>-<arch>` 键（`win`/`darwin`/`linux` × `arm64`/`amd64`，如
 `darwin-arm64`、`win-amd64`）
-决定每个工具用哪个 release asset（或源码构建），`decx -m <tool> …` 执行的就是该平台解析出的
-启动器 —— 调用方从不自己挑二进制或路径。scriptc 0.2.7 直接编译完整管理器（`cd decx && npm run setup:scriptc && npm run build:scriptc && npm run test:native`），
-原生可执行文件不依赖 Node；源码开发与 JavaScript 发行版仍需 Node。macOS arm64 的原生生命周期测试已在本地通过，CI 对 Linux x64/arm64、macOS arm64 与 Windows x64 设置同样的发布门槛。
+决定每个工具使用哪个 release asset，`decx -m <tool> …` 执行该平台解析出的程序与参数，调用方不自己挑二进制或路径。管理器通过 npm 分发单文件 JavaScript 包，运行时需要 Node，不再提供独立原生可执行文件。
 
-安装、使用与编译均支持 macOS、Linux 与 Windows。管理器提供 Node CLI 与编译后的原生可执行文件，都可在 Windows 的 PowerShell / cmd 中直接运行并安装 `.exe`/`.cmd` 名称；工具安装不依赖 Git Bash、`uname` 或 POSIX 工具。
+安装、使用与构建均支持 macOS、Linux 与 Windows。npm CLI 可在 Windows 的 PowerShell / cmd 中直接运行，安装的工具使用 `.exe`/`.cmd` 名称；工具安装不依赖 Git Bash、`uname` 或 POSIX 工具。
 
 | 工具 | macOS / Linux | Windows |
 | --- | --- | --- |
@@ -55,7 +54,7 @@ AFE 只产出文件：设备收集需要 ADB，不支持的文件系统特性会
 
 WikiSkill 的维护流程内化在 pi 扩展的命令和工具中，不再分发独立的 wiki skill。
 
-下载 `decx-pi-<版本>.tar.gz` 并解压，先进入 `/path/to/decx-pi-<版本>/extensions/decx` 执行 `npm ci` 安装锁定的 `@openclaw/fs-safe` 依赖，再执行 `pi install /path/to/decx-pi-<版本>`；本地 pi 包不会自动安装依赖，无需 clone 源码。进入任意项目后执行 `/decx init`，在当前目录创建**空白** `.decxwiki/{raw,wiki}` 和空的 `.agents/skills/`，不下载或复制 skill；然后单独用 `npx skills` 安装 `decx-tool`。执行 `/decx-wiki` 由扩展整理执行记录、更新 wiki 并检查结构；通过 `decx_propose` / `decx_gate` 更新或回滚实际运行的 skill。旧知识仅保存在本地且被 Git 忽略的 `archive/legacy-knowledge/`，不会作为新项目的初始化内容。根目录 `skills/` 只保留当前可独立安装的执行 skill，不会被当作 wiki 工作区。
+pi 扩展作为独立、可选的源码组件保留，不包含在 npm CLI 包中，也不会自动安装；具体加载方法见[扩展 README](.pi/extensions/decx/README.md)。进入任意项目后执行 `/decx init`，在当前目录创建**空白** `.decxwiki/{raw,wiki}` 和空的 `.agents/skills/`，不下载或复制 skill；然后单独用 `npx skills` 安装 `decx-tool`。执行 `/decx-wiki` 由扩展整理执行记录、更新 wiki 并检查结构；通过 `decx_propose` / `decx_gate` 更新或回滚实际运行的 skill。旧知识仅保存在本地且被 Git 忽略的 `archive/legacy-knowledge/`，不会作为新项目的初始化内容。根目录 `skills/` 只保留当前可独立安装的执行 skill，不会被当作 wiki 工作区。
 
 pi 扩展按推理、维护、提案阶段限制工具访问，并执行候选应用、分数门控和技能回滚。详见[工作流及读写约束边界](.pi/extensions/decx/README.md)。
 
@@ -84,9 +83,9 @@ python3 skills/check-skills.py && node --test .pi/extensions/decx/*.test.ts
 project=$(mktemp -d); node .pi/extensions/decx/cli.ts init --root "$project" && node .pi/extensions/decx/cli.ts check --root "$project"
 ```
 
-各区域的完整门禁见 AGENTS.md §Validation。`.github/workflows/` 只保留 DECX 自有组件的流程：`decx-cli.yml`、`decx-afe.yml`、`decx-knowledge.yml`，各自用 `paths` 限定触发范围；分支和 PR 做检查，发布 tag 构建管理器和 AFE 产物。管理器与 crate 的门禁离线运行（fixture 压缩包、伪工具链与临时 prefix）。Actions 不获取第三方工具、不查询其 release、不自动更新源码 pin，也不编译 vendored 上游源码；CLI 直接读取 `third_party/tools.json`，解析匹配版本、下载上游发行包并强制校验 SHA-256。DroidASC 从 PyPI 安装到私有 venv，Kuna 从官方 release 安装二进制和 specs。
+各区域的完整门禁见 AGENTS.md §Validation。`.github/workflows/` 只保留 DECX 自有组件的流程：`decx-cli.yml`、`decx-afe.yml`、`decx-knowledge.yml`，各自用 `paths` 限定触发范围；分支和 PR 做检查，发布 tag 发布 npm CLI 和 AFE 产物。管理器与 crate 的门禁离线运行（fixture 压缩包、伪工具链与临时 prefix）。Actions 不获取第三方工具、不查询其 release、不自动更新源码 pin，也不编译 vendored 上游源码；CLI 直接读取 `third_party/tools.json`，解析匹配版本、下载上游发行包并强制校验 SHA-256。DroidASC 从 PyPI 安装到私有 venv，Kuna 从官方 release 安装二进制和 specs。
 
-发布：`decx-v*` → `decx-<version>.tar.gz` + `decx-SHA256SUMS.txt`，以及 `decx-pi-<version>.tar.gz` + `decx-pi-SHA256SUMS.txt`；`tools-v*` → 六个平台的 `afe-v<version>-<platform>` 包 + `afe-SHA256SUMS.txt`。目录默认用 REST 摘要，校验文件仍供显式配置使用；旧 `afe-<version>` 归档不匹配新名称，必须发布匹配资产，不提供旧名称回退。DroidASC 与 Kuna 不需要本仓库打包发布；源码 pin 和原样复制的 Kuna skill 引用由显式维护更新。
+发布：`decx-v*` → 公开 npm 包 `@jygzyc/decx-cli`，必须先通过三平台检查并配置 npm trusted publishing；`tools-v*` → 六个平台的 `afe-v<version>-<platform>` 包 + `afe-SHA256SUMS.txt`。目录默认用 REST 摘要，校验文件仍供显式配置使用；旧 `afe-<version>` 归档不匹配新名称，必须发布匹配资产，不提供旧名称回退。DroidASC 与 Kuna 不需要本仓库打包发布；源码 pin 和原样复制的 Kuna skill 引用由显式维护更新。
 
 真实分析检查保留为手动命令：先通过 CLI 安装工具到显式的临时 `DECX_HOME`，再运行 `npm --prefix decx run test:functional:kuna` 或 `npm --prefix decx run test:functional:droidasc`。缺少工具时会失败，不会静默跳过；这些检查不属于离线 CI。
 

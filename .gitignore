@@ -8,12 +8,12 @@ __pycache__/
 .venv/
 venv/
 
-# Node (skill helper scripts only)
+# Node dependencies
 node_modules/
 # Built CLI package output
 decx/dist/
 decx/artifacts/
-decx/.scriptc-toolchain/
+decx/*.tgz
 
 # Install roots the workflows use when they exercise the manager (.ci-home)
 .ci-home/

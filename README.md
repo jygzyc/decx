@@ -15,11 +15,13 @@ Use each analyzer's native interface:
 
 ## Install and manage tools
 
-The toolkit manager lives in [`decx/`](decx/README.md) — a Node CLI (Node 24.21+, no build step,
-no dependencies, one JSON object per command) that installs the tools above and reports what this
-host supports.
+The toolkit manager lives in [`decx/`](decx/README.md) — an npm CLI requiring Node 24.21+,
+with no runtime dependencies and an embedded tool catalog. It installs the tools above
+and reports what this host supports. Once `5.0.0` is published, install it with
+(the existing npm `latest` is still legacy `4.3.0` until then):
 
 ```bash
+npm install -g @jygzyc/decx-cli
 decx install kuna        # upstream release for this platform, plus compiled SLEIGH specs
 decx install droidasc    # private venv, pip install droidasc from PyPI
 decx install afe         # prebuilt tools-v release for this platform
@@ -39,15 +41,14 @@ Bare versions match listed tags/assets without assuming `v`; full tags can be
 selected directly, still verified. Executables
 and payloads live under `$DECX_HOME` (`bin/`, `share/<id>/` with a `PROVENANCE` record); the
 manager installs tools, not language runtimes, and each tool keeps its own arguments and output.
-Layout, `--links` and install rules: [`decx/README.md`](decx/README.md). Direct native compilation
-with scriptc 0.2.7 builds the complete manager (`cd decx && npm run setup:scriptc && npm run build:scriptc && npm run test:native`).
-The native executable does not require Node; Node remains required for source development and the JavaScript release.
-Local native lifecycle tests pass on macOS arm64; CI gates Linux x64/arm64, macOS arm64 and Windows x64.
+Layout, `--links` and install rules: [`decx/README.md`](decx/README.md).
+The manager ships as a single JavaScript bundle through npm; Node is required at runtime.
+It does not ship a separate native executable.
 
 ### Platform support
 
 macOS, Linux and Windows are supported for installing, using and building. The manager is
-available as a Node CLI and a compiled native executable. Both run in PowerShell or cmd on Windows
+available as an npm-installed Node CLI. It runs in PowerShell or cmd on Windows
 and install `.exe`/`.cmd` names there; tool installation needs no Git Bash, `uname` or POSIX tooling.
 
 | Tool | macOS / Linux | Windows |
@@ -85,11 +86,9 @@ in `.agents/skills/`). The package installer, not DECX, owns skill installation.
 
 The pi extension implements the [WikiSkill](https://arxiv.org/html/2608.27454) §3 loop as commands and tools, not as a second agent skill.
 
-Download the `decx-pi-<version>.tar.gz` release bundle, unpack it, change into
-`/path/to/decx-pi-<version>/extensions/decx` and run `npm ci` for its pinned
-`@openclaw/fs-safe` dependency, then `pi install /path/to/decx-pi-<version>`;
-no repository clone is required. In any
-project, `/decx init` creates a fresh `.decxwiki/{raw,wiki}` and an **empty**
+The extension is optional and source-only, separate from the npm CLI package.
+See its [setup instructions](.pi/extensions/decx/README.md); it is not installed by npm.
+In any project, `/decx init` creates a fresh `.decxwiki/{raw,wiki}` and an **empty**
 `.agents/skills/` directory; it never downloads or copies a skill. Install
 `decx-tool` separately with `npx skills` as above.
 The extension's `/decx-wiki` command (not a separate skill) then consolidates
@@ -131,13 +130,14 @@ project=$(mktemp -d); node .pi/extensions/decx/cli.ts init --root "$project" && 
 
 AGENTS.md §Validation lists the full gate per area. `.github/workflows/` contains
 only DECX-owned checks: `decx-cli.yml`, `decx-afe.yml` and `decx-knowledge.yml`, scoped
-to their paths. Branch pushes and PRs run checks; release tags publish manager and
-AFE assets. Manager and crate gates run offline (fixture archives, fake toolchains,
+to their paths. Branch pushes and PRs run checks; release tags publish the npm CLI
+and AFE assets. Manager and crate gates run offline (fixture archives, fake toolchains,
 temp prefixes). Actions do not install upstream analyzers, query their releases,
 update their source pins or compile vendored upstream checkouts. The CLI reads
-`third_party/tools.json` and installs upstream distributions directly. Releases: `decx-v*` → `decx-<version>.tar.gz` +
-`decx-SHA256SUMS.txt` and `decx-pi-<version>.tar.gz` +
-`decx-pi-SHA256SUMS.txt`; `tools-v*` → the six `afe-v<version>-<platform>` archives +
+`third_party/tools.json` and installs upstream distributions directly. Releases:
+`decx-v*` → the public npm package `@jygzyc/decx-cli` (three-platform tests gate
+publication; npm trusted publishing must be configured first); `tools-v*` →
+the six `afe-v<version>-<platform>` archives +
 `afe-SHA256SUMS.txt`. The catalog uses REST digests by default; the checksum file
 remains available for explicit custom configurations. Existing `afe-<version>`
 archives do not match the new names: matching assets must be published; no legacy

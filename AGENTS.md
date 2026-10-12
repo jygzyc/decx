@@ -24,8 +24,9 @@ It is not a decompiler, unified analysis CLI, plugin runtime, or analysis server
 - `decx/` is the toolkit installer and manager: a TypeScript CLI that discovers the tools in
   `third_party/tools.json`, installs, locates and runs them, and reports what is
   installed and what this host supports. Development runs TypeScript directly on
-  Node 24.21+; releases ship bundled JavaScript and scriptc-native executables with
-  embedded tool manifests. Native executables require no external Node. It prints
+  Node 24.21+; releases ship the public npm package `@jygzyc/decx-cli`, with a
+  single bundled JavaScript executable and embedded tool catalog. Node is required
+  at runtime; no native manager or separate extension archive is published. It prints
   JSON on stdout and keeps no runtime dependencies. It is the only
   install path — installs are declared as data, never as per-platform scripts.
 
@@ -69,7 +70,7 @@ Installation prefers upstream distribution; repository release assets are fallba
 Integrity failures must stop installation, not silently switch sources.
 
 Windows support is part of the contract: installing, using and compiling must work there
-as well as on macOS and Linux. Both the Node CLI and compiled native manager run directly in
+as well as on macOS and Linux. The npm-installed Node CLI runs directly in
 PowerShell or cmd — never require Git Bash, `uname`, `bash` or POSIX tools at install
 time — and it installs `.exe`/`.cmd` names there. Keep the Windows branches covered by
 tests. Rust code must build and pass tests under MSVC (no POSIX-only APIs, no `/bin/sh`
@@ -115,15 +116,14 @@ ledger lives under the pi agent directory, outside the three knowledge layers.
 - AFE: `cd third_party/afe && cargo build --release && cargo test` (stable Rust);
   `cargo fmt --check` and `cargo clippy --all-targets -- -D warnings` must stay clean.
 - Manager: `cd decx && npm ci && npm run typecheck && npm test && npm run build`; `node src/cli.ts version` must keep printing one JSON
-  envelope. Run `npm run setup:scriptc` before `npm run build:scriptc` or the independent TS-tool test;
-  it installs the official SDK archive pinned by `decx/scriptc.json`,
-  verifying SHA-256 before extraction into the ignored `.scriptc-toolchain/`, outside `npm ci`.
-  `build:scriptc` compiles the typed manager with scriptc 0.2.7 and its embedded
-  dynamic engine, not an external Node launcher. Run `npm run test:native` after
-  compiling: native release and Python-wheel lifecycle tests remove Node from PATH.
-  Four hosts are release-gated (Linux x64/arm64, macOS arm64, Windows x64);
-  Windows arm64 is unsupported by scriptc and macOS x64 is outside the release matrix.
-  Windows compilation embeds a UTF-8/long-path resource using Zig (CI pins 0.16.0, matching upstream's runtime-pack build). The manager executes the installed `launch.json` executable/argv directly: no cmd bridge, native adapter tree or legacy launch fallback. Install tests are offline — fixture archives served locally, real executables and a local wheel installed
+  envelope. `npm test` builds and exercises the shipped Node bundle, including
+  `npm pack`, temporary offline npm prefix installation, npm-created executable
+  shims and uninstall. `npm pack` builds through `prepack`; no install lifecycle
+  scripts, compiler SDK or runtime npm dependencies are shipped. Tests are
+  sequential because packing rebuilds their shared bundle. Linux, macOS and
+  Windows gate publication. The manager executes installed `launch.json`
+  executable/argv directly, without a shell bridge or legacy launch fallback.
+  Install tests are offline — fixture archives served locally, real executables and a local wheel installed
   with real Python/pip into a private venv — and must never touch the real home
   directory or the network; pass `--home`/`DECX_HOME` with temp dirs.
 - Skills: `python3 skills/check-skills.py` verifies frontmatter, names and relative
@@ -149,15 +149,16 @@ the manager, AFE, and the extension/skills. Keep their `paths:` in sync when the
 crate, catalog, skills, wiki or managed paths change. Third-party acquisition and
 release resolution belong to the CLI, never to per-tool Actions or scheduled pin updates. The manager and AFE workflows carry both checks and release publishing:
 branch pushes and pull requests run checks, while a matching tag push (or a
-`workflow_dispatch` with the `tag` input) runs release jobs instead,
+`workflow_dispatch` with the `tag` input) runs release jobs,
 each refusing to build when its tag does not match the pinned version. `decx-cli.yml`
 (`cd decx && npm ci && npm run typecheck &&
 npm test`, plus the JSON-envelope and usage-error smoke runs, on Linux, macOS and Windows
-on the latest Node 24 release; tag `decx-v*`, checked against `decx/package.json`, builds
-`dist/`, installs the pinned scriptc compiler separately and tests an independently compiled TS tool, then builds the complete native manager on four target hosts and gates release on
-  offline native lifecycle tests with Node absent from PATH (no external Node at runtime), packs `decx-<version>.tar.gz` plus `decx-SHA256SUMS.txt` and a separate
-`decx-pi-<version>.tar.gz` plus `decx-pi-SHA256SUMS.txt` (extension and execution
-skills), and smokes the bundles and launchers on all four architectures before publishing), `decx-afe.yml` (crate fmt/clippy on Linux; test,
+on the latest Node 24 release; tag `decx-v*`, checked against `decx/package.json`,
+publishes the npm package only after all three platform gates pass. npm trusted
+publishing with provenance must be configured on the existing npm package for
+`jygzyc/decx` and `decx-cli.yml`. The replacement is `5.0.0`, after legacy `4.3.0`.
+Do not publish to npm during tests or ordinary branch pushes. The optional pi
+extension remains source-only, separately loaded and tested), `decx-afe.yml` (crate fmt/clippy on Linux; test,
 release build and
 a `--help` smoke on Linux, macOS and Windows;
 Windows arm64 cross check; tag `tools-v*`, checked against
@@ -175,7 +176,7 @@ Live analysis suites remain available for manual validation with installed tools
 `npm run test:functional:droidasc` checks APK decompilation, manifest decoding and DEX
 references; `npm run test:functional:kuna` checks decompilation, recompilation and
 behavior. Use an explicit temporary `DECX_HOME`; the suites fail on absent tools
-(no silent skips) and accept `DECX_FUNCTIONAL_MANAGER` for a built native manager.
+(no silent skips) and run the built Node bundle.
 These suites are not part of offline CI. No workflow compiles vendored upstream
 checkouts or publishes their releases; the CLI has no per-tool release rule. Existing `afe-<version>` release archives do not match the catalog's
 `afe-v<version>` names: publishing matching archives is required, never add a

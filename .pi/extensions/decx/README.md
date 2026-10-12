@@ -8,17 +8,17 @@ structural checks never count as performance measurements.
 
 ## Install once; initialize per project
 
-Download `decx-pi-<version>.tar.gz` and `decx-pi-SHA256SUMS.txt` from a
-`decx-v<version>` release. Verify the archive checksum, unpack it outside the
-project, change into `/absolute/path/to/decx-pi-<version>/extensions/decx`
-and run `npm ci` to install its pinned `@openclaw/fs-safe` dependency, then run
-`pi install /absolute/path/to/decx-pi-<version>` (a local pi package).
-Pi does not install dependencies for local packages. No repository clone is needed. The package contains the wiki extension
-(including `/decx-wiki`) and separately installable execution skills. Install a
-skill in the target project with `npx skills add jygzyc/decx --skill <skill-name>`
-(for example `--skill decx-tool` or `--skill antifrida-bypass`; choose
-project-level `.agents/skills/`). The standalone Node CLI is a separate release
-archive; `decx-tool` can drive it without pi or the extension.
+This optional extension is source-only; it is not part of the npm CLI package
+and has no separate release archive. Keep a checkout of DECX, install its pinned
+`@openclaw/fs-safe` dependency with
+`npm ci --prefix /absolute/path/to/decx/.pi/extensions/decx`, and configure pi to
+load `/absolute/path/to/decx/.pi/extensions/decx/index.ts` as a local extension.
+The checkout must remain available at that location. This setup is independent
+of `npm install -g @jygzyc/decx-cli` and never runs during CLI installation.
+Install a skill in the target project with
+`npx skills add jygzyc/decx --skill <skill-name>` (for example `--skill decx-tool`
+or `--skill antifrida-bypass`; choose project-level `.agents/skills/`).
+`decx-tool` can drive the npm CLI without pi or the extension.
 
 From **any** project, `/decx init` creates `.decxwiki/{raw/traces,wiki/patterns}`,
 seeds an empty index/log/ledger, and initializes an **empty** `.agents/skills/`
@@ -27,13 +27,12 @@ to install an execution skill; after installation an installed skill is a target
 of `decx_propose` and `decx_gate`. The skills run without the extension; wiki
 maintenance runs only in the extension. Init is repeatable and leaves existing
 skill files alone. The portable wiki CLI
-`node <package>/extensions/decx/cli.ts init --root <project>` initializes the
+`node <checkout>/.pi/extensions/decx/cli.ts init --root <project>` initializes the
 same directories without installing skills. `/decx-wiki` also initializes an
 empty project on first use. Only the current project's `.decxwiki/` is discovered: legacy
 root-level knowledge is not imported or used as a workspace. Historical repository
 knowledge lives under ignored `archive/legacy-knowledge/`; do not publish it or
-use it as an initialization template. Keep the unpacked pi package available at
-its installed location.
+use it as an initialization template.
 
 ## Update the wiki with one command
 

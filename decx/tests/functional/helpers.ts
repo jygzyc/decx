@@ -10,11 +10,8 @@ export const fixtures = path.join(root, 'tests/fixtures/real-analysis');
 const home = process.env.DECX_HOME ?? '';
 assert.ok(home, 'Set DECX_HOME to an isolated prefix containing actual installed analyzers. Functional tests do not install or mock tools.');
 assert.notEqual(path.resolve(home), os.homedir(), 'Do not use the real home directory as a test install prefix');
-const nativeManager = process.env.DECX_FUNCTIONAL_MANAGER;
-const manager = nativeManager ? path.resolve(nativeManager) : process.execPath;
 const bundle = path.join(root, 'dist/decx.mjs');
-const prefix = nativeManager ? [] : [bundle];
-assert.ok(fs.existsSync(nativeManager ? manager : bundle), 'Build the manager before running functional tests');
+assert.ok(fs.existsSync(bundle), 'Build the manager before running functional tests');
 
 export function execute(command: string, args: string[], cwd: string) {
   const result = spawnSync(command, args, { cwd, encoding: 'utf8', timeout: 120_000, maxBuffer: 32 * 1024 * 1024 });
@@ -29,7 +26,7 @@ export function analyze(tool: string, args: string[], cwd: string) {
 }
 
 export function analyzeFailure(tool: string, args: string[], cwd: string) {
-  return execute(manager, [...prefix, '--home', home, '-m', tool, ...args], cwd);
+  return execute(process.execPath, [bundle, '--home', home, '-m', tool, ...args], cwd);
 }
 
 export function compile(source: string, output: string): void {

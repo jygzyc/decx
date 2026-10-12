@@ -33,6 +33,7 @@ await build({
   },
 });
 fs.chmodSync(outfile, 0o755);
+fs.copyFileSync(path.join(repoRoot, 'LICENSE'), path.join(distRoot, 'LICENSE'));
 console.log(`built dist/decx.mjs (embedded ${manifests.tools.length} tool manifests)`);
 
 // Smoke the single-file output in an isolated temporary directory.

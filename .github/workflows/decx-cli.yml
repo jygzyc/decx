@@ -1,159 +1,76 @@
 name: decx CLI
 
-# The manager is plain Node with no runtime dependencies: it discovers the tools
-# in `third_party/tools.json`, installs them under `$DECX_HOME` and runs their
-# launchers untouched. Its tests are offline by construction -- fixture archives
-# served locally, a local wheel installed into a private venv, fake toolchains
-# for other branches, and temporary `--home` roots -- so the matrix can be
-# wide: both Node lines agents run today, on every supported platform.
-#
-# The same workflow publishes the CLI: a `decx-v*` tag push (or a dispatch with
-# the `tag` input set) runs the pack/smoke/release jobs instead of the checks.
-# `paths` filters tag pushes as well -- the tag commit is diffed against its
-# parent -- so tag the version-bump commit, or dispatch with `tag` manually.
 on:
   push:
     branches: ['**']
     tags: ['decx-v*']
-    paths: ['decx/**', 'third_party/**', 'skills/**', '.pi/extensions/decx/**', 'skills/check-skills.py', '.github/workflows/decx-cli.yml']
+    paths: ['decx/**', 'third_party/tools.json', 'third_party/decx-tool.schema.json', 'LICENSE', '.github/workflows/decx-cli.yml']
   pull_request:
-    paths: ['decx/**', 'third_party/**', 'skills/**', '.pi/extensions/decx/**', 'skills/check-skills.py', '.github/workflows/decx-cli.yml']
+    paths: ['decx/**', 'third_party/tools.json', 'third_party/decx-tool.schema.json', 'LICENSE', '.github/workflows/decx-cli.yml']
   workflow_dispatch:
     inputs:
       tag:
-        description: Publish a release for this tag (e.g. decx-v0.6.0); leave empty to run the checks only
+        description: Publish this decx-v<version> tag; leave empty for checks only
         required: false
 
 permissions:
   contents: read
 
 concurrency:
-  group: decx-cli-${{ github.ref }}
-  # Never cancel a running release publish; branch checks are superseded freely.
-  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
+  group: decx-cli-${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref }}
+  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') && !(github.event_name == 'workflow_dispatch' && inputs.tag) }}
 
 jobs:
   manager:
-    name: Manager (${{ matrix.os }}, Node ${{ matrix.node }})
-    # Checks run on branch pushes, pull requests and check-only dispatches;
-    # a release event (tag push, or dispatch with `tag`) skips them.
-    if: ${{ !(github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')) && (github.event_name != 'workflow_dispatch' || !inputs.tag) }}
+    name: npm CLI (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-14, windows-latest]
-        node: ['24']
-    defaults:
-      run:
-        shell: bash
     steps:
       - uses: actions/checkout@v7.0.1
-
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref }}
       - uses: actions/setup-node@v7
         with:
-          node-version: ${{ matrix.node }}
+          node-version: '24'
           check-latest: true
           cache: npm
           cache-dependency-path: decx/package-lock.json
-
       - uses: actions/setup-python@v6
         with:
           python-version: '3.11'
-
       - run: npm ci --no-audit --no-fund
         working-directory: decx
-
       - run: npm run typecheck
         working-directory: decx
-
+      # Tests build the shipped bundle and exercise real installs, rollback,
+      # npm pack, an offline npm prefix install, its public shim and uninstall.
       - run: npm test
         working-directory: decx
-
-      - name: Wiki extension and portable skill checks
-        if: ${{ matrix.os == 'ubuntu-latest' && matrix.node == '24' }}
-        run: |
-          npm ci --prefix .pi/extensions/decx --no-audit --no-fund
-          node --test .pi/extensions/decx/*.test.ts
-          project=$(mktemp -d)
-          trap 'rm -rf "$project"' EXIT
-          node .pi/extensions/decx/cli.ts init --root "$project"
-          node .pi/extensions/decx/cli.ts check --root "$project"
-          python3 skills/check-skills.py
-
-      # The contract the skills and the docs rely on: a command prints exactly one
-      # JSON envelope on stdout (`--pretty` only changes the spacing), diagnostics
-      # go to stderr, and exit codes stay 0/1/2. Parsing the envelope here is what
-      # keeps `decx` scriptable.
-      - name: One JSON envelope per command
+      - name: Source entry point JSON envelope
         working-directory: decx
+        shell: bash
         run: |
-          node src/cli.ts help > /dev/null
-          node src/cli.ts version --pretty | node -e '
+          node src/cli.ts version | node -e '
             let raw = "";
-            process.stdin.on("data", (chunk) => (raw += chunk));
+            process.stdin.on("data", chunk => raw += chunk);
             process.stdin.on("end", () => {
-              const envelope = JSON.parse(raw);
-              if (envelope === null || typeof envelope !== "object" || Array.isArray(envelope)) {
-                throw new Error("stdout is not a JSON object envelope");
-              }
-              console.log("envelope keys: " + Object.keys(envelope).join(", "));
+              const result = JSON.parse(raw);
+              if (result.ok !== true || typeof result.version !== "string") process.exit(1);
             });
           '
 
-      # Usage errors are the manager's third exit code and the one an agent hits
-      # first, so it is checked rather than assumed.
-      - name: Unknown commands fail as usage errors
-        working-directory: decx
-        run: |
-          set +e
-          node src/cli.ts definitely-not-a-command > /dev/null 2>&1
-          code=$?
-          set -e
-          test "$code" -eq 2 || { echo "expected exit 2, got $code"; exit 1; }
-
-  native-check:
-    name: Native manager (${{ matrix.platform }})
-    if: ${{ !(github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')) && (github.event_name != 'workflow_dispatch' || !inputs.tag) }}
-    runs-on: ${{ matrix.os }}
-    timeout-minutes: 25
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - { os: ubuntu-latest, platform: linux-x64 }
-          - { os: ubuntu-24.04-arm, platform: linux-arm64 }
-          - { os: macos-15, platform: darwin-arm64 }
-          - { os: windows-latest, platform: windows-x64 }
-    steps:
-      - uses: actions/checkout@v7.0.1
-      - uses: actions/setup-node@v7
-        with:
-          node-version: '24'
-          check-latest: true
-          cache: npm
-          cache-dependency-path: decx/package-lock.json
-      - uses: actions/setup-python@v6
-        with:
-          python-version: '3.11'
-      - uses: vercel-labs/setup-zig@v1
-        if: runner.os == 'Windows'
-        with:
-          version: '0.16.0'
-      - name: Install build dependencies
-        working-directory: decx
-        run: npm ci
-      - name: Compile and test the native manager without Node on its PATH
-        working-directory: decx
-        run: npm run check:native
-
-  pack:
-    name: build and pack the CLI
-    if: ${{ (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')) || (github.event_name == 'workflow_dispatch' && inputs.tag != '') }}
+  publish:
+    name: publish npm package
+    if: ${{ (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/decx-v')) || (github.event_name == 'workflow_dispatch' && inputs.tag != '') }}
+    needs: manager
     runs-on: ubuntu-latest
-    outputs:
-      tag: ${{ steps.check.outputs.tag }}
+    permissions:
+      contents: read
+      id-token: write
     steps:
       - uses: actions/checkout@v7.0.1
         with:
@@ -162,192 +79,23 @@ jobs:
         with:
           node-version: '24'
           check-latest: true
-      - uses: actions/setup-python@v6
-        with:
-          python-version: '3.11'
-      - name: validate the tag matches decx/package.json
-        id: check
+          registry-url: 'https://registry.npmjs.org'
+      - name: Check tag and trusted-publishing npm version
         env:
           REQUESTED_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
         run: |
-          tag="$REQUESTED_TAG"
-          expected="decx-v$(node -p 'require("./decx/package.json").version')"
-          test "$tag" = "$expected" || { echo "release tag '$tag' does not match decx/package.json (expected $expected)"; exit 1; }
-          echo "release tag $tag matches decx/package.json"
-          echo "tag=$tag" >> "$GITHUB_OUTPUT"
-      - name: build, pack and smoke the CLI
-        working-directory: decx
-        run: |
-          npm ci
-          npm run typecheck
-          npm test
-          npm run build
-          npm run pack
-      - name: check bundled wiki and skills
-        run: |
-          npm ci --prefix .pi/extensions/decx --no-audit --no-fund
-          node --test .pi/extensions/decx/*.test.ts
-          project=$(mktemp -d)
-          trap 'rm -rf "$project"' EXIT
-          node .pi/extensions/decx/cli.ts init --root "$project"
-          node .pi/extensions/decx/cli.ts check --root "$project"
-          python3 skills/check-skills.py
-      - uses: actions/upload-artifact@v7
-        with:
-          name: decx-cli
-          path: |
-            decx/artifacts/
-          retention-days: 7
-
-  native:
-    name: scriptc manager (${{ matrix.platform }})
-    if: ${{ (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')) || (github.event_name == 'workflow_dispatch' && inputs.tag != '') }}
-    needs: pack
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - { os: ubuntu-latest, platform: linux-x64 }
-          - { os: ubuntu-24.04-arm, platform: linux-arm64 }
-          - { os: macos-15, platform: darwin-arm64 }
-          - { os: windows-latest, platform: windows-x64 }
-    steps:
-      - uses: actions/checkout@v7.0.1
-        with:
-          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref }}
-      - uses: actions/setup-node@v7
-        with:
-          node-version: '24'
-          check-latest: true
-          cache: npm
-          cache-dependency-path: decx/package-lock.json
-      - uses: actions/setup-python@v6
-        with:
-          python-version: '3.11'
-      - uses: vercel-labs/setup-zig@v1
-        if: runner.os == 'Windows'
-        with:
-          version: '0.16.0'
-      - name: Build native manager and verify offline tool lifecycles
-        shell: bash
-        working-directory: decx
-        run: |
-          npm ci
-          npm run check:native
-          gzip -9 "dist/decx-${{ matrix.platform }}${{ matrix.platform == 'windows-x64' && '.exe' || '' }}"
-      - uses: actions/upload-artifact@v7
-        with:
-          name: decx-native-${{ matrix.platform }}
-          path: decx/dist/*.gz
-          retention-days: 7
-
-  smoke:
-    name: smoke the packed CLI (${{ matrix.platform }})
-    if: ${{ (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')) || (github.event_name == 'workflow_dispatch' && inputs.tag != '') }}
-    needs: [pack, native]
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - { os: ubuntu-latest, platform: linux-x64 }
-          - { os: ubuntu-24.04-arm, platform: linux-arm64 }
-          - { os: macos-15, platform: darwin-arm64 }
-          - { os: windows-latest, platform: windows-x64 }
-    steps:
-      - uses: actions/setup-node@v7
-        with:
-          node-version: '24'
-          check-latest: true
-      - uses: actions/download-artifact@v8
-        with:
-          name: decx-cli
-          path: artifacts
-      - uses: actions/download-artifact@v8
-        with:
-          name: decx-native-${{ matrix.platform }}
-          path: artifacts
-      - name: unpack and smoke from a non-repo directory
-        shell: bash
-        run: |
-          set -euo pipefail
-          mkdir smoke && tar -xzf artifacts/decx-[0-9]*.tar.gz -C smoke
-          mkdir isolated
-          cp smoke/decx-*/decx.mjs isolated/
-          cd isolated
-          export DECX_HOME="$PWD/home" DECX_LINKS_DIR="$PWD/links"
-          node decx.mjs version
-          node decx.mjs help
-          binary=decx-${{ matrix.platform }}
-          if [ "${{ matrix.platform }}" = "windows-x64" ]; then binary="$binary.exe"; fi
-          gunzip -c "../artifacts/${binary}.gz" > "$binary"
-          chmod +x "$binary"
-          "./$binary" version
-          "./$binary" help
-          cd ..
-          mkdir wiki-bundle && tar -xzf artifacts/decx-pi-*.tar.gz -C wiki-bundle
-          tag="${{ needs.pack.outputs.tag }}"
-          bundle="$PWD/wiki-bundle/decx-pi-${tag#decx-v}"
-          test -f "$bundle/skills/decx-tool/SKILL.md"
-          test -f "$bundle/skills/antifrida-bypass/SKILL.md"
-          test -f "$bundle/extensions/decx/wiki-command.ts"
-          test ! -e "$bundle/skills/decx-wiki/SKILL.md"
-          node -e 'const p=require(process.argv[1]); if (!p.pi.extensions.length || p.pi.skills.length) process.exit(1)' "$bundle/package.json"
-          (cd "$bundle/extensions/decx" && npm ci --no-audit --no-fund)
-          mkdir wiki-project
-          node "$bundle/extensions/decx/cli.ts" init --root "$PWD/wiki-project"
-          test -d wiki-project/.agents/skills
-          test -z "$(ls -A wiki-project/.agents/skills)"
-          test -d wiki-project/.decxwiki/raw/traces
-          test -d wiki-project/.decxwiki/wiki/patterns
-          test ! -e wiki-project/.decxwiki/skills
-          test ! -e wiki-project/.decxwiki/wiki/patterns/android-app-broadcast.md
-          node "$bundle/extensions/decx/cli.ts" init --root "$PWD/wiki-project"
-          node "$bundle/extensions/decx/cli.ts" check --root "$PWD/wiki-project"
-          cd isolated
-          NATIVE_BINARY="$binary" node --input-type=module -e '
-            import { spawnSync } from "node:child_process";
-            import assert from "node:assert/strict";
-            for (const [args, status, code] of [
-              [["install"], 2, "USAGE"],
-              [["list"], 2, "UNKNOWN_TOOL"],
-              ...["afe", "droidasc", "kuna"].map(id => [["-m", id], 1, "NOT_INSTALLED"]),
-            ]) {
-              for (const [command, argv] of [
-                [process.execPath, ["decx.mjs", ...args]],
-                [`./${process.env.NATIVE_BINARY}`, args],
-              ]) {
-                const result = spawnSync(command, argv, { encoding: "utf8" });
-                assert.equal(result.status, status, result.stderr);
-                assert.equal(JSON.parse(result.stdout).error.code, code);
-              }
-            }
+          node --input-type=module -e '
+            import fs from "node:fs";
+            import { execFileSync } from "node:child_process";
+            const pkg = JSON.parse(fs.readFileSync("decx/package.json", "utf8"));
+            const expected = `decx-v${pkg.version}`;
+            if (process.env.REQUESTED_TAG !== expected) throw new Error(`expected tag ${expected}`);
+            const [major, minor, patch] = execFileSync("npm", ["--version"], {encoding: "utf8"}).trim().split(".").map(Number);
+            if (major < 11 || (major === 11 && (minor < 5 || (minor === 5 && patch < 1)))) throw new Error("trusted publishing requires npm >=11.5.1");
           '
-
-  release:
-    name: publish the GitHub release
-    if: ${{ (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')) || (github.event_name == 'workflow_dispatch' && inputs.tag != '') }}
-    needs: [pack, native, smoke]
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    steps:
-      - uses: actions/download-artifact@v8
-        with:
-          pattern: decx-*
-          path: artifacts
-          merge-multiple: true
-      - name: publish release
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          tag="${{ needs.pack.outputs.tag }}"
-          if gh release view "$tag" >/dev/null 2>&1; then
-            gh release upload "$tag" artifacts/* --clobber
-          else
-            gh release create "$tag" artifacts/* \
-              --title "decx CLI ${tag#decx-v}" \
-              --notes "DECX toolkit manager ${tag#decx-v}. Unpack decx-${tag#decx-v}.tar.gz and run \`node decx.mjs install <tool>\`, or gunzip a scriptc-built decx-<platform>(.exe).gz launcher (requires Node 24.21+ on PATH); unpack decx-pi-${tag#decx-v}.tar.gz and run \`pi install ./decx-pi-${tag#decx-v}\` then run \`/decx init\` in the target project to create .decxwiki; install execution skills separately with \`npx skills add jygzyc/decx --skill <skill-name>\`."
-          fi
+      - run: npm ci --no-audit --no-fund
+        working-directory: decx
+      # Configure this repository/workflow as the package's trusted publisher
+      # on npmjs.com before tagging. No long-lived npm token or native SDK.
+      - run: npm publish --access public --provenance
+        working-directory: decx

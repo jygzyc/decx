@@ -13,7 +13,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { deflateRawSync, gzipSync, crc32 } from 'node:zlib';
 
-const CLI = fileURLToPath(new URL('../src/cli.ts', import.meta.url));
+const CLI = fileURLToPath(new URL('../dist/decx.mjs', import.meta.url));
 
 export const HOST_PLATFORM = `${process.platform === 'win32' ? 'win' : process.platform}-${process.arch === 'x64' ? 'amd64' : process.arch}`;
 
@@ -33,7 +33,7 @@ export function writeFile(file: string, data: string | Buffer, mode?: number): v
   }
 }
 
-/** Writes the same central catalog shape used by source and compiled managers. */
+/** Writes the same central catalog shape used by source and bundled managers. */
 export function writeCatalog(directory: string, tools: readonly unknown[]): void {
   writeFile(path.join(directory, 'tools.json'), JSON.stringify({ manifest: 1, tools }));
 }

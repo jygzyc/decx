@@ -3,7 +3,7 @@ import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { LoadResult } from './catalog/manifest.ts';
 
-/** esbuild defines these; native builds generate this metadata module instead. */
+/** esbuild embeds the version and catalog in the npm release. */
 declare const __DECX_VERSION__: string;
 declare const __DECX_MANIFESTS__: LoadResult;
 export const embeddedManifests: LoadResult | undefined = typeof __DECX_MANIFESTS__ !== 'undefined' ? __DECX_MANIFESTS__ : undefined;
