@@ -132,7 +132,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           cat "$DECX_HOME/share/kuna/PROVENANCE"
-          tag="$(gh api --paginate --slurp repos/Noelo-Lab/kuna/releases | node -e 'const pages = JSON.parse(require("node:fs").readFileSync(0, "utf8")); const latest = pages.flat().find(r => !r.draft && !r.prerelease && r.tag_name.startsWith("v")); if (!latest) throw new Error("no stable v* release"); console.log(latest.tag_name)')"
+          tag="$(gh api repos/Noelo-Lab/kuna/releases/latest --jq .tag_name)"
           echo "official Kuna release: $tag"
           grep -qx "release_tag: $tag" "$DECX_HOME/share/kuna/PROVENANCE"
 
@@ -162,7 +162,7 @@ jobs:
           git -C third_party/kuna fetch --tags --force origin
           pinned="$(bash .github/scripts/pinned-gitlink.sh third_party/kuna)"
           pinned_tag="$(git -C third_party/kuna describe --tags --exact-match "$pinned")"
-          latest_tag="$(gh api --paginate --slurp "repos/$repository/releases" | node -e 'const pages = JSON.parse(require("node:fs").readFileSync(0, "utf8")); const latest = pages.flat().find(r => !r.draft && !r.prerelease && r.tag_name.startsWith("v")); if (!latest) throw new Error("no stable v* release"); console.log(latest.tag_name)')"
+          latest_tag="$(gh api "repos/$repository/releases/latest" --jq .tag_name)"
           echo "pinned: $pinned_tag ($pinned)"
           echo "upstream latest: $latest_tag"
           for t in "$pinned_tag" "$latest_tag"; do
