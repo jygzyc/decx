@@ -144,9 +144,10 @@ ledger lives under the pi agent directory, outside the three knowledge layers.
 Agent plugins and extension manifests (Codex, Claude) are out of scope: the integration
 contract is the portable `decx-tool` skill plus the one pi extension that owns the Decx layer
 (`.pi/extensions/decx/`); nothing else may register into an agent harness. GitHub runs
-workflows only from the repository root, so each subproject and area has its own file
-there, scoped to its own `paths:` — keep them in sync when the crate, manifests, skills,
-wiki or managed paths change. The manager and AFE workflows carry both checks and release publishing:
+workflows only from the repository root. CI covers DECX-owned components only:
+the manager, AFE, and the extension/skills. Keep their `paths:` in sync when the
+crate, catalog, skills, wiki or managed paths change. Third-party acquisition and
+release resolution belong to the CLI, never to per-tool Actions or scheduled pin updates. The manager and AFE workflows carry both checks and release publishing:
 branch pushes and pull requests run checks, while a matching tag push (or a
 `workflow_dispatch` with the `tag` input) runs release jobs instead,
 each refusing to build when its tag does not match the pinned version. `decx-cli.yml`
@@ -161,31 +162,22 @@ release build and
 a `--help` smoke on Linux, macOS and Windows;
 Windows arm64 cross check; tag `tools-v*`, checked against
 `third_party/afe/Cargo.toml`, builds the six `afe-v<version>-<platform>` archives plus
-`afe-SHA256SUMS.txt`), `decx-droidasc.yml` (the manager creates a private venv,
-installs the published PyPI package and functionally tests real APK decompilation,
-manifest decoding and DEX references across platforms;
-no source archive is published) and
-`decx-kuna.yml` (pin, manifest and
-upstream-skill-copy contract on every change; release install and real native binary
-decompilation on Linux, macOS and Windows, including recompilation/behavior checks,
-on changes, weekly and on demand; every 12 hours a scheduled job compares the pinned tag with upstream's
-latest release and pushes nothing when there is nothing newer — a new release moves the
-submodule gitlink, re-copies the skill reference and pushes the commit. No local Kuna
-release mirror is published because installs use the official upstream assets directly).
+`afe-SHA256SUMS.txt`), and `decx-knowledge.yml` (three-platform extension tests,
+guarded JavaScript fallback, workspace structural checks and portable skill checks).
 The manager and crate jobs are offline — the manager's install tests use fixture
-archives, fake toolchains and temporary prefixes — while the two tool workflows
-deliberately exercise the real install paths (`pip install` into the tool's venv, the Kuna
-release and specs archives) and require `npm run test:functional:droidasc` /
-`npm run test:functional:kuna`. All manager tests exercise public CLI subprocesses
-and real file/process outcomes, not imported functions or mocked builtins. `npm test`
-checks offline manager functionality; real decompilation is required separately by
-both live tool workflows. The real suites fail on absent tools (no silent skips),
-use explicit temporary prefixes, and can target a built native manager through
-`DECX_FUNCTIONAL_MANAGER`; no workflow compiles the vendored upstream checkouts.
-The Kuna entry installs official upstream releases using generic asset-aware
-stable discovery and verifies each asset against its GitHub REST SHA-256 digest.
-The tracking workflow filters canonical upstream `v*` tags; the CLI has no per-tool
-release rule. Existing `afe-<version>` release archives do not match the catalog's
+archives, fake toolchains and temporary prefixes. All manager tests exercise public
+CLI subprocesses and real file/process outcomes, not imported functions or mocked
+builtins. Third-party installation stays manifest-driven in the CLI: PyPI packages
+use a private venv; release archives use generic asset-aware stable discovery and
+mandatory SHA-256 verification. Actions neither query upstream tool releases nor
+update their source pins. Pins and the verbatim Kuna skill copy are updated explicitly.
+Live analysis suites remain available for manual validation with installed tools:
+`npm run test:functional:droidasc` checks APK decompilation, manifest decoding and DEX
+references; `npm run test:functional:kuna` checks decompilation, recompilation and
+behavior. Use an explicit temporary `DECX_HOME`; the suites fail on absent tools
+(no silent skips) and accept `DECX_FUNCTIONAL_MANAGER` for a built native manager.
+These suites are not part of offline CI. No workflow compiles vendored upstream
+checkouts or publishes their releases; the CLI has no per-tool release rule. Existing `afe-<version>` release archives do not match the catalog's
 `afe-v<version>` names: publishing matching archives is required, never add a
 legacy-name fallback or silently rewrite the catalog.
 Keep README.md and README_zh.md aligned with the actual tools and launcher runtime requirements; do not document removed `decx` commands as current functionality.

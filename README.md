@@ -129,24 +129,26 @@ python3 skills/check-skills.py && node --test .pi/extensions/decx/*.test.ts
 project=$(mktemp -d); node .pi/extensions/decx/cli.ts init --root "$project" && node .pi/extensions/decx/cli.ts check --root "$project"
 ```
 
-AGENTS.md §Validation lists the full gate per area; CI is one workflow per subject under
-`.github/workflows/` — `decx-cli.yml`, `decx-afe.yml`, `decx-droidasc.yml` and
-`decx-kuna.yml` — each scoped to its own paths: branch pushes and PRs run checks, while release tags
-publish manager and AFE assets. DroidASC and Kuna use upstream distributions directly. The manager and crate gates run offline
-(fixture archives, fake toolchains, temp prefixes); the DroidASC and Kuna workflows
-deliberately exercise the real install paths, and the PR workflows never compile the
-vendored upstream checkouts. Releases: `decx-v*` → `decx-<version>.tar.gz` +
+AGENTS.md §Validation lists the full gate per area. `.github/workflows/` contains
+only DECX-owned checks: `decx-cli.yml`, `decx-afe.yml` and `decx-knowledge.yml`, scoped
+to their paths. Branch pushes and PRs run checks; release tags publish manager and
+AFE assets. Manager and crate gates run offline (fixture archives, fake toolchains,
+temp prefixes). Actions do not install upstream analyzers, query their releases,
+update their source pins or compile vendored upstream checkouts. The CLI reads
+`third_party/tools.json` and installs upstream distributions directly. Releases: `decx-v*` → `decx-<version>.tar.gz` +
 `decx-SHA256SUMS.txt` and `decx-pi-<version>.tar.gz` +
 `decx-pi-SHA256SUMS.txt`; `tools-v*` → the six `afe-v<version>-<platform>` archives +
 `afe-SHA256SUMS.txt`. The catalog uses REST digests by default; the checksum file
 remains available for explicit custom configurations. Existing `afe-<version>`
 archives do not match the new names: matching assets must be published; no legacy
 name fallback is provided. Neither DroidASC nor Kuna needs a repository release.
-Kuna tracks upstream on its own: every 12 hours its workflow compares the pinned tag
-with upstream's latest release and pushes nothing when there is nothing newer — a new
-release moves the submodule pin, re-copies the skill reference and pushes the commit.
-`decx install kuna` installs official upstream `v*` archives, verifying GitHub REST
-asset SHA-256 digests.
+Source pins and the verbatim Kuna skill reference are updated explicitly, not by
+Actions. `decx install kuna` resolves matching upstream release assets and verifies
+GitHub REST SHA-256 digests. Live analysis checks remain available manually after
+installing tools into an explicit temporary `DECX_HOME`: run
+`npm --prefix decx run test:functional:kuna` or
+`npm --prefix decx run test:functional:droidasc`.
+They fail when tools are absent and are not part of offline CI.
 
 ## Scope and non-goals
 

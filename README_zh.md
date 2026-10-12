@@ -84,7 +84,11 @@ python3 skills/check-skills.py && node --test .pi/extensions/decx/*.test.ts
 project=$(mktemp -d); node .pi/extensions/decx/cli.ts init --root "$project" && node .pi/extensions/decx/cli.ts check --root "$project"
 ```
 
-各区域的完整门禁见 AGENTS.md §Validation；CI 按对象拆成 `.github/workflows/` 下的多个流程（`decx-cli.yml`、`decx-afe.yml`、`decx-droidasc.yml`、`decx-kuna.yml`），各自用 `paths` 限定触发范围。DroidASC 由上游发布到 PyPI，Kuna 从上游 GitHub Release 安装；本仓库只检查这两个工具的安装，管理器和 AFE 的流程负责发布。管理器与 crate 的门禁全部离线运行（fixture 压缩包、伪工具链与临时 prefix）；DroidASC 与 Kuna 两个流程会真实跑一遍安装路径，PR 流程不编译 vendored 的上游源码。发布：`decx-v*` → `decx-<version>.tar.gz` + `decx-SHA256SUMS.txt`，以及 `decx-pi-<version>.tar.gz` + `decx-pi-SHA256SUMS.txt`，`tools-v*` → 六个平台的 `afe-v<version>-<platform>` 包 + `afe-SHA256SUMS.txt`。目录默认用 REST 摘要；校验文件仍供显式配置使用。旧 `afe-<version>` 归档不匹配新名称，必须发布匹配资产，不提供旧名称回退。DroidASC 不需要本仓库打包源码。kuna 自动跟踪上游：其流程每 12 小时把 pin 的 tag 与上游最新 release 对比，没有更新就什么都不推送；有更新则移动 submodule pin、重新复制 skill 引用，并推送提交。`decx install kuna` 直接安装官方上游 `v*` release，通过 GitHub REST asset 的 SHA-256 摘要校验下载文件。
+各区域的完整门禁见 AGENTS.md §Validation。`.github/workflows/` 只保留 DECX 自有组件的流程：`decx-cli.yml`、`decx-afe.yml`、`decx-knowledge.yml`，各自用 `paths` 限定触发范围；分支和 PR 做检查，发布 tag 构建管理器和 AFE 产物。管理器与 crate 的门禁离线运行（fixture 压缩包、伪工具链与临时 prefix）。Actions 不获取第三方工具、不查询其 release、不自动更新源码 pin，也不编译 vendored 上游源码；CLI 直接读取 `third_party/tools.json`，解析匹配版本、下载上游发行包并强制校验 SHA-256。DroidASC 从 PyPI 安装到私有 venv，Kuna 从官方 release 安装二进制和 specs。
+
+发布：`decx-v*` → `decx-<version>.tar.gz` + `decx-SHA256SUMS.txt`，以及 `decx-pi-<version>.tar.gz` + `decx-pi-SHA256SUMS.txt`；`tools-v*` → 六个平台的 `afe-v<version>-<platform>` 包 + `afe-SHA256SUMS.txt`。目录默认用 REST 摘要，校验文件仍供显式配置使用；旧 `afe-<version>` 归档不匹配新名称，必须发布匹配资产，不提供旧名称回退。DroidASC 与 Kuna 不需要本仓库打包发布；源码 pin 和原样复制的 Kuna skill 引用由显式维护更新。
+
+真实分析检查保留为手动命令：先通过 CLI 安装工具到显式的临时 `DECX_HOME`，再运行 `npm --prefix decx run test:functional:kuna` 或 `npm --prefix decx run test:functional:droidasc`。缺少工具时会失败，不会静默跳过；这些检查不属于离线 CI。
 
 ## 范围与非目标
 
