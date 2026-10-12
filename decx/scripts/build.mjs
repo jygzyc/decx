@@ -55,10 +55,10 @@ try {
   assert.equal(JSON.parse(run(['install'], 2)).error.code, 'USAGE');
   assert.deepEqual(fs.readdirSync(cwd), ['decx.mjs']);
   const override = path.join(cwd, 'custom');
-  fs.mkdirSync(path.join(override, 'decx-fixture'), { recursive: true });
-  fs.writeFileSync(path.join(override, 'decx-fixture', 'decx-fixture.json'), JSON.stringify({
+  fs.mkdirSync(override, { recursive: true });
+  fs.writeFileSync(path.join(override, 'tools.json'), JSON.stringify({ tools: [{
     manifest: 2, id: 'fixture', summary: 'Offline fixture', install: ['github-release'], launch: { type: 'bin', commands: ['fixture'] }, release: { asset: 'fixture.zip' },
-  }));
+  }] }));
   assert.equal(JSON.parse(run(['--third-party', override, '-m', 'fixture'], 1)).error.code, 'NOT_INSTALLED');
   assert.equal(JSON.parse(run(['--third-party', override, '-m', 'afe'], 2)).error.code, 'UNKNOWN_TOOL');
   console.log(`smoke ok: decx ${version.version} (isolated single file)`);

@@ -1,7 +1,7 @@
 name: decx CLI
 
 # The manager is plain Node with no runtime dependencies: it discovers the tools
-# in `third_party/*/decx-*.json`, installs them under `$DECX_HOME` and runs their
+# in `third_party/tools.json`, installs them under `$DECX_HOME` and runs their
 # launchers untouched. Its tests are offline by construction -- fixture archives
 # served locally, a local wheel installed into a private venv, fake toolchains
 # for other branches, and temporary `--home` roots -- so the matrix can be

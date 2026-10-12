@@ -121,9 +121,10 @@ decx/
 └── tests/              node:test suite (run against the .ts sources)
 ```
 
-One manifest per tool lives inside that tool's subproject —
-`third_party/decx-<id>/decx-<id>.json` — so the manager's tool list is exactly the
-subproject list.
+All tool manifests live in the central `third_party/tools.json` catalog.
+Each manifest-2 entry has an explicit `id`, independent of its source directory.
+`third_party/ASC` and `third_party/kuna` are direct pinned upstream gitlinks;
+`third_party/afe` is DECX's own Rust utility. There are no per-directory manifests.
 
 Installs live under `$DECX_HOME` (default `~/.decx`; `--home`, alias
 `--prefix`, overrides it):
@@ -146,30 +147,37 @@ reads installs that follow the layout above.
 
 ## Tool manifests
 
-A manifest is data, never code; adding a tool means adding a JSON file.
+A manifest is data, never code; adding a tool means adding an entry to
+`third_party/tools.json`. The catalog has only `$schema` (optional) and a nonempty
+`tools` array; entries do not have their own `$schema`.
 
 ```json
 {
-  "manifest": 2,
-  "summary": "Native decompiler for ELF/PE/Mach-O (upstream Kuna)",
-  "install": ["github-release"],
-  "launch": { "type": "bin", "commands": ["kuna", "decomp_dbg", "slacomp"] },
-  "env": { "KUNA_SPECS": "{prefix}/specs" },
-  "release": {
-    "repository": "Noelo-Lab/kuna",
-    "tagPrefix": "v",
-    "checksums": null,
-    "assets": { "darwin-arm64": "kuna-v{version}-macos-arm64.tar.gz" },
-    "extraAssets": { "specs": "kuna-v{version}-specs.tar.gz" }
-  },
-  "verify": "--version"
+  "$schema": "./decx-tool.schema.json",
+  "tools": [{
+    "id": "kuna",
+    "manifest": 2,
+    "summary": "Native decompiler for ELF/PE/Mach-O (upstream Kuna)",
+    "install": ["github-release"],
+    "launch": { "type": "bin", "commands": ["kuna", "decomp_dbg", "slacomp"] },
+    "env": { "KUNA_SPECS": "{prefix}/specs" },
+    "release": {
+      "repository": "Noelo-Lab/kuna",
+      "tagPrefix": "v",
+      "checksums": null,
+      "assets": { "darwin-arm64": "kuna-v{version}-macos-arm64.tar.gz" },
+      "extraAssets": { "specs": "kuna-v{version}-specs.tar.gz" }
+    },
+    "verify": "--version"
+  }]
 }
 ```
 
-Every tool JSON uses the same [JSON Schema](../third_party/decx-tool.schema.json) for editor completion. `src/catalog/manifest.ts` validates cross-field recipe rules; no separate schema is needed for each runtime.
+The catalog uses one [JSON Schema](../third_party/decx-tool.schema.json) for editor completion. `src/catalog/manifest.ts` validates cross-field recipe rules; no separate schema is needed for each runtime.
 
 | Field | Meaning |
 |---|---|
+| `id` | required explicit lowercase tool name, unique within the catalog |
 | `summary` | one-line tool description |
 | `release` | required for `bin` and `js`, omitted for PyPI packages. The install source: `repository` (`owner/repo`, default `jygzyc/decx`), `version` (`latest` or an exact version/tag), `tagPrefix` (default `<id>-v`), exactly one of `asset` (a single template) or `assets` (per-platform names); `{version}`, `{os}` and `{arch}` are substituted at install time. `checksums` names the `sha256  filename` asset (`<id>-SHA256SUMS.txt` by default); `null` instead requires a SHA-256 digest in GitHub REST asset metadata for **every** download. `extraAssets` are downloaded for every platform (Kuna's compiled SLEIGH specs) |
 | `install` | required installer recipe: `["github-release"]` downloads and verifies the archive described by `release`; `["pip", "install", "droidasc"]` installs a published PyPI package (no shell). Python source-checkout/archive recipes are not supported. The manager creates the Python virtual environment itself; manifests do not contain venv commands. `--version` pins PyPI packages using `==`. Python source checkouts are not copied into `share/`; JS release assets retain their module tree under `share/<id>/app` |
@@ -182,9 +190,9 @@ The venv install records the interpreter it used in PROVENANCE (`python`), the
 manager that installed the package (`python_manager`) and the interpreter
 path it will run (`venv`).
 
-The tool `id` is derived; `repository`, `tagPrefix`, `version` and `checksums` have defaults. Manifests declare only values that differ from those defaults — `launch.type` selects the
-tool runtime; the tool id is the subproject
-directory name without the `decx-` prefix. Platforms are two axes joined as
+The tool `id` is required; `repository`, `tagPrefix`, `version` and `checksums`
+have defaults. Manifests declare only values that differ from those defaults —
+`launch.type` selects the tool runtime. Platforms are two axes joined as
 `<os>-<arch>`: `win`, `darwin`, `linux` × `arm64`, `amd64` (e.g. `darwin-arm64`,
 `win-amd64`); an `assets` map may additionally use `any` for a
 platform-independent payload. For archive recipes, `--version <tag>` picks a
@@ -257,8 +265,12 @@ into a temporary empty directory and checking version, help, tool discovery and
 the `--third-party` override.
 
 Direct source execution (`node src/cli.ts …`) still reads package.json and the
-repository's `third_party/`. In either mode, `--third-party <dir>` replaces the
-default manifest set with that directory's manifests; it does not merge them.
+repository's `third_party/tools.json`. In either mode, `--third-party <dir>`
+replaces the default manifest set with `<dir>/tools.json`; it does not merge them.
+The loader never scans tool directories or falls back to old manifest files.
+Malformed catalog roots yield no tools. Invalid entries produce issues keyed by
+`tools.json#tools/<index>` without blocking valid tools; duplicate IDs report an
+issue and keep the first valid entry.
 
 ## scriptc native manager
 
@@ -325,10 +337,10 @@ unsupported. CI tests independent tool compilation on the same four hosts as
 the native manager; macOS x64 is not part of the release matrix. Because scriptc is installed separately for builds,
 the manager's lockfile and `npm ci` do not depend on its platform packages.
 
-Adding a tool: create `third_party/decx-<id>/` with its own `README.md` and the
-`decx-<id>.json` manifest (the tool id is the subproject directory name without the
-`decx-` prefix), add its contract to `skills/decx-tool/` (a routing-gate row in
-`SKILL.md` plus `references/<id>.md`), then run `npm test` — the manifest tests load
-every manifest under `third_party/` and hold each shipped manifest to the platform,
-release-asset and launcher rules.  The skill is validated by
+Adding a tool: add a manifest-2 entry with an explicit unique `id` to
+`third_party/tools.json` and its contract to `skills/decx-tool/` (a routing-gate
+row in `SKILL.md` plus `references/<id>.md`), then run `npm test`. If a source
+checkout is needed, retain its upstream repository name and pinned gitlink;
+never wrap it in a DECX manifest directory. The manager tests hold the catalog
+entries to the platform, release-asset and launcher rules.  The skill is validated by
 `python3 skills/check-skills.py`, which validates the packaged execution skills.

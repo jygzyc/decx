@@ -4,10 +4,11 @@ Standalone Rust CLI that pulls Android framework/dex inputs from an adb-connecte
 device, expands the APEX/ext4/EROFS payloads with native readers, and packs the
 results into a `framework.jar`.
 
-`decx install afe` prefers a prebuilt `tools-v*` asset for the platform and
-otherwise builds this crate with cargo; the manifest is `decx-afe.json` beside it
-and the agent skill is `skills/decx-tool/` (routing in its `SKILL.md`, the AFE
-contract in `references/afe.md`). The release jobs in
+AFE is DECX's own utility, not an upstream repository. `decx install afe`
+requires a prebuilt `tools-v*` asset for the platform; a missing asset fails
+without a cargo fallback. The `afe` manifest-2 entry lives in the central
+[`../tools.json`](../tools.json) catalog. The agent skill is `skills/decx-tool/`
+(routing in its `SKILL.md`, the AFE contract in `references/afe.md`). The release jobs in
 `.github/workflows/decx-afe.yml` publish the
 assets the manifest looks for (`afe-{version}-<platform>.tar.gz|zip` plus
 `afe-SHA256SUMS.txt` under a `tools-v*` tag).

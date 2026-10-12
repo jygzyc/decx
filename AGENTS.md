@@ -8,21 +8,21 @@ It is not a decompiler, unified analysis CLI, plugin runtime, or analysis server
 
 - APK analysis uses upstream [DroidASC](https://github.com/MG1937/ASC) directly.
 - Native binary analysis uses upstream [Kuna](https://github.com/Noelo-Lab/kuna) directly.
-- `third_party/` holds every subproject: its own `README.md`, the toolkit manifest
-  `decx-<id>.json` the manager reads, and for a vendored tool its pinned `source/`
-  checkout. The portable execution skills live in root `skills/`; the tool-routing
-  skill is `skills/decx-tool/`, each tool's contract in `references/<id>.md`; Kuna's reference
-  is upstream's own skill file copied verbatim (frontmatter dropped) and is re-copied,
-  never edited, when the pin moves. DECX's own
-  `decx-afe/` sits beside the vendored upstream checkouts `decx-droidasc/source` and
-  `decx-kuna/source`, which are git submodules pinned by `.gitmodules` and the
-  superproject gitlinks.
-- Android framework collection and preprocessing lives in `third_party/decx-afe/`.
+- `third_party/` holds tool source projects and the central toolkit catalog
+  `tools.json`. Each manifest-2 entry has an explicit tool id; there are no
+  per-directory manifests. The portable execution skills live in root `skills/`;
+  the tool-routing skill is `skills/decx-tool/`, each tool's contract in
+  `references/<id>.md`; Kuna's reference is upstream's own skill file copied
+  verbatim (frontmatter dropped) and is re-copied, never edited, when the pin moves.
+  DECX's own `third_party/afe/` sits beside the direct upstream checkouts
+  `third_party/ASC` (MG1937/ASC) and `third_party/kuna` (Noelo-Lab/kuna),
+  which are git submodules pinned by `.gitmodules` and the superproject gitlinks.
+- Android framework collection and preprocessing lives in `third_party/afe/`.
 - The portable execution skills live in root `skills/`; read `skills/AGENTS.md`
   before editing it. The wiki-maintenance process is built into the extension,
   not a separate skill.
 - `decx/` is the toolkit installer and manager: a TypeScript CLI that discovers the tools in
-  `third_party/decx-<id>/decx-<id>.json`, installs, locates and runs them, and reports what is
+  `third_party/tools.json`, installs, locates and runs them, and reports what is
   installed and what this host supports. Development runs TypeScript directly on
   Node 24.21+; releases ship bundled JavaScript and scriptc-native executables with
   embedded tool manifests. Native executables require no external Node. It prints
@@ -69,9 +69,11 @@ The manager in `decx/` manages tools, not runtimes: it probes for Node, Python, 
 Git and reports the exact shortfall instead of installing them (agents run on Node
 already; `mise`/`nvm`/`rustup` remain the user's choice). It also does not translate
 analysis commands — `decx -m <tool>` reaches a tool's own help and output unchanged. Keep it
-manifest-driven: a new tool is a new `third_party/decx-<id>/decx-<id>.json` (with its own
-`README.md` and a reference in `decx-tool`), never new
-special-cased code. Installs keep every executable in `$DECX_HOME/bin` and each payload
+manifest-driven: a new tool is an entry with an explicit `id` in
+`third_party/tools.json` (with a reference in `decx-tool`), never new
+special-cased code. Source checkouts retain upstream repository names; AFE is
+DECX-owned, not an upstream repository. The catalog uses `decx-tool.schema.json`;
+invalid entries are reported separately and do not block valid tools. Installs keep every executable in `$DECX_HOME/bin` and each payload
 in `$DECX_HOME/share/<id>/PROVENANCE`, and link the executables into `~/.local/bin`
 (`--links`, `$DECX_LINKS_DIR`; `.cmd` shims on Windows). Keep that layout and those
 PROVENANCE keys stable so `decx -m <tool>` and any reader of `share/<id>/PROVENANCE` keep
@@ -100,7 +102,7 @@ ledger lives under the pi agent directory, outside the three knowledge layers.
 
 ## Validation
 
-- AFE: `cd third_party/decx-afe && cargo build --release && cargo test` (stable Rust);
+- AFE: `cd third_party/afe && cargo build --release && cargo test` (stable Rust);
   `cargo fmt --check` and `cargo clippy --all-targets -- -D warnings` must stay clean.
 - Manager: `cd decx && npm ci && npm run typecheck && npm test && npm run build`; `node src/cli.ts version` must keep printing one JSON
   envelope. Run `npm run setup:scriptc` before `npm run build:scriptc` or the independent TS-tool test;
@@ -148,7 +150,7 @@ skills), and smokes the bundles and launchers on all four architectures before p
 release build and
 a `--help` smoke on Linux, macOS and Windows;
 Windows arm64 cross check; tag `tools-v*`, checked against
-`third_party/decx-afe/Cargo.toml`, builds the six `afe-<version>-<platform>` archives plus
+`third_party/afe/Cargo.toml`, builds the six `afe-<version>-<platform>` archives plus
 `afe-SHA256SUMS.txt`), `decx-droidasc.yml` (the manager creates a private venv,
 installs the published PyPI package and functionally tests real APK decompilation,
 manifest decoding and DEX references across platforms;

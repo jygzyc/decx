@@ -7,9 +7,9 @@ on:
   push:
     branches: ['**']
     tags: ['droidasc-v*']
-    paths: ['third_party/decx-droidasc/**', 'decx/**', 'skills/decx-tool/**', '.github/workflows/decx-droidasc.yml']
+    paths: ['third_party/ASC/**', 'third_party/tools.json', 'third_party/decx-tool.schema.json', 'decx/**', 'skills/decx-tool/**', '.github/workflows/decx-droidasc.yml']
   pull_request:
-    paths: ['third_party/decx-droidasc/**', 'decx/**', 'skills/decx-tool/**', '.github/workflows/decx-droidasc.yml']
+    paths: ['third_party/ASC/**', 'third_party/tools.json', 'third_party/decx-tool.schema.json', 'decx/**', 'skills/decx-tool/**', '.github/workflows/decx-droidasc.yml']
   schedule:
     - cron: '17 4 * * 1'
   workflow_dispatch:
@@ -52,6 +52,17 @@ jobs:
       - uses: actions/setup-python@v7.0.0
         with:
           python-version: ${{ matrix.python }}
+
+      - name: The catalog declares the published PyPI package
+        run: |
+          node -e '
+            const manifest = require("./third_party/tools.json").tools.find(tool => tool.id === "droidasc");
+            if (!manifest || JSON.stringify(manifest.install) !== JSON.stringify(["pip", "install", "droidasc"]) ||
+                manifest.launch.type !== "python" || manifest.launch.commands.join(",") !== "droidasc" ||
+                manifest.requires?.python !== ">=3.10") {
+              throw new Error("DroidASC must install the published package into a private Python venv");
+            }
+          '
 
       - name: Install from PyPI with DECX
         run: node decx/src/cli.ts install droidasc --home "$DECX_HOME" --no-links --pretty

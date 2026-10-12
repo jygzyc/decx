@@ -7,7 +7,7 @@ import { fileURLToPath } from 'node:url';
 import { HOST_PLATFORM, makeZip, runCli, runCliAsync, sha256, startFixtureServer, tempDir } from './fixtures.ts';
 
 const fixtureDir = fileURLToPath(new URL('./fixtures/bin-tool/', import.meta.url));
-const manifestFile = path.join(fixtureDir, 'decx-binprobe.json');
+const catalogFile = path.join(fixtureDir, 'tools.json');
 const argvProgram = 'console.log(JSON.stringify(process.argv.slice(1)))';
 
 test('binary fixture downloads a verified native executable and runs through decx -m', async (t) => {
@@ -20,9 +20,8 @@ test('binary fixture downloads a verified native executable and runs through dec
     fs.rmSync(repoRoot, { recursive: true, force: true });
   });
   const thirdParty = path.join(repoRoot, 'third_party');
-  const subproject = path.join(thirdParty, 'decx-binprobe');
-  fs.mkdirSync(subproject, { recursive: true });
-  fs.copyFileSync(manifestFile, path.join(subproject, 'decx-binprobe.json'));
+  fs.mkdirSync(thirdParty, { recursive: true });
+  fs.copyFileSync(catalogFile, path.join(thirdParty, 'tools.json'));
 
   // Repackage the test host's real native Node executable. No compiler or
   // checked-in architecture-specific binaries are needed to test bin launch.

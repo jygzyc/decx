@@ -7,7 +7,7 @@ import { fileURLToPath } from 'node:url';
 import { HOST_PLATFORM, makeZip, runCli, runCliAsync, sha256, startFixtureServer, tempDir } from './fixtures.ts';
 
 const fixture = fileURLToPath(new URL('./fixtures/scriptc-tool/', import.meta.url));
-const manifestFile = path.join(fixture, 'decx-scriptcprobe.json');
+const catalogFile = path.join(fixture, 'tools.json');
 const compilerName = process.platform === 'win32' ? 'scriptc.exe' : 'scriptc';
 const compiler = fileURLToPath(new URL(`../.scriptc-toolchain/bin/${compilerName}`, import.meta.url));
 test('scriptc builds an independent TS tool; decx installs its verified native release', { timeout: 240_000 }, async (t) => {
@@ -21,9 +21,8 @@ test('scriptc builds an independent TS tool; decx installs its verified native r
     fs.rmSync(repoRoot, { recursive: true, force: true });
   });
   const thirdParty = path.join(repoRoot, 'third_party');
-  const project = path.join(thirdParty, 'decx-scriptcprobe');
-  fs.mkdirSync(project, { recursive: true });
-  fs.copyFileSync(manifestFile, path.join(project, 'decx-scriptcprobe.json'));
+  fs.mkdirSync(thirdParty, { recursive: true });
+  fs.copyFileSync(catalogFile, path.join(thirdParty, 'tools.json'));
 
   const executable = process.platform === 'win32' ? 'scriptcprobe.exe' : 'scriptcprobe';
   const compiled = path.join(repoRoot, executable);

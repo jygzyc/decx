@@ -1,11 +1,10 @@
 /**
- * Tool manifests.  One JSON file per tool under `third_party/decx-<id>/decx-<id>.json`
- * describes where the tool comes from, how it is installed and how it is
+ * Tool manifests in the central `third_party/tools.json` catalog describe
+ * where each tool comes from, how it is installed and how it is
  * launched.  A manifest is data only: the CLI never grows per-tool code.
  *
  * Installation and launch are explicit; source/release naming defaults are conventions.
  * Defaults, applied when the file loads:
- *   id              the subproject directory (`decx-<id>`)
  *   release.repository  jygzyc/decx (only when a release is declared)
  *   release.tagPrefix   `<id>-v`
  *   release.checksums   `<id>-SHA256SUMS.txt`
@@ -110,7 +109,6 @@ export interface LoadResult {
 const PLATFORM_ASSET_KEYS = [...SUPPORTED_PLATFORMS, 'any'];
 
 const TOP_LEVEL_KEYS = new Set([
-  '$schema',
   'manifest',
   'id',
   'summary',
@@ -180,13 +178,11 @@ function requireString(record: Record<string, unknown>, key: string, where: stri
 
 /**
  * Validates one manifest object and returns it with every default applied, or
- * every problem found.  `idHint` is the id the manifest's directory names;
- * a manifest that omits `id` takes it from there.
+ * every problem found. Every catalog entry requires an explicit tool id.
  */
 export function validateManifest(
   value: unknown,
   file = 'manifest',
-  idHint?: string,
 ): { manifest?: ToolManifest; errors: string[] } {
   const errors: string[] = [];
   if (!isRecord(value)) {
@@ -200,16 +196,9 @@ export function validateManifest(
   if (value.manifest !== 2) {
     errors.push(`${file}: unsupported "manifest" version (expected 2)`);
   }
-  if (value.id !== undefined && (typeof value.id !== 'string' || value.id.trim() === '')) {
-    errors.push(`${file}: id must be a non-empty string`);
-  }
-  const id = typeof value.id === 'string' && value.id.trim() !== '' ? value.id : idHint ?? '';
-  if (id === '') {
-    errors.push(`${file}: missing "id" (or a directory whose name provides it)`);
-  } else if (!/^[a-z0-9][a-z0-9-]*$/.test(id)) {
+  const id = requireString(value, 'id', file, errors);
+  if (id !== '' && !/^[a-z0-9][a-z0-9-]*$/.test(id)) {
     errors.push(`${file}: id must be a safe lowercase tool name`);
-  } else if (idHint !== undefined && value.id !== undefined && value.id !== idHint) {
-    errors.push(`${file}: manifest id "${value.id}" does not match directory "${idHint}"`);
   }
   const summary = requireString(value, 'summary', file, errors);
   const optionalTextKeys: string[] = ['homepage', 'license', 'notes'];
@@ -390,39 +379,50 @@ function isBareDirectoryName(value: unknown): value is string {
 }
 
 /**
- * Loads every tool manifest under `dir`: each subproject directory holds
- * `decx-<id>.json` in `third_party/decx-<id>/`. Unreadable or invalid manifests are
- * reported as issues instead of failing the whole command, so a broken tool
- * never blocks the others.
+ * Loads only `dir/tools.json`. Invalid entries are reported as issues without
+ * blocking valid tools; duplicate ids keep the first valid entry.
  */
 export function loadManifests(dir: string): LoadResult {
   const tools: ToolManifest[] = [];
   const issues: ManifestIssue[] = [];
-  if (!fs.existsSync(dir)) {
-    return { tools, issues: [{ file: dir, message: 'tool manifest directory not found' }] };
+  const file = path.join(dir, 'tools.json');
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(fs.readFileSync(file, 'utf8'));
+  } catch (error) {
+    return { tools, issues: [{ file, message: `cannot read tool catalog: ${(error as Error).message}` }] };
   }
-  const entries = fs
-    .readdirSync(dir, { withFileTypes: true })
-    .filter((entry) => entry.isDirectory() && entry.name.startsWith('decx-'))
-    .map((entry) => entry.name)
-    .sort();
-  for (const name of entries) {
-    const id = name.slice('decx-'.length);
-    const file = path.join(dir, name, `decx-${id}.json`);
-    let parsed: unknown;
-    try {
-      parsed = JSON.parse(fs.readFileSync(file, 'utf8'));
-    } catch (error) {
-      issues.push({ file, message: `invalid JSON: ${(error as Error).message}` });
-      continue;
+  if (!isRecord(parsed)) {
+    return { tools, issues: [{ file, message: `${file}: not a JSON object` }] };
+  }
+  for (const key of Object.keys(parsed)) {
+    if (key !== '$schema' && key !== 'tools') {
+      issues.push({ file, message: `${file}: unknown field "${key}"` });
     }
-    const { manifest, errors } = validateManifest(parsed, file, id);
+  }
+  if (parsed.$schema !== undefined && parsed.$schema !== './decx-tool.schema.json') {
+    issues.push({ file, message: `${file}: "$schema" must be "./decx-tool.schema.json"` });
+  }
+  if (!Array.isArray(parsed.tools) || parsed.tools.length === 0) {
+    issues.push({ file, message: `${file}: tools must be a non-empty array` });
+    return { tools, issues };
+  }
+  if (issues.length > 0) return { tools, issues };
+  const ids = new Set<string>();
+  let index = 0;
+  for (const entry of parsed.tools) {
+    const entryFile = `${file}#tools/${index}`;
+    index += 1;
+    const { manifest, errors } = validateManifest(entry, entryFile);
     if (manifest === undefined) {
-      for (const message of errors) {
-        issues.push({ file, message });
-      }
+      for (const message of errors) issues.push({ file: entryFile, message });
       continue;
     }
+    if (ids.has(manifest.id)) {
+      issues.push({ file: entryFile, message: `${entryFile}: duplicate tool id "${manifest.id}"` });
+      continue;
+    }
+    ids.add(manifest.id);
     tools.push(manifest);
   }
   return { tools, issues };

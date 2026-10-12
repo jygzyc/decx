@@ -10,7 +10,7 @@ Use each analyzer's native interface:
 | --- | --- |
 | APK / DEX analysis | [DroidASC](https://github.com/MG1937/ASC) |
 | Native binary analysis | [Kuna](https://github.com/Noelo-Lab/kuna) |
-| Android framework collection and preprocessing | [AFE](third_party/decx-afe/README.md) |
+| Android framework collection and preprocessing | [AFE](third_party/afe/README.md) |
 | Analysis methodology, findings, reports and PoCs | [Execution skill](skills/decx-tool/) |
 
 ## Install and manage tools
@@ -28,7 +28,8 @@ decx -m kuna --help      # equivalent explicit form
 decx help install        # usage for the manager or one command
 ```
 
-Tools are declared as data in `third_party/decx-<id>/decx-<id>.json`, never as code. Executables
+Tools are declared as manifest-2 entries with explicit IDs in the central
+`third_party/tools.json` catalog, never as code. Executables
 and payloads live under `$DECX_HOME` (`bin/`, `share/<id>/` with a `PROVENANCE` record); the
 manager installs tools, not language runtimes, and each tool keeps its own arguments and output.
 Layout, `--links` and install rules: [`decx/README.md`](decx/README.md). Direct native compilation
@@ -56,12 +57,12 @@ What each platform needs:
   compiled SLEIGH specs as a separate asset; the generated launcher exports `KUNA_SPECS`. There is
   no Windows arm64 release, and `decx install kuna` reports that instead of building the reference
   checkout.
-- **AFE** — installs a compiled, platform-specific GitHub Release asset (built from `third_party/decx-afe`; Rust/MSVC on Windows). Its
+- **AFE** — installs a compiled, platform-specific GitHub Release asset (built from DECX's own `third_party/afe`; Rust/MSVC on Windows). Its
   ext4/EROFS/ZIP readers are fully native, so no external extractor is needed on any platform.
 
 AFE only prepares artifacts: device collection needs ADB, unsupported image features fail with an
 actionable error, and picking an analyzer for the result stays the caller's job. See the
-[AFE README](third_party/decx-afe/README.md).
+[AFE README](third_party/afe/README.md).
 
 ## Skills
 
@@ -114,7 +115,7 @@ target data; publish only reviewed evidence.
 ## Development
 
 ```bash
-cd third_party/decx-afe && cargo build --release && cargo test
+cd third_party/afe && cargo build --release && cargo test
 cd decx && npm ci && npm test
 npm ci --prefix .pi/extensions/decx
 python3 skills/check-skills.py && node --test .pi/extensions/decx/*.test.ts
@@ -145,10 +146,12 @@ integration or analysis server, and it never translates one analyzer's command t
 Kuna are upstream tools used as they are. Adapters exist only for a demonstrated native-tool
 limitation.
 
-`third_party/` holds every subproject, and each one is self-contained: its own `README.md`, the
-skill reference under `skills/decx-tool/`, and the `decx-<id>.json` manifest the manager reads.
-`decx-afe/` is DECX's own Rust tool; `decx-droidasc/` and `decx-kuna/` pin the upstream checkout as
-a git submodule under `source/` (see `.gitmodules`).
+`third_party/tools.json` is the single tool catalog; tool IDs are independent of source
+paths. `third_party/afe/` is DECX's own Rust tool. `third_party/ASC` (MG1937/ASC) and
+`third_party/kuna` (Noelo-Lab/kuna) are direct pinned upstream git submodules
+(see `.gitmodules`), with their upstream READMEs and licenses unchanged.
+The skill references remain under `skills/decx-tool/`; see
+[the source layout and install caveats](third_party/README.md).
 
 ## License
 

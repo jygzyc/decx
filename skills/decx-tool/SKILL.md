@@ -58,8 +58,8 @@ decx -m <tool> -- <args...>     # runs the installed launcher; args pass through
   decodes nothing (`No sleigh specification for AARCH64:LE:64:v8A`). Platforms with
   an upstream asset: `<os>-<arch>` (`win`/`darwin`/`linux` × `arm64`/`amd64`, e.g.
   `darwin-arm64`, `win-amd64`); a host
-  without one fails loudly instead of compiling `source/` (installs never use the
-  vendored checkout, and `--from-source` is not offered for kuna).
+  without one fails loudly instead of compiling the reference checkout (installs
+  never use vendored source, and `--from-source` is not offered for kuna).
 - `afe` installs a prebuilt `tools-v*` archive for the platform. A missing
   platform asset currently fails rather than falling back to cargo — see
   [`references/afe.md`](references/afe.md) `## Install`.

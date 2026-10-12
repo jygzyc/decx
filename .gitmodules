@@ -1,6 +1,6 @@
-[submodule "third_party/decx-droidasc/source"]
-	path = third_party/decx-droidasc/source
+[submodule "third_party/ASC"]
+	path = third_party/ASC
 	url = https://github.com/MG1937/ASC
-[submodule "third_party/decx-kuna/source"]
-	path = third_party/decx-kuna/source
+[submodule "third_party/kuna"]
+	path = third_party/kuna
 	url = https://github.com/Noelo-Lab/kuna

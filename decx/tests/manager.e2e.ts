@@ -3,7 +3,7 @@ import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import test from 'node:test';
-import { HOST_PLATFORM, makeTarGz, makeZip, runCli, runCliAsync, sha256, startFixtureServer, tempDir } from './fixtures.ts';
+import { HOST_PLATFORM, makeTarGz, makeZip, runCli, runCliAsync, sha256, startFixtureServer, tempDir, writeCatalog } from './fixtures.ts';
 
 // Only public CLI subprocesses. No imported manager functions or builtin mocks.
 test('CLI stages verified resources before verification and launches executable metadata and human shims identically', async t => {
@@ -11,17 +11,15 @@ test('CLI stages verified resources before verification and launches executable 
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   const home = path.join(root, '安装目录 with spaces');
   const thirdParty = path.join(root, 'third_party');
-  const project = path.join(thirdParty, 'decx-resources');
   const name = process.platform === 'win32' ? 'resources.exe' : 'resources';
   const envKey = process.platform === 'win32' ? 'PATH' : 'Path';
-  fs.mkdirSync(project, { recursive: true });
-  fs.writeFileSync(path.join(project, 'decx-resources.json'), JSON.stringify({
+  writeCatalog(thirdParty, [{
     manifest: 2, id: 'resources', summary: 'native executable with required resources', install: ['github-release'],
     launch: { type: 'bin', commands: ['resources'] },
     verify: "-e console.log(require('fs').readFileSync(process.env.RESOURCES+'/probe.sla','utf8'))",
     env: { RESOURCES: '{prefix}/specs', Path: 'descriptor-path', DECX_MARKER: '资源%literal!^&' },
     release: { repository: 'acme/resources', tagPrefix: 'v', asset: 'resources.zip', checksums: null, extraAssets: { specs: 'specs.zip' } },
-  }));
+  }]);
   const archive = makeZip([{ name, data: fs.readFileSync(process.execPath), mode: 0o755 }]);
   const specs = makeZip([{ name: 'specs/probe.sla', data: 'resource fixture' }]);
   const assets = [
@@ -82,14 +80,86 @@ test('CLI discovery, usage, manifest errors and explicit home operate as user co
   assert.equal(pretty.status, 0);
   assert.match(pretty.stdout, /\n  /);
   const thirdParty = path.join(root, 'third_party');
-  fs.mkdirSync(path.join(thirdParty, 'decx-broken'), { recursive: true });
-  fs.writeFileSync(path.join(thirdParty, 'decx-broken/decx-broken.json'), '{broken');
+  fs.mkdirSync(thirdParty, { recursive: true });
+  fs.writeFileSync(path.join(thirdParty, 'tools.json'), '{broken');
   const broken = runCli(['--third-party', thirdParty, 'install', 'broken'], env);
   assert.notEqual(broken.status, 0);
   assert.equal(fs.existsSync(path.join(env.DECX_HOME, 'bin')), false);
   const missing = runCli(['update', 'kuna'], env);
   assert.notEqual(missing.status, 0);
   assert.match(missing.stdout, /NOT_INSTALLED/);
+});
+
+test('CLI reads only the central catalog and keeps valid entries despite invalid or duplicate tools', async t => {
+  const root = tempDir('decx-catalog-');
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const thirdParty = path.join(root, 'third_party');
+  const env = { HOME: root, USERPROFILE: root, DECX_HOME: path.join(root, 'home') };
+  const tool = (id: string) => ({
+    manifest: 2, id, summary: 'catalog fixture', install: ['github-release'],
+    launch: { type: 'bin', commands: [id] }, verify: '-v',
+    release: { repository: 'acme/catalog', tagPrefix: 'v', asset: 'catalog.zip', checksums: null },
+  });
+  const check = (id: string, code: string, status: number) => {
+    const result = runCli(['--third-party', thirdParty, '-m', id], env);
+    assert.equal(result.status, status, result.stderr + result.stdout);
+    assert.equal((result.json as { error: { code: string } }).error.code, code);
+    return result;
+  };
+  const { id: _id, ...missingId } = tool('implicit');
+  writeCatalog(thirdParty, [
+    tool('first'), { ...tool('broken'), launch: { type: 'invalid', commands: ['broken'] } },
+    missingId, tool('second'), { ...tool('first'), launch: { type: 'bin', commands: ['duplicate'] } },
+    null, { ...tool('schema-entry'), $schema: './decx-tool.schema.json' },
+  ]);
+  for (const id of ['first', 'second']) check(id, 'NOT_INSTALLED', 1);
+  for (const id of ['broken', 'implicit', 'schema-entry']) check(id, 'UNKNOWN_TOOL', 2);
+  const unknown = check('absent', 'UNKNOWN_TOOL', 2);
+  assert.equal((unknown.json as { error: { hint: string } }).error.hint, 'known tools: first, second');
+  // Both valid tools remain installable; a duplicate cannot replace the first
+  // entry's executable metadata with a command absent from the archive.
+  const archive = makeZip(['first', 'second'].map(id => ({
+    name: process.platform === 'win32' ? `${id}.exe` : id,
+    data: fs.readFileSync(process.execPath), mode: 0o755,
+  })));
+  const server = await startFixtureServer({
+    '/repos/acme/catalog/releases/tags/v1.0.0': JSON.stringify({
+      tag_name: 'v1.0.0', assets: [{ name: 'catalog.zip', digest: `sha256:${sha256(archive)}` }],
+    }),
+    '/acme/catalog/releases/download/v1.0.0/catalog.zip': archive,
+  });
+  t.after(() => server.close());
+  const home = path.join(root, 'installed');
+  const installEnv = { ...env, DECX_GITHUB_API_BASE: server.url, DECX_GITHUB_DOWNLOAD_BASE: server.url };
+  for (const id of ['first', 'second']) {
+    const installed = await runCliAsync(['--home', home, '--third-party', thirdParty,
+      'install', id, '--version', 'v1.0.0', '--no-links'], installEnv);
+    assert.equal(installed.status, 0, installed.stderr + installed.stdout);
+    assert.equal((installed.json as { id: string }).id, id);
+    const launched = runCli(['--home', home, '--third-party', thirdParty, '-m', id, '-v'], env);
+    assert.equal(launched.status, 0, launched.stderr + launched.stdout);
+    assert.equal(launched.stdout.trim(), process.version);
+  }
+  assert.equal(fs.existsSync(path.join(home, 'bin', process.platform === 'win32' ? 'duplicate.exe' : 'duplicate')), false);
+
+  const file = path.join(thirdParty, 'tools.json');
+  for (const catalog of [null, [], 'not an object', {}, { tools: null }, { tools: {} }, { tools: [] },
+    { tools: [tool('first')], extra: true }, { tools: [tool('first')], $schema: 'wrong' }]) {
+    fs.writeFileSync(file, JSON.stringify(catalog));
+    check('first', 'UNKNOWN_TOOL', 2);
+  }
+  fs.writeFileSync(file, '{broken');
+  check('first', 'UNKNOWN_TOOL', 2);
+  fs.rmSync(file);
+  // No fallback to per-directory manifests, even when those are otherwise valid.
+  const old = path.join(thirdParty, 'decx-implicit');
+  fs.mkdirSync(old);
+  fs.writeFileSync(path.join(old, 'decx-implicit.json'), JSON.stringify(tool('implicit')));
+  check('implicit', 'UNKNOWN_TOOL', 2);
+  writeCatalog(thirdParty, [tool('second')]);
+  check('implicit', 'UNKNOWN_TOOL', 2);
+  check('second', 'NOT_INSTALLED', 1);
+  assert.equal(fs.existsSync(path.join(env.DECX_HOME, 'share')), false);
 });
 
 for (const format of ['zip', 'tar.gz']) {
@@ -100,13 +170,11 @@ for (const format of ['zip', 'tar.gz']) {
     const links = path.join(root, 'links');
     const thirdParty = path.join(root, 'third_party');
     const name = process.platform === 'win32' ? 'probe.exe' : 'probe';
-    const project = path.join(thirdParty, 'decx-probe');
-    fs.mkdirSync(project, { recursive: true });
-    fs.writeFileSync(path.join(project, 'decx-probe.json'), JSON.stringify({
+    writeCatalog(thirdParty, [{
       manifest: 2, id: 'probe', summary: 'real native payload', install: ['github-release'],
       launch: { type: 'bin', commands: ['probe'] }, verify: '--version',
       release: { repository: 'acme/probe', tagPrefix: 'v', asset: `probe-{version}.${format}`, checksums: 'SHA256SUMS' },
-    }));
+    }]);
     const bytes = fs.readFileSync(process.execPath); // Actual host executable, never an echo shell substitute.
     const pack = format === 'zip' ? makeZip : makeTarGz;
     const valid = pack([{ name: `package/${name}`, data: bytes, mode: 0o755 }]);

@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
-import { makeTarGz, makeZip, runCli, runCliAsync, sha256, startFixtureServer, tempDir } from './fixtures.ts';
+import { makeTarGz, makeZip, runCli, runCliAsync, sha256, startFixtureServer, tempDir, writeCatalog } from './fixtures.ts';
 
 const fixture = fileURLToPath(new URL('./fixtures/js-tool/', import.meta.url));
 for (const format of ['tar.gz', 'zip']) {
@@ -12,11 +12,9 @@ for (const format of ['tar.gz', 'zip']) {
     t.after(() => fs.rmSync(root, { recursive: true, force: true }));
     const home = path.join(root, '安装目录');
     const thirdParty = path.join(root, 'third_party');
-    const project = path.join(thirdParty, 'decx-jsprobe');
-    fs.mkdirSync(project, { recursive: true });
-    const manifest = JSON.parse(fs.readFileSync(path.join(fixture, 'decx-jsprobe.json'), 'utf8'));
-    manifest.release.asset = `jsprobe-{version}.${format}`;
-    fs.writeFileSync(path.join(project, 'decx-jsprobe.json'), JSON.stringify(manifest));
+    const catalog = JSON.parse(fs.readFileSync(path.join(fixture, 'tools.json'), 'utf8'));
+    catalog.tools[0].release.asset = `jsprobe-{version}.${format}`;
+    writeCatalog(thirdParty, catalog.tools);
     const entries = [
       { name: 'package/package.json', data: '{"type":"module"}' },
       { name: 'package/jsprobe.js', data: fs.readFileSync(path.join(fixture, 'jsprobe.js')) },

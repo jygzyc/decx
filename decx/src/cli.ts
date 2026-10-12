@@ -51,7 +51,7 @@ run:
 
 options:
   --home/--prefix <dir>  install root (default $DECX_HOME, else ~/.decx)
-  --third-party <dir>  tool project directory (overrides embedded/repository tools)
+  --third-party <dir>  directory containing tools.json (overrides embedded/repository tools)
   --pretty             indent the JSON output
   -h, --help           print help (decx <command> --help for one command)
   -V, --version        print the CLI version

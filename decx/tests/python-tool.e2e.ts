@@ -9,7 +9,7 @@ import { runCli, runCliAsync, tempDir } from './fixtures.ts';
 import { writePythonWheel } from './python-wheel.ts';
 
 const fixtureDir = fileURLToPath(new URL('./fixtures/python-tool/', import.meta.url));
-const manifestFile = path.join(fixtureDir, 'decx-pyprobe.json');
+const catalogFile = path.join(fixtureDir, 'tools.json');
 
 test('Python fixture installs a local wheel into a real private venv and runs through decx -m', async (t) => {
   const home = tempDir('decx-py-home-');
@@ -19,9 +19,8 @@ test('Python fixture installs a local wheel into a real private venv and runs th
     for (const dir of [home, wheelhouse, repoRoot]) fs.rmSync(dir, { recursive: true, force: true });
   });
   const thirdParty = path.join(repoRoot, 'third_party');
-  const subproject = path.join(thirdParty, 'decx-pyprobe');
-  fs.mkdirSync(subproject, { recursive: true });
-  fs.copyFileSync(manifestFile, path.join(subproject, 'decx-pyprobe.json'));
+  fs.mkdirSync(thirdParty, { recursive: true });
+  fs.copyFileSync(catalogFile, path.join(thirdParty, 'tools.json'));
   writePythonWheel(wheelhouse);
 
   // These are pip's offline switches, not an installer shortcut: DECX still

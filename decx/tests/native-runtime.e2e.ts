@@ -5,7 +5,7 @@ import path from 'node:path';
 import os from 'node:os';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
-import { HOST_PLATFORM, makeTarGz, makeZip, sha256, startFixtureServer, tempDir, writeFile } from './fixtures.ts';
+import { HOST_PLATFORM, makeTarGz, makeZip, sha256, startFixtureServer, tempDir, writeCatalog, writeFile } from './fixtures.ts';
 import { writePythonWheel } from './python-wheel.ts';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
@@ -25,6 +25,37 @@ function runNative(args: string[], cwd: string, env: NodeJS.ProcessEnv): Promise
     child.on('close', status => resolve({ status, stdout, stderr }));
   });
 }
+
+test('native manager reads central catalogs, retaining valid tools without Node', async (t) => {
+  assert.ok(fs.existsSync(binary), 'build:scriptc must run before test:native');
+  const temporary = tempDir('decx-native-catalog-');
+  t.after(() => fs.rmSync(temporary, { recursive: true, force: true }));
+  const home = path.join(temporary, 'home');
+  const emptyPath = path.join(temporary, 'empty-path');
+  fs.mkdirSync(emptyPath);
+  const env = { ...process.env, HOME: temporary, USERPROFILE: temporary, DECX_HOME: home, PATH: emptyPath, Path: emptyPath };
+  const execute = (directory: string, id: string) => runNative(['--third-party', directory, '--home', home, '-m', id], temporary, env);
+  const expectCode = async (directory: string, id: string, code: string, status: number) => {
+    const result = await execute(directory, id);
+    assert.equal(result.status, status, JSON.stringify(result));
+    assert.equal(JSON.parse(result.stdout).error.code, code);
+  };
+  for (const id of ['afe', 'droidasc', 'kuna']) {
+    await expectCode(path.join(root, '..', 'third_party'), id, 'NOT_INSTALLED', 1);
+  }
+  const thirdParty = path.join(temporary, 'third_party');
+  const tool = {
+    manifest: 2, id: 'demo', summary: 'catalog fixture', install: ['github-release'],
+    launch: { type: 'bin', commands: ['demo'] }, release: { asset: 'demo-{version}.zip' },
+  };
+  writeCatalog(thirdParty, [null, { ...tool, id: undefined }, tool, tool]);
+  await expectCode(thirdParty, 'demo', 'NOT_INSTALLED', 1);
+  await expectCode(thirdParty, 'missing', 'UNKNOWN_TOOL', 2);
+  for (const catalog of [{ tools: [] }, { tools: {} }, { tools: [tool], unexpected: true }]) {
+    writeFile(path.join(thirdParty, 'tools.json'), JSON.stringify(catalog));
+    await expectCode(thirdParty, 'demo', 'UNKNOWN_TOOL', 2);
+  }
+});
 
 for (const suffix of process.platform === 'win32' ? ['zip'] : ['tar.gz', 'zip']) {
 test(`native manager ${suffix}: install, argv/env, update, rollback and remove offline without Node`, {
@@ -79,13 +110,13 @@ else {
     '/repos/acme/demo/releases': { location: `${redirected.url}/releases` },
   });
   t.after(() => server.close());
-  writeFile(path.join(thirdParty, 'decx-demo/decx-demo.json'), JSON.stringify({
+  writeCatalog(thirdParty, [{
     manifest: 2, id: 'demo', summary: 'offline native fixture', install: ['github-release'],
     launch: { type: 'bin', commands: ['demo'] },
     env: { DECX_NATIVE_MARKER: 'launcher环境' },
     release: {repository:'acme/demo', tagPrefix:'v', assets:{[HOST_PLATFORM]:`demo-{version}.${suffix}`}, checksums:'SHA256SUMS'},
     verify: '--version',
-  }));
+  }]);
   const env = {
     ...process.env, HOME: temporary, USERPROFILE: temporary, PATH: emptyPath, Path: emptyPath,
     DECX_HOME: home, DECX_LINKS_DIR: links, DECX_NATIVE_MARKER: '环境变量', GITHUB_TOKEN: 'fixture-secret',
@@ -144,8 +175,8 @@ test('native manager creates a real Python venv offline and launches its entry p
   const links = path.join(temporary, 'links');
   fs.mkdirSync(wheelhouse);
   writePythonWheel(wheelhouse);
-  const manifest = fileURLToPath(new URL('./fixtures/python-tool/decx-pyprobe.json', import.meta.url));
-  writeFile(path.join(thirdParty, 'decx-pyprobe/decx-pyprobe.json'), fs.readFileSync(manifest));
+  const catalog = fileURLToPath(new URL('./fixtures/python-tool/tools.json', import.meta.url));
+  writeFile(path.join(thirdParty, 'tools.json'), fs.readFileSync(catalog));
   const python = spawnSync(process.platform === 'win32' ? 'python' : 'python3', ['-c', 'import sys; print(sys.executable)'], { encoding: 'utf8' });
   assert.equal(python.status, 0, python.stderr);
   const executable = python.stdout.trim();

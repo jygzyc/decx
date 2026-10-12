@@ -33,6 +33,11 @@ export function writeFile(file: string, data: string | Buffer, mode?: number): v
   }
 }
 
+/** Writes the same central catalog shape used by source and compiled managers. */
+export function writeCatalog(directory: string, tools: readonly unknown[]): void {
+  writeFile(path.join(directory, 'tools.json'), JSON.stringify({ tools }));
+}
+
 export interface CliResult {
   status: number | null;
   stdout: string;
