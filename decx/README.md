@@ -102,12 +102,15 @@ so the installed package works without activating a shell.
 These changes apply only to the launched process and its children.  Options before the module (`--home`, `--third-party`, `--pretty`)
 belong to decx, so `decx -m kuna --version` asks Kuna for its version.
 
-The portable `decx-tool` skill works without any pi extension: install the CLI
-and point an Agent Skills-compatible harness at its standalone `SKILL.md` and
-`references/` directory. The manager does not install plugins or copy skills
-into `$DECX_HOME`. The optional, source-only pi wiki extension is separate from
-this npm package; see [its README](../.pi/extensions/decx/README.md).
-`/decx init` initializes an empty wiki and skill directory, never installs skills.
+The portable [decx-tool skill](../.agents/skills/decx-tool/) uses this CLI as the
+unified install and launch entry. Skills live in the repository's `.agents/skills/`
+and work in any Agent Skills-compatible agent without plugins or initialization
+commands. Skills are sourced directly from the repository, independently of CLI
+releases. From the target project, install them with
+`npx skills add jygzyc/decx --skill decx-tool --agent universal`, update them with
+`npx skills update`, or uninstall with
+`npx skills remove decx-tool --agent universal`. The manager does not manage
+skills, install plugins or copy skills into `$DECX_HOME`.
 
 ## Layout
 
@@ -272,8 +275,8 @@ Node itself and the tools being installed are not bundled.
 `npm pack` runs the build through `prepack` and creates a standard npm `.tgz`.
 The package contains `package.json`, this README, `dist/LICENSE` and the executable;
 npm creates the `decx` symlink or Windows `.cmd` shim from the package's `bin` entry.
-There are no install-time build hooks, SDK downloads, native artifacts, extension
-bundles or runtime npm dependencies. Installing a packed tarball works offline.
+There are no install-time build hooks, SDK downloads, native manager artifacts
+or runtime npm dependencies. Installing a packed tarball works offline.
 
 `npm test` first builds the bundle, then tests real tool installations, update,
 rollback, removal and argument/environment preservation. The package acceptance
@@ -304,9 +307,9 @@ Malformed catalog roots yield no tools. Invalid entries produce issues keyed by
 issue and keep the first valid entry.
 
 Adding a tool: add an unversioned entry with an explicit unique `id` and `repo` to
-`third_party/tools.json` and its contract to `skills/decx-tool/` (a routing-gate
+`third_party/tools.json` and its contract to `.agents/skills/decx-tool/` (a routing-gate
 row in `SKILL.md` plus `references/<id>.md`), then run `npm test`. If a source
 checkout is needed, retain its upstream repository name and pinned gitlink;
 never wrap it in a DECX manifest directory. The manager tests hold the catalog
 entries to the platform, release-asset and launcher rules.  The skill is validated by
-`python3 skills/check-skills.py`, which validates the packaged execution skills.
+`python3 scripts/check-skills.py`, which validates the versioned execution skills.

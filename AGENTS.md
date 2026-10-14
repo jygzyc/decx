@@ -10,23 +10,23 @@ It is not a decompiler, unified analysis CLI, plugin runtime, or analysis server
 - Native binary analysis uses upstream [Kuna](https://github.com/Noelo-Lab/kuna) directly.
 - `third_party/` holds tool source projects and the central toolkit catalog
   `tools.json`. Its root requires `manifest: 1`; each unversioned entry has an
-  explicit tool id and `repo: "owner/repo"`; there are no per-directory manifests. The portable execution skills live in root `skills/`;
-  the tool-routing skill is `skills/decx-tool/`, each tool's contract in
+  explicit tool id and `repo: "owner/repo"`; there are no per-directory manifests. The portable execution skills live in `.agents/skills/`;
+  the tool-routing skill is `.agents/skills/decx-tool/`, each tool's contract in
   `references/<id>.md`; Kuna's reference is upstream's own skill file copied
   verbatim (frontmatter dropped) and is re-copied, never edited, when the pin moves.
   DECX's own `third_party/afe/` sits beside the direct upstream checkouts
   `third_party/ASC` (MG1937/ASC) and `third_party/kuna` (Noelo-Lab/kuna),
   which are git submodules pinned by `.gitmodules` and the superproject gitlinks.
 - Android framework collection and preprocessing lives in `third_party/afe/`.
-- The portable execution skills live in root `skills/`; read `skills/AGENTS.md`
-  before editing it. The wiki-maintenance process is built into the extension,
-  not a separate skill.
+- The versioned portable execution skills live in `.agents/skills/`; read
+  `.agents/skills/AGENTS.md` before editing them. The CLI is the unified install
+  and launch entry; skills supply tool routing and execution instructions.
 - `decx/` is the toolkit installer and manager: a TypeScript CLI that discovers the tools in
   `third_party/tools.json`, installs, locates and runs them, and reports what is
   installed and what this host supports. Development runs TypeScript directly on
   Node 24.21+; releases ship the public npm package `@jygzyc/decx-cli`, with a
   single bundled JavaScript executable and embedded tool catalog. Node is required
-  at runtime; no native manager or separate extension archive is published. It prints
+  at runtime; no native manager is published. It prints
   JSON on stdout and keeps no runtime dependencies. It is the only
   install path — installs are declared as data, never as per-platform scripts.
 
@@ -91,25 +91,14 @@ PROVENANCE keys stable so `decx -m <tool>` and any reader of `share/<id>/PROVENA
 working on existing installs; the legacy `$DECX_HOME/tools/<id>` shape is not detected or
 migrated.
 
-The extension implements the WikiSkill loop inside pi: `/decx init` creates a fresh
-`.decxwiki/raw` and `.decxwiki/wiki` in the current project and creates the
-empty `.agents/skills` layer. It never installs skills: `npx skills` installs
-`decx-tool` from the repository's root `skills/` into that directory. `/decx-wiki` consolidates traces
-into patterns; `decx_propose` and `decx_gate` update or roll back the *active* skill
-under `.agents/skills`, with measured validation. The wiki is maintenance material,
-not an inference dependency; `SKILL.md` and references remain complete without it.
-The old root-level `raw/` and `wiki/` and former skill content were archived
-locally under `archive/legacy-knowledge/` and removed from version control;
-root `skills/` now contains only installable, current execution skills. Never bootstrap new
-projects from that archive, commit it, or treat it as a discovered workspace.
-
-The evolution sequence is execution → trace consolidation → one-skill proposal →
-validation → accept or rollback. Only the skill candidate rolls back; raw evidence and wiki
-history persist. Structural lint is NOT validation performance: never claim an improvement
-without measured baseline/candidate scores on the same validation split. Imported author
-knowledge is bootstrap material, not rollout evidence. The pi extension assists maintenance
-(its tool restrictions are not a filesystem sandbox) and its goal/facts/steps checkpoint
-ledger lives under the pi agent directory, outside the three knowledge layers.
+The agent integration contract is the portable skills under `.agents/skills/`,
+not an agent-specific extension, plugin manifest or maintenance runtime. Compatible
+agents discover these versioned skills directly; `npx skills` owns installation,
+updates and removal in other projects. Skills come directly from the repository,
+independently of CLI releases; never add skill release packaging or custom skill
+lifecycle commands. `SKILL.md`, references and scripts must be complete
+without repository-local state or initialization commands. Keep private local
+archives ignored; never import them into skills or publish target data.
 
 ## Validation
 
@@ -126,27 +115,19 @@ ledger lives under the pi agent directory, outside the three knowledge layers.
   Install tests are offline — fixture archives served locally, real executables and a local wheel installed
   with real Python/pip into a private venv — and must never touch the real home
   directory or the network; pass `--home`/`DECX_HOME` with temp dirs.
-- Skills: `python3 skills/check-skills.py` verifies frontmatter, names and relative
-  links; also verify every documented native command against the supported upstream
-  revision. Never invent missing analysis commands.
-- Decx: `npm ci --prefix .pi/extensions/decx && node --test .pi/extensions/decx/*.test.ts` runs the extension tests; also run with `FS_SAFE_NATIVE_MODE=off` to cover guarded JavaScript fallback. The extension owns the pinned `@openclaw/fs-safe` runtime dependency; the manager remains dependency-free. Extension-owned I/O is capability-scoped to project wiki/skills/config and agent checkpoint storage, not an OS sandbox. Structural validation happens against an
-  initialized temporary project (`project=$(mktemp -d); node .pi/extensions/decx/cli.ts init --root "$project";
-  node .pi/extensions/decx/cli.ts check --root "$project"`) because old repository knowledge is archived locally and
-  is not a workspace. Use maintenance tools for routine knowledge updates; reviewed repository
-  migrations may edit files directly and must regenerate/check the index. The checkpoint hook is covered by the same tests: it counts rounds and turns,
-  keeps the last ten checkpoints per session and repeats the request until the pending
-  round is covered.
-- Analysis procedure: `decx-tool` owns per-tool syntax and the routing between tools.
-  Session bookkeeping and the trace → pattern → proposal loop are `decx_*` tools;
-  the `/decx-wiki` extension command orchestrates maintenance without a wiki skill.
-  `decx-tool` works without the extension.
+- Skills: `python3 scripts/check-skills.py` verifies frontmatter, names and relative
+  links under `.agents/skills/`; run
+  `python3 -m unittest discover -s scripts -p 'test_check_skills.py'`
+  for discovery and validation failures. Also verify
+  documented native commands against the supported upstream revision. Never invent
+  missing analysis commands.
+- Analysis procedure: `decx-tool` owns per-tool syntax and routing. Invoke tools
+  through `decx <tool>` or `decx -m <tool>`; no agent initialization is required.
 
-Agent plugins and extension manifests (Codex, Claude) are out of scope: the integration
-contract is the portable `decx-tool` skill plus the one pi extension that owns the Decx layer
-(`.pi/extensions/decx/`); nothing else may register into an agent harness. GitHub runs
-workflows only from the repository root. CI covers DECX-owned components only:
-the manager, AFE, and the extension/skills. Keep their `paths:` in sync when the
-crate, catalog, skills, wiki or managed paths change. Third-party acquisition and
+Agent plugins and extension manifests are out of scope; nothing registers into an
+agent harness. GitHub runs workflows only from the repository root. CI covers
+DECX-owned components only: the manager, AFE and portable skills. Keep their
+`paths:` in sync when the crate, catalog, skills or managed paths change. Third-party acquisition and
 release resolution belong to the CLI, never to per-tool Actions or scheduled pin updates. The manager and AFE workflows carry both checks and release publishing:
 branch pushes and pull requests run checks, while a matching tag push (or a
 `workflow_dispatch` with the `tag` input) runs release jobs,
@@ -157,14 +138,13 @@ on the latest Node 24 release; tag `decx-v*`, checked against `decx/package.json
 publishes the npm package only after all three platform gates pass. npm trusted
 publishing with provenance must be configured on the existing npm package for
 `jygzyc/decx` and `decx-cli.yml`. The replacement is `5.0.0`, after legacy `4.3.0`.
-Do not publish to npm during tests or ordinary branch pushes. The optional pi
-extension remains source-only, separately loaded and tested), `decx-afe.yml` (crate fmt/clippy on Linux; test,
+Do not publish to npm during tests or ordinary branch pushes), `decx-afe.yml` (crate fmt/clippy on Linux; test,
 release build and
 a `--help` smoke on Linux, macOS and Windows;
 Windows arm64 cross check; tag `tools-v*`, checked against
 `third_party/afe/Cargo.toml`, builds the six `afe-v<version>-<platform>` archives plus
-`afe-SHA256SUMS.txt`), and `decx-knowledge.yml` (three-platform extension tests,
-guarded JavaScript fallback, workspace structural checks and portable skill checks).
+`afe-SHA256SUMS.txt`), and `decx-skills.yml` (three-platform portable skill
+validation and validator tests, with no scheduled maintenance or runtime dependencies).
 The manager and crate jobs are offline — the manager's install tests use fixture
 archives, fake toolchains and temporary prefixes. All manager tests exercise public
 CLI subprocesses and real file/process outcomes, not imported functions or mocked

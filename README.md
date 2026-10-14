@@ -1,7 +1,8 @@
 # DECX
 
-Agent workflows for reverse engineering with native tools, plus **Android Framework
-Extract (AFE)** for collecting and preparing Android framework files.
+A unified **`decx` entry** for installing and running reverse-engineering tools,
+portable **Agent Skills**, and **Android Framework Extract (AFE)** for collecting
+and preparing Android framework files.
 
 DECX does not implement a decompiler or wrap tools behind a unified command API.
 Use each analyzer's native interface:
@@ -11,7 +12,7 @@ Use each analyzer's native interface:
 | APK / DEX analysis | [DroidASC](https://github.com/MG1937/ASC) |
 | Native binary analysis | [Kuna](https://github.com/Noelo-Lab/kuna) |
 | Android framework collection and preprocessing | [AFE](third_party/afe/README.md) |
-| Analysis methodology, findings, reports and PoCs | [Execution skill](skills/decx-tool/) |
+| Analysis methodology, findings, reports and PoCs | [Execution skill](.agents/skills/decx-tool/) |
 
 ## Install and manage tools
 
@@ -74,62 +75,55 @@ actionable error, and picking an analyzer for the result stays the caller's job.
 
 ## Skills
 
-Root [`skills/`](skills/) is the installable source; [decx-tool](skills/decx-tool/) routes between the
-installed tools, and each tool's own commands, output and error contract, and install
-method live in its `references/` file — `droidasc.md`, `kuna.md` (upstream's own skill,
-copied verbatim) and `afe.md`. This skill works with the separately installed DECX CLI
-in any Agent Skills-compatible harness, without the pi extension or a source clone.
-The manager does not install skills. From the target project, install a skill
-with `npx skills add jygzyc/decx --skill <skill-name>` (for example
-`--skill decx-tool`; choose project-level installation
-in `.agents/skills/`). The package installer, not DECX, owns skill installation.
+[`.agents/skills/`](.agents/skills/) is the canonical, versioned skill source.
+[decx-tool](.agents/skills/decx-tool/) routes between the installed tools through
+`decx <tool>` or `decx -m <tool>`. Each tool's native commands, output, errors and
+installation contract live in its own `references/` file: `droidasc.md`,
+`kuna.md` (copied verbatim from upstream) and `afe.md`.
+[antifrida-bypass](.agents/skills/antifrida-bypass/) is a separate execution skill
+for evidence-driven native Android anti-Frida diagnosis and bypass.
 
-The pi extension implements the [WikiSkill](https://arxiv.org/html/2608.27454) §3 loop as commands and tools, not as a second agent skill.
+Skills are installed directly from the repository, independently of CLI releases.
+They are not published as npm packages or Release assets. No agent-specific
+extension or maintenance runtime is required. `npx skills` owns their lifecycle;
+DECX does not install, update or uninstall skills. From the target project:
 
-The extension is optional and source-only, separate from the npm CLI package.
-See its [setup instructions](.pi/extensions/decx/README.md); it is not installed by npm.
-In any project, `/decx init` creates a fresh `.decxwiki/{raw,wiki}` and an **empty**
-`.agents/skills/` directory; it never downloads or copies a skill. Install
-`decx-tool` separately with `npx skills` as above.
-The extension's `/decx-wiki` command (not a separate skill) then consolidates
-execution traces, updates the wiki and checks its structure.
-Old repository patterns, traces and former skill content are local-only in
-ignored `archive/legacy-knowledge/`; init never imports them. Root `skills/`
-contains the current installable execution skill and is never treated as a wiki.
-
-The pi extension enforces inference/maintenance/proposal tool access and applies candidates with measured-score gating and skill rollback. See [the workflow and access boundary](.pi/extensions/decx/README.md).
-
-```text
-.decxwiki/                   # initialized in each project
-  raw/traces/                # immutable execution records
-  wiki/                      # pattern catalog, log and proposal ledger
-    patterns/
-    index.md
-    logs.md
-    skill-impact.md
-.agents/skills/              # empty after init; npx skills installs decx-tool here
+```bash
+# Install into the project-level .agents/skills/ directory
+npx skills add jygzyc/decx --skill decx-tool --agent universal
+npx skills add jygzyc/decx --skill antifrida-bypass --agent universal
+# Update installed skills
+npx skills update
+# Uninstall a selected skill
+npx skills remove decx-tool --agent universal
+npx skills remove antifrida-bypass --agent universal
 ```
 
-The extension is installed in pi separately, not copied into `.decxwiki/`.
+Skill installation does not install the CLI or analysis tools. Install the CLI
+separately with npm; use `decx install <tool>` for the tools.
 
-Execution reads skills and never the wiki; the maintainer consolidates raw records into the wiki,
-the proposer derives a single-skill change, validation decides whether to keep it, and rejection
-rolls back the skill, never the wiki. Imported pages are bootstrap knowledge and the structural
-checks are not a validation score. Raw records are gitignored by default because they may contain
-target data; publish only reviewed evidence.
+```text
+.agents/skills/
+  decx-tool/
+    SKILL.md
+    references/
+  antifrida-bypass/
+    SKILL.md
+    references/
+    scripts/
+```
 
 ## Development
 
 ```bash
-cd third_party/afe && cargo build --release && cargo test
-cd decx && npm ci && npm test
-npm ci --prefix .pi/extensions/decx
-python3 skills/check-skills.py && node --test .pi/extensions/decx/*.test.ts
-project=$(mktemp -d); node .pi/extensions/decx/cli.ts init --root "$project" && node .pi/extensions/decx/cli.ts check --root "$project"
+(cd third_party/afe && cargo build --release && cargo test)
+npm --prefix decx ci && npm --prefix decx test
+python3 scripts/check-skills.py
+python3 -m unittest discover -s scripts -p 'test_check_skills.py'
 ```
 
 AGENTS.md §Validation lists the full gate per area. `.github/workflows/` contains
-only DECX-owned checks: `decx-cli.yml`, `decx-afe.yml` and `decx-knowledge.yml`, scoped
+only DECX-owned checks: `decx-cli.yml`, `decx-afe.yml` and `decx-skills.yml`, scoped
 to their paths. Branch pushes and PRs run checks; release tags publish the npm CLI
 and AFE assets. Manager and crate gates run offline (fixture archives, fake toolchains,
 temp prefixes). Actions do not install upstream analyzers, query their releases,
@@ -162,7 +156,7 @@ limitation.
 paths. `third_party/afe/` is DECX's own Rust tool. `third_party/ASC` (MG1937/ASC) and
 `third_party/kuna` (Noelo-Lab/kuna) are direct pinned upstream git submodules
 (see `.gitmodules`), with their upstream READMEs and licenses unchanged.
-The skill references remain under `skills/decx-tool/`; see
+The skill references remain under `.agents/skills/decx-tool/`; see
 [the source layout and install caveats](third_party/README.md).
 
 ## License

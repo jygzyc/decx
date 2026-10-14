@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """Validate the skills: one SKILL.md per skill, YAML frontmatter with a name that
 matches its directory, a usable description, and relative links that resolve
-inside the repository.  Every skill lives in its own directory under `skills/`.
+inside the repository. Every skill has its own directory under `.agents/skills/`.
 
-Usage: python3 skills/check-skills.py [skills-root ...]
-       (default: skills/)
+Usage: python3 scripts/check-skills.py [skills-root ...]
+       (default: .agents/skills/)
 Exit status is non-zero when any problem is found.
 """
 
@@ -16,7 +16,7 @@ REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
 
 
 def default_roots() -> list[pathlib.Path]:
-    return [REPO_ROOT / "skills"]
+    return [REPO_ROOT / ".agents" / "skills"]
 
 
 def scalar_syntax_problem(field: str, raw: str):

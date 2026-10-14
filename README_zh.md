@@ -1,6 +1,6 @@
 # DECX
 
-使用原生工具进行逆向分析的 Agent skills，以及用于 Android Framework 收集和预处理的独立工具 **AFE（Android Framework Extract）**。
+通过统一的 **`decx` 入口**安装和运行逆向工具，配合可移植的 **Agent Skills**；另提供用于 Android Framework 收集和预处理的独立工具 **AFE（Android Framework Extract）**。
 
 DECX 不实现反编译器，也不再提供统一命令包装层。直接使用各工具的原生接口：
 
@@ -9,7 +9,7 @@ DECX 不实现反编译器，也不再提供统一命令包装层。直接使用
 | APK / DEX 分析 | [DroidASC](https://github.com/MG1937/ASC) |
 | 原生二进制分析 | [Kuna](https://github.com/Noelo-Lab/kuna) |
 | Android Framework 收集和预处理 | [AFE](third_party/afe/README.md) |
-| 分析方法、漏洞证据、报告和 PoC | [执行 Skill](skills/decx-tool/) |
+| 分析方法、漏洞证据、报告和 PoC | [执行 Skill](.agents/skills/decx-tool/) |
 
 ## 安装与管理工具
 
@@ -50,40 +50,52 @@ AFE 只产出文件：设备收集需要 ADB，不支持的文件系统特性会
 
 ## Skills
 
-独立的工具路由 skill 是 [decx-tool](skills/decx-tool/)；[antifrida-bypass](skills/antifrida-bypass/) 是另一个可独立安装的执行 skill。decx-tool 负责在已安装的工具之间路由，每个工具自己的命令、输出与错误契约和安装方式放在各自的 `references/` 文件里——`droidasc.md`、`kuna.md`（上游官方 skill，逐字复制）和 `afe.md`。这些 skill 可在任意兼容 Agent Skills 的 harness 中独立驱动已安装的 DECX CLI，不需要 pi 扩展或源码仓库。管理器不安装 skills。在目标项目中用 `npx skills add jygzyc/decx --skill <skill-name>`（例如 `--skill decx-tool` 或 `--skill antifrida-bypass`）安装到项目级 `.agents/skills/`；skill 安装由 `npx skills` 负责，不由 DECX CLI 负责。
+[`.agents/skills/`](.agents/skills/) 是纳入版本控制的唯一 skill 源目录。
+[decx-tool](.agents/skills/decx-tool/) 通过 `decx <tool>` 或 `decx -m <tool>`
+在已安装工具之间路由；各工具的原生命令、输出、错误与安装契约放在自己的
+`references/` 文件中：`droidasc.md`、`kuna.md`（逐字复制上游 skill）和 `afe.md`。
+[antifrida-bypass](.agents/skills/antifrida-bypass/) 是独立的执行 skill，
+用于基于证据诊断和绕过 Android 原生层 anti-Frida 检测。
 
-WikiSkill 的维护流程内化在 pi 扩展的命令和工具中，不再分发独立的 wiki skill。
+Skills 直接从仓库安装，独立于 CLI release，不作为 npm 包或 Release 资产发布。
+不需要 Agent 专属扩展或知识维护运行时；安装、更新和卸载全部交给 `npx skills`，
+DECX 不接管 skill 生命周期。在目标项目中执行：
 
-pi 扩展作为独立、可选的源码组件保留，不包含在 npm CLI 包中，也不会自动安装；具体加载方法见[扩展 README](.pi/extensions/decx/README.md)。进入任意项目后执行 `/decx init`，在当前目录创建**空白** `.decxwiki/{raw,wiki}` 和空的 `.agents/skills/`，不下载或复制 skill；然后单独用 `npx skills` 安装 `decx-tool`。执行 `/decx-wiki` 由扩展整理执行记录、更新 wiki 并检查结构；通过 `decx_propose` / `decx_gate` 更新或回滚实际运行的 skill。旧知识仅保存在本地且被 Git 忽略的 `archive/legacy-knowledge/`，不会作为新项目的初始化内容。根目录 `skills/` 只保留当前可独立安装的执行 skill，不会被当作 wiki 工作区。
-
-pi 扩展按推理、维护、提案阶段限制工具访问，并执行候选应用、分数门控和技能回滚。详见[工作流及读写约束边界](.pi/extensions/decx/README.md)。
-
-```text
-.decxwiki/                   # 当前项目中的知识工作区
-  raw/traces/                # 不可变执行记录
-  wiki/                      # 模式目录、维护日志、提案账本
-    patterns/
-    index.md
-    logs.md
-    skill-impact.md
-.agents/skills/              # init 后为空；由 npx skills 安装所选 skill
+```bash
+# 安装到项目级 .agents/skills/
+npx skills add jygzyc/decx --skill decx-tool --agent universal
+npx skills add jygzyc/decx --skill antifrida-bypass --agent universal
+# 更新已安装的 skills
+npx skills update
+# 卸载所选 skill
+npx skills remove decx-tool --agent universal
+npx skills remove antifrida-bypass --agent universal
 ```
 
-pi 扩展独立安装，不复制到 `.decxwiki/`。
+安装 skill 不会安装 CLI 或分析工具。CLI 单独通过 npm 安装，
+分析工具通过 `decx install <tool>` 安装。
 
-执行只读 skills、不读 wiki；维护者把 raw 记录沉淀到 wiki；提案者据此提出单个 skill 变更；验证决定是否保留，拒绝只回滚 skill、不回滚 wiki。导入的模式页属于引导知识，结构检查不等于验证分数。raw 默认进入 gitignore，因为可能包含目标数据；只应发布经过审阅的证据。
+```text
+.agents/skills/
+  decx-tool/
+    SKILL.md
+    references/
+  antifrida-bypass/
+    SKILL.md
+    references/
+    scripts/
+```
 
 ## 开发验证
 
 ```bash
-cd third_party/afe && cargo build --release && cargo test
-cd decx && npm ci && npm test
-npm ci --prefix .pi/extensions/decx
-python3 skills/check-skills.py && node --test .pi/extensions/decx/*.test.ts
-project=$(mktemp -d); node .pi/extensions/decx/cli.ts init --root "$project" && node .pi/extensions/decx/cli.ts check --root "$project"
+(cd third_party/afe && cargo build --release && cargo test)
+npm --prefix decx ci && npm --prefix decx test
+python3 scripts/check-skills.py
+python3 -m unittest discover -s scripts -p 'test_check_skills.py'
 ```
 
-各区域的完整门禁见 AGENTS.md §Validation。`.github/workflows/` 只保留 DECX 自有组件的流程：`decx-cli.yml`、`decx-afe.yml`、`decx-knowledge.yml`，各自用 `paths` 限定触发范围；分支和 PR 做检查，发布 tag 发布 npm CLI 和 AFE 产物。管理器与 crate 的门禁离线运行（fixture 压缩包、伪工具链与临时 prefix）。Actions 不获取第三方工具、不查询其 release、不自动更新源码 pin，也不编译 vendored 上游源码；CLI 直接读取 `third_party/tools.json`，解析匹配版本、下载上游发行包并强制校验 SHA-256。DroidASC 从 PyPI 安装到私有 venv，Kuna 从官方 release 安装二进制和 specs。
+各区域的完整门禁见 AGENTS.md §Validation。`.github/workflows/` 只保留 DECX 自有组件的流程：`decx-cli.yml`、`decx-afe.yml`、`decx-skills.yml`，各自用 `paths` 限定触发范围；分支和 PR 做检查，发布 tag 发布 npm CLI 和 AFE 产物。管理器与 crate 的门禁离线运行（fixture 压缩包、伪工具链与临时 prefix）。Actions 不获取第三方工具、不查询其 release、不自动更新源码 pin，也不编译 vendored 上游源码；CLI 直接读取 `third_party/tools.json`，解析匹配版本、下载上游发行包并强制校验 SHA-256。DroidASC 从 PyPI 安装到私有 venv，Kuna 从官方 release 安装二进制和 specs。
 
 发布：`decx-v*` → 公开 npm 包 `@jygzyc/decx-cli`，必须先通过三平台检查并配置 npm trusted publishing；`tools-v*` → 六个平台的 `afe-v<version>-<platform>` 包 + `afe-SHA256SUMS.txt`。目录默认用 REST 摘要，校验文件仍供显式配置使用；旧 `afe-<version>` 归档不匹配新名称，必须发布匹配资产，不提供旧名称回退。DroidASC 与 Kuna 不需要本仓库打包发布；源码 pin 和原样复制的 Kuna skill 引用由显式维护更新。
 
@@ -93,7 +105,7 @@ project=$(mktemp -d); node .pi/extensions/decx/cli.ts init --root "$project" && 
 
 DECX 不提供分析 CLI、会话管理、分析器注册表、分析插件运行时、JADX 集成或分析服务端，也不把一个分析器的命令树翻译成另一个；`decx/` 只做安装、定位与报告，并把参数原样传给工具。DroidASC 与 Kuna 是按原样使用的上游工具。只有在上游工具确有无法覆盖的能力缺口时才增加适配。
 
-`third_party/tools.json` 是唯一工具目录，工具 ID 不由源码路径推导。`third_party/afe/` 是 DECX 自己维护的 Rust 工具；`third_party/ASC`（MG1937/ASC）与 `third_party/kuna`（Noelo-Lab/kuna）直接作为固定版本的上游 git submodule（见 `.gitmodules`），保留上游 README 与许可证不变。工具契约仍在 `skills/decx-tool/references/`；源码布局和安装注意事项见 [third_party README](third_party/README.md)。
+`third_party/tools.json` 是唯一工具目录，工具 ID 不由源码路径推导。`third_party/afe/` 是 DECX 自己维护的 Rust 工具；`third_party/ASC`（MG1937/ASC）与 `third_party/kuna`（Noelo-Lab/kuna）直接作为固定版本的上游 git submodule（见 `.gitmodules`），保留上游 README 与许可证不变。工具契约仍在 `.agents/skills/decx-tool/references/`；源码布局和安装注意事项见 [third_party README](third_party/README.md)。
 
 ## 许可证
 

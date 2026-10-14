@@ -17,7 +17,7 @@ manifests. `requires` is an optional runtime string matching `launch.type`
 record the exact checkout pins. Upstream READMEs, licenses and notices remain
 unchanged in the upstream roots and govern that code; see [DECX's LICENSE](../LICENSE)
 for the surrounding project. Catalog settings and tool IDs are independent of
-checkout pins. Tool contracts live in [`skills/decx-tool/references/`](../skills/decx-tool/references/).
+checkout pins. Tool contracts live in [`.agents/skills/decx-tool/references/`](../.agents/skills/decx-tool/references/).
 Kuna's reference is copied verbatim from `kuna/skills/kuna/SKILL.md` without
 frontmatter, never edited locally.
 
@@ -58,11 +58,7 @@ decx -m kuna --help
 
 Managed executables live in `$DECX_HOME/bin`; managed PATH links use `~/.local/bin`
 by default (`.cmd` shims on Windows). Offline manager tests use local fixture
-releases and a local wheel, never PyPI/GitHub or the real home directory. The
-DroidASC and Kuna workflows separately exercise real upstream installations and
-functional analysis on Linux, macOS and Windows.
-
-Every 12 hours, Kuna's `sync-pin` workflow compares the pinned gitlink with the
-latest upstream release. A new release updates the direct `kuna` gitlink and
-re-copies the upstream skill reference; nothing is pushed when the pin is current.
-There is no DECX mirror release or locally modified upstream source.
+releases and a local wheel, never PyPI/GitHub or the real home directory. Live analyzer functional checks run manually with installed tools in an explicit
+temporary `DECX_HOME`; they are not part of offline CI. Source pins and the copied
+Kuna reference are updated explicitly, never by Actions. There is no DECX mirror
+release or locally modified upstream source.

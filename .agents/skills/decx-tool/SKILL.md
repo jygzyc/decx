@@ -7,9 +7,9 @@ description: "Use when driving any installed DECX native tool — DroidASC (DEX 
 
 One skill for the three native tools the manager installs: `droidasc`, `kuna` and
 `afe`. Each tool keeps its own command grammar, output and errors — run the tool's
-own CLI and consume its own output; DECX never translates one tool's commands into
-another's. Each tool's full contract lives in its own reference, loaded only when
-that tool is used:
+native commands through `decx <tool>` or `decx -m <tool>` and consume its own
+output; DECX never translates one tool's commands into another's. Each tool's full
+contract lives in its own reference, loaded only when that tool is used:
 
 - [`references/droidasc.md`](references/droidasc.md) — command grammar, class-name
   normalization, output and error contract, install.
@@ -38,12 +38,12 @@ that tool is used:
 
 ## Install and Launch
 
-This skill works in any agent that supports `SKILL.md`; it does not depend on the
-pi extension, `decx_*` tools, `.decxwiki`, or a repository checkout. Install the
-standalone Node 24.21+ DECX manager separately (see its bundled README). If
-`decx` is not on PATH, run its release executable as `node /path/to/decx.mjs`
-and replace `decx` with that form below. Check `decx version` and `decx help` before installing anything; do not
-assume tools are already installed.
+This skill works in any Agent Skills-compatible agent without plugins or a
+repository checkout. Skill installation is independent of CLI releases and is
+managed by `npx skills`, not by DECX. Use the separately installed `decx` command
+as the unified tool install and launch entry. Check `decx version` and `decx help`
+before installing tools; do not assume they are installed. If `decx` is not on
+PATH, use `node /path/to/decx.mjs` and substitute that form below.
 
 ```bash
 decx install <tool>             # droidasc | kuna | afe
@@ -52,7 +52,7 @@ decx -m <tool> -- <args...>     # runs the installed launcher; args pass through
 
 - `droidasc` installs the published PyPI package into a private venv — see
   [`references/droidasc.md`](references/droidasc.md) `## Install`.
-- `kuna` installs from the pinned release archive plus the separate compiled SLEIGH
+- `kuna` installs an upstream release archive plus the separate compiled SLEIGH
   specs archive. The generated launcher exports `KUNA_SPECS` at the specs directory,
   so the binary finds its SLEIGH languages without shell setup — without it Kuna
   decodes nothing (`No sleigh specification for AARCH64:LE:64:v8A`). Platforms with

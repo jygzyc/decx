@@ -7,7 +7,7 @@ results into a `framework.jar`.
 AFE is DECX's own utility, not an upstream repository. `decx install afe`
 requires a prebuilt `tools-v*` asset for the platform; a missing asset fails
 without a cargo fallback. The unversioned `afe` entry (`repo: "jygzyc/decx"`)
-lives in the central [`../tools.json`](../tools.json) catalog with root `manifest: 1`. The agent skill is `skills/decx-tool/`
+lives in the central [`../tools.json`](../tools.json) catalog with root `manifest: 1`. The agent skill is [`.agents/skills/decx-tool/`](../../.agents/skills/decx-tool/)
 (routing in its `SKILL.md`, the AFE contract in `references/afe.md`). The release jobs in
 `.github/workflows/decx-afe.yml` publish the
 assets the catalog looks for (`afe-v{version}-<platform>.tar.gz|zip` plus

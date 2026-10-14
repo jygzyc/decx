@@ -18,12 +18,8 @@ decx/*.tgz
 # Install roots the workflows use when they exercise the manager (.ci-home)
 .ci-home/
 
-# Historical knowledge (including target traces) is local-only and never published.
+# Local archives may contain target data; never publish them.
 /archive/
-
-# Initialized project knowledge and copied execution skills are local-only.
-/.decxwiki/
-/.agents/skills/
 
 # IDE / OS
 .idea/
@@ -33,9 +29,6 @@ decx/*.tgz
 Thumbs.db
 *.swp
 *~
-
-# Cooperative knowledge-layer write lock (normally removed after each operation).
-/.pi/decx-write.lock/
 
 # Intermediate results from agent work (never committed).
 /.pi-scratch/
