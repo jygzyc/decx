@@ -7,6 +7,8 @@
       "summary": "Android framework collection and preprocessing: pull framework files, expand them and pack an analyzable jar (AFE)",
       "repo": "jygzyc/decx",
       "license": "Apache-2.0",
+      "env": {},
+      "requires": "bin",
       "install": ["github-release"],
       "release": {
         "assets": {

@@ -14,7 +14,7 @@ test('CLI stages verified resources before verification and launches executable 
   const name = process.platform === 'win32' ? 'resources.exe' : 'resources';
   const envKey = process.platform === 'win32' ? 'PATH' : 'Path';
   writeCatalog(thirdParty, [{
-    repo: 'acme/resources', id: 'resources', summary: 'native executable with required resources', install: ['github-release'],
+    repo: 'acme/resources', id: 'resources', summary: 'native executable with required resources', requires: 'bin', install: ['github-release'],
     launch: { type: 'bin', commands: ['resources'] },
     verify: "-e console.log(require('fs').readFileSync(process.env.RESOURCES+'/probe.sla','utf8'))",
     env: { RESOURCES: '{prefix}/specs', Path: 'descriptor-path', DECX_MARKER: '资源%literal!^&' },
@@ -96,7 +96,7 @@ test('CLI reads only the central catalog and keeps valid entries despite invalid
   const thirdParty = path.join(root, 'third_party');
   const env = { HOME: root, USERPROFILE: root, DECX_HOME: path.join(root, 'home') };
   const tool = (id: string) => ({
-    repo: 'acme/catalog', id, summary: 'catalog fixture', install: ['github-release'],
+    repo: 'acme/catalog', id, summary: 'catalog fixture', requires: 'bin', env: {}, install: ['github-release'],
     launch: { type: 'bin', commands: [id] }, verify: '-v',
     release: { tagPrefix: 'v', asset: 'catalog.zip', checksums: null },
   });
@@ -163,12 +163,12 @@ test('CLI reads only the central catalog and keeps valid entries despite invalid
   assert.equal(fs.existsSync(path.join(env.DECX_HOME, 'share')), false);
 });
 
-test('catalog manifest 1 accepts inferred runtimes and empty env, and rejects old or mismatched contracts', t => {
+test('catalog manifest 1 requires explicit runtime and env, and rejects old or mismatched contracts', t => {
   const root = tempDir('decx-contract-');
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   const thirdParty = path.join(root, 'third_party');
   const env = { HOME: root, USERPROFILE: root, DECX_HOME: path.join(root, 'home') };
-  const tool = { id: 'contract', repo: 'acme/contract', summary: 'contract fixture',
+  const tool = { id: 'contract', repo: 'acme/contract', summary: 'contract fixture', requires: 'bin', env: {},
     install: ['github-release'], launch: { type: 'bin', commands: ['contract'] },
     release: { asset: 'contract-{version}.zip' } };
   const check = (entry: unknown, expected: string) => {
@@ -177,10 +177,12 @@ test('catalog manifest 1 accepts inferred runtimes and empty env, and rejects ol
     assert.equal((result.json as { error: { code: string } }).error.code, expected, result.stdout);
   };
   for (const type of ['bin', 'js', 'python']) {
-    const entry = { ...tool, launch: { type, commands: ['contract'] }, env: {},
+    const entry = { ...tool, requires: type, launch: { type, commands: ['contract'] }, env: {},
       ...(type === 'python' ? { install: ['pip', 'install', 'contract'], release: undefined } : {}) };
     check(entry, 'NOT_INSTALLED');
-    check({ ...entry, requires: type }, 'NOT_INSTALLED');
+    check({ ...entry, requires: undefined }, 'UNKNOWN_TOOL');
+    check({ ...entry, env: undefined }, 'UNKNOWN_TOOL');
+    check({ ...entry, env: null }, 'UNKNOWN_TOOL');
     check({ ...entry, requires: type === 'bin' ? 'python' : 'bin' }, 'UNKNOWN_TOOL');
     if (type !== 'bin') check({ ...entry, env: { KEEP: 'must not be discarded' } }, 'UNKNOWN_TOOL');
   }
@@ -208,7 +210,7 @@ test('generic stable discovery matches versioned host and extra assets, with man
   const name = process.platform === 'win32' ? 'payload.exe' : 'payload';
   const archive = makeZip([{ name, data: fs.readFileSync(process.execPath), mode: 0o755 }]);
   const extra = makeTarGz([{ name: 'specs/verified.sla', data: 'verified extra payload' }]);
-  const tool = { id: 'payload', repo: 'acme/mixed', summary: 'shared repository fixture',
+  const tool = { id: 'payload', repo: 'acme/mixed', summary: 'shared repository fixture', requires: 'bin', env: {},
     install: ['github-release'], launch: { type: 'bin', commands: ['payload'] }, verify: '--help',
     release: { asset: 'payload-v{version}-{os}-{arch}.zip', extraAssets: { specs: 'data-v{version}-{os}-{arch}.tar.gz' } } };
   writeCatalog(thirdParty, [tool]);
@@ -307,7 +309,7 @@ for (const format of ['zip', 'tar.gz']) {
     const thirdParty = path.join(root, 'third_party');
     const name = process.platform === 'win32' ? 'probe.exe' : 'probe';
     writeCatalog(thirdParty, [{
-      repo: 'acme/probe', id: 'probe', summary: 'real native payload', install: ['github-release'],
+      repo: 'acme/probe', id: 'probe', summary: 'real native payload', requires: 'bin', env: {}, install: ['github-release'],
       launch: { type: 'bin', commands: ['probe'] }, verify: '--version',
       release: { tagPrefix: 'v', asset: `probe-{version}.${format}`, checksums: 'SHA256SUMS' },
     }]);

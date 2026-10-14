@@ -33,8 +33,8 @@ decx help install        # usage for the manager or one command
 
 Tools are unversioned entries with explicit `id` and GitHub `repo: "owner/repo"`
 in `third_party/tools.json`, whose root requires `manifest: 1`, never code.
-Optional `requires` is `bin`/`python`/`js` and must match `launch.type` (inferred
-when omitted); empty `env: {}` is valid for any runtime. Archive installs discover
+Required `requires` is `bin`/`python`/`js` and must match `launch.type`.
+`env` is also required; use `{}` when empty. Neither field is inferred. Archive installs discover
 the newest stable release carrying all declared host assets, skipping unrelated
 releases. Omitted/null `checksums` mandates GitHub REST SHA-256 digests for primary
 and extra assets; explicit checksum filenames and tag prefixes remain supported.

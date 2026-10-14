@@ -182,7 +182,7 @@ neither `manifest` nor `$schema`; old per-tool versions, `homepage`, object
 }
 ```
 
-The catalog uses one [JSON Schema](../third_party/decx-tool.schema.json) for editor completion. `src/catalog/manifest.ts` validates cross-field recipe rules; no separate schema is needed for each runtime.
+The catalog uses one [JSON Schema](../third_party/decx-tool.schema.json) for editor completion and validation. `src/catalog/manifest.ts` enforces the same entry and cross-field recipe rules without runtime dependencies; tests compare both validators. Unique tool IDs are additionally checked by the catalog loader. No separate schema is needed for each runtime.
 
 | Field | Meaning |
 |---|---|
@@ -191,10 +191,10 @@ The catalog uses one [JSON Schema](../third_party/decx-tool.schema.json) for edi
 | `summary` | one-line tool description |
 | `release` | required for `bin` and `js`, omitted for PyPI packages. Optional `version` defaults to `latest`; optional `tagPrefix` filters discovery and normalizes bare versions, with no default prefix. Exactly one of `asset` (single template) or `assets` (per-platform names); `{version}`, `{os}` and `{arch}` are substituted at install time. Omitted or null `checksums` requires GitHub REST SHA-256 asset digests for **every** download; an explicit filename requires its `sha256  filename` entries instead. `extraAssets` are required on every platform. Repository is derived internally from `repo`, never accepted inside `release` |
 | `install` | required installer recipe: `["github-release"]` downloads and verifies the archive described by `release`; `["pip", "install", "droidasc"]` installs a published PyPI package (no shell). Python source-checkout/archive recipes are not supported. The manager creates the Python virtual environment itself; manifests do not contain venv commands. `--version` pins PyPI packages using `==`. Python source checkouts are not copied into `share/`; JS release assets retain their module tree under `share/<id>/app` |
-| `env` | empty `{}` is valid for any runtime. Nonempty maps are supported for `bin` tools only: environment the launchers export (`{prefix}` = payload directory, `{version}` = installed version); these move binaries to `share/<id>/bin` and put wrappers in `bin/` |
+| `env` | required object; empty `{}` is valid for any runtime. Variable names must match `[A-Za-z_][A-Za-z0-9_]*`, and values must be nonblank strings. Nonempty maps are supported for `bin` tools only: environment the launchers export (`{prefix}` = payload directory, `{version}` = installed version); these move binaries to `share/<id>/bin` and put wrappers in `bin/` |
 | `launch` | required object with `type` (`bin`, `python` or `js`) and `commands` (nonempty list of public command names). The first command is the default for `decx -m <tool>`. For `bin`, the release archive contains each executable; for `python`, the manager generates a wrapper to the venv console script; for `js`, the release archive contains `<command>.mjs`, `.cjs` or `.js` and the manager keeps the archive tree in `share/<id>/app` (including local imports and `package.json`), generating Node launchers (`.cmd` on Windows). JS installs require `node` on PATH. |
 | `verify` | the probe command run against the staged executable or Node script before committing, e.g. `--version` |
-| `requires` | optional runtime string: `bin`, `python` or `js`, matching `launch.type`; omitted values are inferred from it. Python must be Python 3 with `venv`; pip/upstream package metadata enforces package-specific minimum Python versions |
+| `requires` | required explicit runtime string: `bin`, `python` or `js`, matching `launch.type`; omitted values are rejected. Python must be Python 3 with `venv`; pip/upstream package metadata enforces package-specific minimum Python versions |
 
 The venv install records the interpreter it used in PROVENANCE (`python`), the
 manager that installed the package (`python_manager`) and the interpreter

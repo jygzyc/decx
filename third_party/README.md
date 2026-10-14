@@ -4,8 +4,8 @@
 [`decx-tool.schema.json`](decx-tool.schema.json). Its root requires `manifest: 1`;
 the `tools` array contains unversioned objects with explicit unique IDs (`afe`,
 `droidasc`, `kuna`) and required GitHub `repo: "owner/repo"`, not per-directory
-manifests. `requires` is an optional runtime string matching `launch.type`
-(inferred when omitted), and empty `env: {}` is allowed for every runtime. Source directory names do not determine tool IDs.
+manifests. Every entry explicitly requires `requires` matching `launch.type`
+and an `env` object; use `env: {}` when nothing is exported. Neither field is inferred. Source directory names do not determine tool IDs.
 
 | Directory | Ownership and purpose |
 | --- | --- |

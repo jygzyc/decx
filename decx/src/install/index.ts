@@ -126,15 +126,10 @@ export function launcherEnv(
   prefix: string,
   version: string,
 ): Record<string, string> | undefined {
-  const env = manifest.env;
-  if (env === undefined) {
-    return undefined;
-  }
-  const resolved: Record<string, string> = {};
-  for (const [name, value] of Object.entries(env)) {
+  const resolved = Object.fromEntries(Object.entries(manifest.env).map(([name, value]) => {
     const expanded = value.replaceAll('{prefix}', prefix).replaceAll('{version}', version);
-    resolved[name] = value.includes('{prefix}') ? path.normalize(expanded) : expanded;
-  }
+    return [name, value.includes('{prefix}') ? path.normalize(expanded) : expanded];
+  }));
   return Object.keys(resolved).length === 0 ? undefined : resolved;
 }
 

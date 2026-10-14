@@ -24,7 +24,7 @@ decx -m kuna --help      # 直接运行工具本身，不翻译参数
 decx help install        # 查看管理器或单个命令的用法
 ```
 
-工具以不带版本的条目声明在中央目录 `third_party/tools.json` 中，根级必须为 `manifest: 1`，每个条目必须有 `id` 与 GitHub `repo: "owner/repo"`，不写代码。可选 `requires` 为 `bin`/`python`/`js`，必须匹配 `launch.type`，省略时推导；空 `env: {}` 对任意运行时合法。归档安装逐页选择带齐主机主资产与额外资产的最新稳定 release，跳过无关发布、draft 与 prerelease。省略或 null `checksums` 时，每个下载必须有 GitHub REST SHA-256 摘要；显式校验文件与 tagPrefix 仍可配置。裸版本匹配列表中的 tag 与资产，不假定 `v`；完整 tag 可直接下载，但仍必须校验。可执行文件与载荷位于 `$DECX_HOME`（`bin/`、`share/<id>/`，其中 `PROVENANCE` 记录来源与校验值）；管理器只安装工具、不安装语言运行时，各工具保留自己的参数与输出。完整布局、`--links` 与安装规则见 [`decx/README.md`](decx/README.md)。
+工具以不带版本的条目声明在中央目录 `third_party/tools.json` 中，根级必须为 `manifest: 1`，每个条目必须有 `id` 与 GitHub `repo: "owner/repo"`，不写代码。`requires` 必填，为 `bin`/`python`/`js`，必须匹配 `launch.type`；`env` 也必填，无环境变量时写 `{}`，不再隐式推导。归档安装逐页选择带齐主机主资产与额外资产的最新稳定 release，跳过无关发布、draft 与 prerelease。省略或 null `checksums` 时，每个下载必须有 GitHub REST SHA-256 摘要；显式校验文件与 tagPrefix 仍可配置。裸版本匹配列表中的 tag 与资产，不假定 `v`；完整 tag 可直接下载，但仍必须校验。可执行文件与载荷位于 `$DECX_HOME`（`bin/`、`share/<id>/`，其中 `PROVENANCE` 记录来源与校验值）；管理器只安装工具、不安装语言运行时，各工具保留自己的参数与输出。完整布局、`--links` 与安装规则见 [`decx/README.md`](decx/README.md)。
 
 ### 平台支持
 

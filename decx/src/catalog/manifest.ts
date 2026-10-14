@@ -66,7 +66,7 @@ export interface ToolManifest {
   license?: string;
   /** Free-form caveat shown by `list`. */
   notes?: string;
-  /** Runtime kind; inferred from launch.type when omitted. */
+  /** Explicit runtime kind; must match launch.type. */
   requires: LaunchType;
   /**
    * Environment the tool's launchers export before running the packaged binary,
@@ -74,7 +74,7 @@ export interface ToolManifest {
    * `{prefix}` is the payload directory, `{version}` the installed version; a
    * manifest that declares any gets launcher wrappers in `<home>/bin`.
    */
-  env?: Record<string, string>;
+  env: Record<string, string>;
   /** Runtime type and the public commands, including the default first. */
   launch: LaunchSpec;
   /** Required for release archives; omitted for PyPI packages. */
@@ -220,19 +220,15 @@ export function validateManifest(
     (typeof recipe[2] !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9_.-]*$/.test(recipe[2]))) {
     errors.push(`${file}: PyPI install recipes must name a package immediately after install`);
   }
-  if (value.env !== undefined) {
-    if (!isEnvRecord(value.env)) {
-      errors.push(`${file}: env must map variable names to non-empty strings`);
-    } else if (Object.keys(value.env).length > 0 && launch?.type !== 'bin') {
-      errors.push(`${file}: env is only supported for bin tools (interpreter launchers are generated)`);
-    }
+  if (!isEnvRecord(value.env) || Object.keys(value.env).some(name => name !== name.trim() || !/^[A-Za-z_][A-Za-z0-9_]*$/.test(name))) {
+    errors.push(`${file}: env must be an object mapping valid variable names to non-empty strings (use {} when empty)`);
+  } else if (Object.keys(value.env).length > 0 && launch?.type !== 'bin') {
+    errors.push(`${file}: env is only supported for bin tools (interpreter launchers are generated)`);
   }
-  if (value.requires !== undefined) {
-    if (value.requires !== 'bin' && value.requires !== 'python' && value.requires !== 'js') {
-      errors.push(`${file}: requires must be "bin", "python" or "js"`);
-    } else if (value.requires !== launch?.type) {
-      errors.push(`${file}: requires must match launch.type`);
-    }
+  if (value.requires !== 'bin' && value.requires !== 'python' && value.requires !== 'js') {
+    errors.push(`${file}: requires must explicitly be "bin", "python" or "js"`);
+  } else if (value.requires !== launch?.type) {
+    errors.push(`${file}: requires must match launch.type`);
   }
   if (value.verify !== undefined) {
     if (isRecord(value.verify)) {
@@ -251,8 +247,8 @@ export function validateManifest(
     summary,
     ...(typeof value.license === 'string' ? { license: value.license } : {}),
     ...(typeof value.notes === 'string' ? { notes: value.notes } : {}),
-    requires: launch!.type,
-    ...(isEnvRecord(value.env) ? { env: value.env } : {}),
+    requires: value.requires as LaunchType,
+    env: value.env as Record<string, string>,
     launch: launch!,
     ...(release !== undefined ? { release } : {}),
     ...(typeof value.verify === 'string' ? { verify: value.verify } : {}),

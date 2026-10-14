@@ -5,6 +5,8 @@
       "repo": "acme/jsprobe",
       "id": "jsprobe",
       "summary": "Offline Node launcher integration fixture",
+      "env": {},
+      "requires": "js",
       "install": ["github-release"],
       "launch": { "type": "js", "commands": ["jsprobe"] },
       "release": {

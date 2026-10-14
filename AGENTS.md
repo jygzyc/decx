@@ -60,10 +60,10 @@ assume a bare version's tag. Omitted/null `checksums` requires GitHub REST SHA-2
 digests for every download. Explicit checksum files remain supported; missing
 integrity metadata fails without fallback. `release.repository` is internal,
 derived from required `repo`; raw nested repositories and per-entry `manifest`
-are invalid. Optional `requires` is `bin`/`python`/`js`, matching `launch.type`
-(or inferred from it); Python 3 probing remains, package-specific minimums belong
-to pip metadata. Empty `env: {}` is valid for any runtime, nonempty env remains
-binary-only.
+are invalid. Required `requires` is `bin`/`python`/`js`, matching `launch.type`;
+never infer omitted runtime declarations. Python 3 probing remains; package-specific
+minimums belong to pip metadata. `env` is required: `{}` when empty, or a map of
+portable variable names to nonblank strings for bin tools only.
 Python installs use published packages, never vendored/source-archive recipes.
 CI never modifies the pinned upstream checkouts; DroidASC installs directly from PyPI.
 Installation prefers upstream distribution; repository release assets are fallback sources.
