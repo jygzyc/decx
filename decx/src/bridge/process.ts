@@ -1,4 +1,4 @@
-import { spawn } from 'node:child_process';
+import { execa } from 'execa';
 import type { PlatformKey } from '../core/platform.ts';
 
 export interface BridgeContext {
@@ -33,27 +33,26 @@ export async function runCommand(
   return defaultRunner({ command, args, mode, env: { ...ctx.env, ...extraEnv } });
 }
 
-/** Execute an argv vector directly, without a shell or runtime-specific adapter. */
-export function defaultRunner(spec: CommandSpec): Promise<CommandResult> {
-  const child = spawn(spec.command, spec.args, {
+/** Execute an argv vector without shell interpolation; keep installer logs off stdout. */
+export async function defaultRunner(spec: CommandSpec): Promise<CommandResult> {
+  const inherit = spec.mode === 'inherit';
+  const output = spec.mode === 'stream' ? ['pipe', process.stderr] as const : 'pipe';
+  const result = await execa(spec.command, spec.args, {
     env: spec.env ?? process.env,
-    stdio: spec.mode === 'inherit' ? 'inherit' : 'pipe',
+    extendEnv: false,
+    stdin: inherit ? 'inherit' : 'ignore',
+    stdout: inherit ? 'inherit' : output,
+    stderr: inherit ? 'inherit' : output,
     windowsHide: spec.windowsHide !== false,
+    reject: false,
+    stripFinalNewline: false,
+    maxBuffer: Infinity,
   });
-  return new Promise((resolve) => {
-    let stdout = '';
-    let stderr = '';
-    child.stdout?.setEncoding('utf8');
-    child.stderr?.setEncoding('utf8');
-    child.stdout?.on('data', (chunk: string) => {
-      stdout += chunk;
-      if (spec.mode === 'stream') process.stderr.write(chunk);
-    });
-    child.stderr?.on('data', (chunk: string) => {
-      stderr += chunk;
-      if (spec.mode === 'stream') process.stderr.write(chunk);
-    });
-    child.on('error', (error) => resolve({ status: null, stdout, stderr, error: error.message }));
-    child.on('close', (status) => resolve({ status, stdout, stderr }));
-  });
+  return {
+    status: result.exitCode ?? null,
+    stdout: result.stdout ?? '',
+    stderr: result.stderr ?? '',
+    ...(result.failed && result.exitCode === undefined && result.signal === undefined
+      ? { error: result.shortMessage } : {}),
+  };
 }

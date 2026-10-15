@@ -27,7 +27,8 @@ It is not a decompiler, unified analysis CLI, plugin runtime, or analysis server
   Node 24.21+; releases ship the public npm package `@jygzyc/decx-cli`, with a
   single bundled JavaScript executable and embedded tool catalog. Node is required
   at runtime; no native manager is published. It prints
-  JSON on stdout and keeps no runtime dependencies. It is the only
+  JSON on stdout and keeps no external runtime npm dependencies; Execa is bundled
+  for process execution. It is the only
   install path — installs are declared as data, never as per-platform scripts.
 
 ## Boundaries
@@ -111,7 +112,8 @@ archives ignored; never import them into skills or publish target data.
   scripts, compiler SDK or runtime npm dependencies are shipped. Tests are
   sequential because packing rebuilds their shared bundle. Linux, macOS and
   Windows gate publication. The manager executes installed `launch.json`
-  executable/argv directly, without a shell bridge or legacy launch fallback.
+  executable/argv through bundled Execa, without a custom shell bridge or legacy
+  launch fallback. Keep bundled-library licenses in `dist/THIRD_PARTY_NOTICES.txt`.
   Install tests are offline — fixture archives served locally, real executables and a local wheel installed
   with real Python/pip into a private venv — and must never touch the real home
   directory or the network; pass `--home`/`DECX_HOME` with temp dirs.

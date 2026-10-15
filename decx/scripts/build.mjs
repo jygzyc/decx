@@ -20,7 +20,9 @@ if (manifests.issues.length || manifests.tools.length === 0) {
 }
 fs.rmSync(distRoot, { recursive: true, force: true });
 const outfile = path.join(distRoot, 'decx.mjs');
-await build({
+const bundled = await build({
+  absWorkingDir: packageRoot,
+  metafile: true,
   entryPoints: [path.join(packageRoot, 'src', 'cli.ts')],
   outfile,
   bundle: true,
@@ -34,6 +36,22 @@ await build({
 });
 fs.chmodSync(outfile, 0o755);
 fs.copyFileSync(path.join(repoRoot, 'LICENSE'), path.join(distRoot, 'LICENSE'));
+// Preserve licenses for exactly the packages esbuild included, not dev-only tools.
+const packageRoots = new Set();
+for (const input of Object.keys(bundled.metafile.inputs)) {
+  const absolute = path.resolve(packageRoot, input).replaceAll(path.sep, '/');
+  const match = absolute.match(/^(.*\/node_modules\/(?:@[^/]+\/)?[^/]+)\//);
+  if (match) packageRoots.add(match[1]);
+}
+const notices = [];
+for (const directory of [...packageRoots].sort()) {
+  const info = JSON.parse(fs.readFileSync(path.join(directory, 'package.json'), 'utf8'));
+  const files = fs.readdirSync(directory).filter(name => /^(?:licen[sc]e|notice)(?:\..*)?$/i.test(name)).sort();
+  if (files.length === 0) throw new Error(`missing bundled license: ${info.name}`);
+  const texts = files.map(name => fs.readFileSync(path.join(directory, name), 'utf8'));
+  notices.push([`${info.name}@${info.version}`, ...texts].join('\n'));
+}
+fs.writeFileSync(path.join(distRoot, 'THIRD_PARTY_NOTICES.txt'), notices.join('\n\n---\n\n'));
 console.log(`built dist/decx.mjs (embedded ${manifests.tools.length} tool manifests)`);
 
 // Smoke the single-file output in an isolated temporary directory.

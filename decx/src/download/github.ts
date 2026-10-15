@@ -8,7 +8,7 @@
  * followed by hand so the bearer token stays bound to the initial origin.
  */
 
-import * as childProcess from 'node:child_process';
+import { execaSync } from 'execa';
 import { createHash } from 'node:crypto';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
@@ -95,12 +95,15 @@ export function githubToken(env: NodeJS.ProcessEnv = process.env): string | unde
   }
   if (env === process.env) {
     try {
-      const gh = childProcess.execFileSync('gh', ['auth', 'token'], {
+      const result = execaSync('gh', ['auth', 'token'], {
+        env,
+        extendEnv: false,
         stdio: ['ignore', 'pipe', 'ignore'],
-        encoding: 'utf-8',
         timeout: 2000,
-      }).trim();
-      if (gh.length > 0) return gh;
+        reject: false,
+      });
+      const token = result.stdout.trim();
+      if (result.exitCode === 0 && token !== '') return token;
     } catch {
       // gh not installed, not authenticated, or errored
     }

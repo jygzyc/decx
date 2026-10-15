@@ -39,7 +39,8 @@ test('npm pack installs an offline, standalone CLI with embedded catalog and an 
     return result.stdout;
   };
   assert.deepEqual(tar(['-tzf', archive]).trim().split(/\r?\n/).sort(), [
-    'package/README.md', 'package/dist/LICENSE', 'package/dist/decx.mjs', 'package/package.json',
+    'package/README.md', 'package/dist/LICENSE', 'package/dist/THIRD_PARTY_NOTICES.txt',
+    'package/dist/decx.mjs', 'package/package.json',
   ]);
   const packed = JSON.parse(tar(['-xOf', archive, 'package/package.json']));
   assert.equal(packed.name, packageInfo.name);
@@ -47,6 +48,10 @@ test('npm pack installs an offline, standalone CLI with embedded catalog and an 
   assert.equal(packed.private, undefined);
   assert.deepEqual(packed.bin, { decx: 'dist/decx.mjs' });
   assert.equal(packed.dependencies, undefined);
+  const notices = tar(['-xOf', archive, 'package/dist/THIRD_PARTY_NOTICES.txt']);
+  assert.match(notices, /execa@/);
+  assert.match(notices, /Permission is hereby granted/);
+  assert.doesNotMatch(notices, /(?:ajv|esbuild|typescript)@/);
   assert.match(tar(['-xOf', archive, 'package/dist/decx.mjs']), /^#!\/usr\/bin\/env node\n/);
   assert.equal(packed.license, 'Apache-2.0');
   assert.equal(tar(['-xOf', archive, 'package/dist/LICENSE']), fs.readFileSync(path.join(packageRoot, '..', 'LICENSE'), 'utf8'));
@@ -71,6 +76,20 @@ test('npm pack installs an offline, standalone CLI with embedded catalog and an 
     assert.equal(JSON.parse(execute(['-m', id], 1)).error.code, 'NOT_INSTALLED');
   }
   assert.equal(fs.existsSync(env.DECX_HOME), false, 'read-only commands must not create a tool install');
+  // Execute the bundled process runner from the actual offline npm install,
+  // outside the checkout and without any external runtime node_modules.
+  const share = path.join(env.DECX_HOME, 'share', 'afe');
+  const bin = path.join(env.DECX_HOME, 'bin', process.platform === 'win32' ? 'afe.cmd' : 'afe');
+  fs.mkdirSync(share, { recursive: true });
+  fs.mkdirSync(path.dirname(bin), { recursive: true });
+  const probe = path.join(share, 'probe.cjs');
+  fs.writeFileSync(probe, 'console.log(JSON.stringify(process.argv.slice(2)));');
+  fs.writeFileSync(bin, process.platform === 'win32'
+    ? `@echo off\r\n"${process.execPath}" "${probe}" %*\r\n`
+    : `#!/bin/sh\nexec '${process.execPath.replaceAll("'", "'\\''")}' '${probe}' "$@"\n`, { mode: 0o755 });
+  fs.writeFileSync(path.join(share, 'PROVENANCE'), `tool: afe\nbinary: ${bin}\nbinaries: ${path.basename(bin)}\nversion: fixture\n`);
+  fs.writeFileSync(path.join(share, 'launch.json'), JSON.stringify({ command: process.execPath, args: [probe] }));
+  assert.deepEqual(JSON.parse(execute(['-m', 'afe', 'bundle-probe'], 0)), ['bundle-probe']);
   runNpm(['uninstall', '--global', '--prefix', prefix, '--offline', '--ignore-scripts', '--no-audit', '--no-fund', packageInfo.name]);
   assert.equal(fs.existsSync(executable), false);
 });

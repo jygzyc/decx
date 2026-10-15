@@ -7,8 +7,8 @@ they belong: upstream releases where they exist, `third_party/` checkouts where 
 the maintainer.
 
 - **npm CLI.** Node 24.21+ is required. The published package contains one
-  JavaScript executable with its version and tool catalog embedded, and no runtime
-  dependencies. Source development can also run TypeScript directly.
+  JavaScript executable with its version, tool catalog and Execa embedded; no
+  external runtime npm dependencies. Source development can also run TypeScript directly.
 - **JSON by default.** Every data command prints one JSON object on stdout; the
   consumer is an agent.  `--pretty` is for humans.
 - **Never installs runtimes.** A tool that needs Python or Rust is checked at
@@ -267,13 +267,16 @@ Fixture origins and hashes are documented in `tests/fixtures/real-analysis/`.
 ## npm package and release
 
 `npm run build` produces **`dist/decx.mjs`**, a single Node 24.21+ executable
-with the package version and all tool manifests embedded by esbuild. Copy that
+with the package version, tool manifests and Execa embedded by esbuild. Command
+execution uses Execa with argv arrays, inherited tool I/O and stderr-only install
+logs, including its Windows `.cmd` handling. Copy that
 file anywhere and run `node decx.mjs version` or `node decx.mjs help`: no adjacent
 package.json, manifests, node_modules or runtime temporary manifests are needed.
 Node itself and the tools being installed are not bundled.
 
 `npm pack` runs the build through `prepack` and creates a standard npm `.tgz`.
-The package contains `package.json`, this README, `dist/LICENSE` and the executable;
+The package contains `package.json`, this README, `dist/LICENSE`, the executable
+and `dist/THIRD_PARTY_NOTICES.txt` (licenses for bundled libraries);
 npm creates the `decx` symlink or Windows `.cmd` shim from the package's `bin` entry.
 There are no install-time build hooks, SDK downloads, native manager artifacts
 or runtime npm dependencies. Installing a packed tarball works offline.

@@ -23,7 +23,7 @@
   },
   "scripts": {
     "pretest": "npm run build",
-    "test": "node --test --test-concurrency=1 tests/catalog.test.ts tests/manager.e2e.ts tests/bin-tool.e2e.ts tests/js-tool.e2e.ts tests/python-tool.e2e.ts tests/release.e2e.mjs",
+    "test": "node --test --test-concurrency=1 tests/catalog.test.ts tests/process.test.ts tests/manager.e2e.ts tests/bin-tool.e2e.ts tests/js-tool.e2e.ts tests/python-tool.e2e.ts tests/release.e2e.mjs",
     "test:functional": "node --test tests/functional/*.e2e.ts",
     "test:functional:droidasc": "node --test tests/functional/droidasc.e2e.ts",
     "test:functional:kuna": "node --test tests/functional/kuna.e2e.ts",
@@ -36,6 +36,7 @@
     "@types/node": "^24.0.0",
     "ajv": "^8.20.0",
     "esbuild": "^0.28.2",
+    "execa": "^10.1.1",
     "typescript": "^5.9.0"
   }
 }
