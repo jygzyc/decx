@@ -26,19 +26,30 @@ test('process capture preserves argv, Unicode, newlines, exact env and nonzero e
   assert.ok(result.stdout.endsWith('\n\n'));
   assert.deepEqual(JSON.parse(result.stdout), { args, keep: 'kept', extra: 'extra' });
   assert.equal(result.stderr, 'stderr\n');
-  const isolated = await defaultRunner({ command: process.execPath,
-    args: ['-p', 'JSON.stringify(process.env.PATH)'], env: {} });
-  assert.equal(isolated.status, 0);
-  assert.equal(isolated.stdout, 'undefined\n');
+  const isolated = spawnSync(process.execPath, ['--input-type=module', '-e',
+    `import {defaultRunner} from ${JSON.stringify(bridgeUrl)};
+    const result=await defaultRunner({command:process.execPath,args:['-p','JSON.stringify(process.env.DECX_PARENT_ONLY)'],env:{}});
+    console.log(JSON.stringify(result));`], {
+    env: { ...process.env, DECX_PARENT_ONLY: 'private' }, encoding: 'utf8',
+  });
+  assert.equal(isolated.status, 0, isolated.stderr);
+  assert.deepEqual(JSON.parse(isolated.stdout), { status: 0, stdout: 'undefined\n', stderr: '' });
 });
 
-test('spawn failure and signal termination remain distinct from nonzero exits', async t => {
+test('missing commands and signal termination report platform-native failures', async t => {
   const root = temporaryRoot(t);
   const missing = await defaultRunner({ command: path.join(root, 'nonexistent-command'), args: [] });
-  assert.equal(missing.status, null);
-  assert.match(missing.error!, /ENOENT/);
   assert.equal(missing.stdout, '');
-  assert.equal(missing.stderr, '');
+  if (process.platform === 'win32') {
+    // Execa resolves non-native Windows commands through cmd.exe, whose missing
+    // command diagnostic is a normal nonzero exit, not a Node spawn error.
+    assert.equal(missing.status, 1);
+    assert.match(missing.stderr, /nonexistent-command/);
+  } else {
+    assert.equal(missing.status, null);
+    assert.match(missing.error!, /ENOENT/);
+    assert.equal(missing.stderr, '');
+  }
   if (process.platform !== 'win32') {
     const signaled = await defaultRunner({ command: process.execPath,
       args: ['-e', "process.kill(process.pid, 'SIGTERM')"] });
@@ -97,7 +108,9 @@ test('Windows batch commands with spaced paths are executed by execa directly', 
   const script = path.join(dir, 'probe.cjs');
   const command = path.join(dir, 'probe.cmd');
   fs.writeFileSync(script, 'console.log(JSON.stringify(process.argv.slice(2)));');
-  fs.writeFileSync(command, `@echo off\r\nsetlocal DisableDelayedExpansion\r\n"${process.execPath}" "${script}" %*\r\n`);
+  // Keep batch source ASCII: cmd.exe reads its literals in the active code page;
+  // %~dp0 expands the Unicode directory without re-decoding UTF-8 file contents.
+  fs.writeFileSync(command, `@echo off\r\nsetlocal DisableDelayedExpansion\r\n"${process.execPath}" "%~dp0probe.cjs" %*\r\n`);
   const args = ['a b', '中文', '&|<>^%!', '"quoted"', 'trailing\\'];
   const result = await defaultRunner({ command, args });
   assert.equal(result.status, 0, result.error ?? result.stderr);
