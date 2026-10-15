@@ -20,7 +20,7 @@ import { binRoot, resolveHome } from './core/config.ts';
 import { InstallError } from './core/errors.ts';
 import { installTool } from './install/index.ts';
 import type { InstallOptions, InstallResult } from './install/types.ts';
-import { defaultRunner } from './bridge/process.ts';
+import { runCommand } from './bridge/process.ts';
 import { toolState } from './install/state.ts';
 import { fail, ok, stringify } from './cli/output.ts';
 import { loadManifests, type LoadResult, type ToolManifest } from './catalog/manifest.ts';
@@ -192,11 +192,12 @@ export async function run(argv: readonly string[], env: NodeJS.ProcessEnv = proc
           hint: `run \`decx install ${manifest.id}\``,
         });
       }
-      const child = await defaultRunner(installedCommand(home, manifest.id, args.toolArgs, env));
-      if (child.error !== undefined) {
-        throw new InstallError('LAUNCH_FAILED', `could not launch ${state.bin}: ${child.error}`);
+      const { command, args: toolArgs, ...options } = installedCommand(home, manifest.id, args.toolArgs, env);
+      const child = await runCommand(command, toolArgs, options);
+      if (child.failed && child.exitCode === undefined && child.signal === undefined) {
+        throw new InstallError('LAUNCH_FAILED', `could not launch ${state.bin}: ${child.shortMessage}`);
       }
-      return child.status ?? 1;
+      return child.exitCode ?? 1;
     } catch (error) {
       return failWith(origin, error);
     }

@@ -1,7 +1,7 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { toolPrefix } from '../core/config.ts';
-import type { CommandSpec } from './process.ts';
+import type { CommandOptions } from './process.ts';
 
 /** Installed executable and its fixed arguments; never a shell command line. */
 export interface LaunchEntry {
@@ -36,7 +36,7 @@ export function launcherText(entry: LaunchEntry, windows: boolean): string {
   return lines.join(windows ? '\r\n' : '\n') + (windows ? '\r\n' : '\n');
 }
 
-export function installedCommand(home: string, id: string, args: string[], env: NodeJS.ProcessEnv): CommandSpec {
+export function installedCommand(home: string, id: string, args: string[], env: NodeJS.ProcessEnv): Pick<LaunchEntry, 'command' | 'args'> & CommandOptions {
   const file = path.join(toolPrefix(home, id), 'launch.json');
   let entry: LaunchEntry;
   try {

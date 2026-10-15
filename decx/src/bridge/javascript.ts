@@ -5,15 +5,16 @@ import { isSafeRelativePath, type ToolManifest } from '../catalog/manifest.ts';
 import { InstallError } from '../core/errors.ts';
 import { applyExecutableMode, findFile } from '../core/fs.ts';
 import { launcherText, type LaunchEntry } from './launch.ts';
-import { runCommand, type BridgeContext } from './process.ts';
+import type { ResolvedInstallContext } from '../install/types.ts';
+import { runCommand } from './process.ts';
 
 export function javascriptEntry(script: string, args: string[] = []): LaunchEntry {
   return { command: 'node', args: [script, ...args] };
 }
 
-export async function requireNode(ctx: Pick<BridgeContext, 'env'>): Promise<void> {
-  const node = await runCommand(ctx, 'node', ['--version']);
-  if (node.error !== undefined || node.status !== 0) {
+export async function requireNode(ctx: Pick<ResolvedInstallContext, 'env'>): Promise<void> {
+  const node = await runCommand('node', ['--version'], ctx);
+  if (node.failed) {
     throw new InstallError('NODE_NOT_FOUND', 'JS tools require Node on PATH; install Node before running decx install');
   }
 }

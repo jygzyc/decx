@@ -14,6 +14,10 @@ export interface InstallContext {
   downloadBase?: string;
 }
 
+export interface ResolvedInstallContext extends Required<InstallContext> {
+  log: (line: string) => void;
+}
+
 export interface InstallOptions {
   /** Explicit release tag or version; `1.544` and `kuna-v1.544` are normalised. */
   version?: string;

@@ -8,12 +8,12 @@
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
-import { runCommand, type BridgeContext } from '../bridge/process.ts';
+import { runCommand } from '../bridge/process.ts';
 import { launcherText, shellQuote, type LaunchEntry } from '../bridge/launch.ts';
 import { javascriptEntry, requireNode, stageJavascriptRelease } from '../bridge/javascript.ts';
 import { stageVenv } from '../bridge/python.ts';
 import { InstallError } from '../core/errors.ts';
-import type { InstallContext, InstallOptions, InstallResult, StagedOutcome } from './types.ts';
+import type { InstallContext, InstallOptions, InstallResult, ResolvedInstallContext as ResolvedContext, StagedOutcome } from './types.ts';
 import { extractArchive } from './archive.ts';
 import { applyExecutableMode, findFile, listDirEntries, lstatIfPresent, walkFiles } from '../core/fs.ts';
 import { binRoot, resolveLinkDir, runtimePath, toolPrefix } from '../core/config.ts';
@@ -34,11 +34,6 @@ import {
 import { isSafeRelativePath, verifyArgs, type ReleaseSpec, type ToolManifest } from '../catalog/manifest.ts';
 import { isoTimestamp, provenanceBinaries, readProvenance } from './state.ts';
 import { currentPlatformKey, isWindows, type PlatformKey } from '../core/platform.ts';
-
-interface ResolvedContext extends BridgeContext {
-  apiBase: string;
-  downloadBase: string;
-}
 
 function resolveContext(context: InstallContext): ResolvedContext {
   return {
@@ -381,12 +376,12 @@ async function stageRelease(
     // The payload is still the stage here, so `{prefix}` has to resolve to the
     // staged tree -- that is the copy the probe is about to exercise.
     const probe = verifyScript === undefined ? { command: launcherPath, args } : javascriptEntry(verifyScript, args);
-    const result = await runCommand(ctx, probe.command, probe.args, 'capture', launcherEnv(manifest, share, version));
+    const result = await runCommand(probe.command, probe.args, { env: { ...ctx.env, ...launcherEnv(manifest, share, version) } });
     const output = `${result.stdout}\n${result.stderr}`.trim();
-    if (result.error !== undefined || result.status !== 0) {
+    if (result.failed) {
       throw new InstallError(
         'VERIFY_FAILED',
-        `could not run '${launcherName} ${args.join(' ')}' (captured output: ${output || result.error || 'none'}). The downloaded binary cannot execute on this host.`,
+        `could not run '${launcherName} ${args.join(' ')}' (captured output: ${output || result.shortMessage || 'none'}). The downloaded binary cannot execute on this host.`,
       );
     }
     // A tag can carry an upstream version that is not the tag itself; when the

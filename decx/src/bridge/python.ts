@@ -7,12 +7,12 @@ import { applyExecutableMode, isExecutable } from '../core/fs.ts';
 import { isWindows } from '../core/platform.ts';
 import { verifyArgs, type ToolManifest } from '../catalog/manifest.ts';
 import { isoTimestamp } from '../install/state.ts';
-import type { InstallOptions, StagedOutcome } from '../install/types.ts';
+import type { InstallOptions, ResolvedInstallContext, StagedOutcome } from '../install/types.ts';
 import { launcherText, type LaunchEntry } from './launch.ts';
-import { runCommand, type BridgeContext, type CommandResult } from './process.ts';
+import { runCommand } from './process.ts';
 
-function firstLine(result: CommandResult): string {
-  const text = `${result.stdout}\n${result.stderr}`.trim();
+function firstLine(result: { stdout: string | undefined; stderr: string | undefined }): string {
+  const text = [result.stdout, result.stderr].join('\n').trim();
   return text.split(/\r?\n/)[0] ?? '';
 }
 
@@ -26,7 +26,7 @@ interface PythonCandidate {
 }
 
 /** Interpreter names to probe for a venv install, PATH defaults first. */
-function pythonCandidates(ctx: BridgeContext): PythonCandidate[] {
+function pythonCandidates(ctx: ResolvedInstallContext): PythonCandidate[] {
   // An explicit `DECX_PYTHON` is used as given: the caller knows the machine.
   const override = (ctx.env.DECX_PYTHON ?? '').trim();
   if (override !== '') {
@@ -51,10 +51,10 @@ function pythonCandidates(ctx: BridgeContext): PythonCandidate[] {
 }
 
 /** Finds Python 3 for a private venv; pip owns package-version requirements. */
-async function findPython(ctx: BridgeContext): Promise<PythonCandidate & { output: string }> {
+async function findPython(ctx: ResolvedInstallContext): Promise<PythonCandidate & { output: string }> {
   for (const candidate of pythonCandidates(ctx)) {
-    const probe = await runCommand(ctx, candidate.command, [...candidate.args, '--version']);
-    if (probe.error !== undefined || probe.status !== 0) {
+    const probe = await runCommand(candidate.command, [...candidate.args, '--version'], ctx);
+    if (probe.failed) {
       continue;
     }
     const output = firstLine(probe);
@@ -70,7 +70,7 @@ async function findPython(ctx: BridgeContext): Promise<PythonCandidate & { outpu
 }
 
 export async function stageVenv(
-  ctx: BridgeContext,
+  ctx: ResolvedInstallContext,
   manifest: ToolManifest,
   prefix: string,
   stage: string,
@@ -103,8 +103,8 @@ export async function stageVenv(
     // path. Build the environment here, never in a staging path that will move.
     initialize: async () => {
       ctx.log(`creating virtualenv in ${venvDir} (${platformOs})`);
-      const venv = await runCommand(ctx, python.command, [...python.args, '-m', 'venv', venvDir], 'stream');
-      if (venv.error !== undefined || venv.status !== 0) {
+      const venv = await runCommand(python.command, [...python.args, '-m', 'venv', venvDir], { env: ctx.env, mode: 'stream' });
+      if (venv.failed) {
         throw new InstallError(
           'VENV_FAILED',
           `${python.label} -m venv failed. Make sure the venv module is available (Debian/Ubuntu: 'apt install python3-venv'; macOS: 'brew install python3'; Windows: the python.org build bundles it) and that ${prefix} is writable.`,
@@ -127,13 +127,13 @@ export async function stageVenv(
         installArgs[index] = `${packageName}==${requested}`;
       }
       ctx.log(`running pip install for ${manifest.id} into ${venvDir}`);
-      const install = await runCommand(ctx, venvPython, ['-m', 'pip', 'install', ...installArgs], 'stream');
-      if (install.error !== undefined || install.status !== 0) {
+      const install = await runCommand(venvPython, ['-m', 'pip', 'install', ...installArgs], { env: ctx.env, mode: 'stream' });
+      if (install.failed) {
         throw new InstallError('PIP_FAILED', `pip install failed using ${python.output} (${python.label}). Check the pip output, declared package dependencies and minimum Python version for ${manifest.id}; install a compatible Python 3 and select it with DECX_PYTHON if needed.`);
       }
-      const versionResult = await runCommand(ctx, venvPython, ['-c', `import importlib.metadata; print(importlib.metadata.version(${JSON.stringify(packageName)}))`], 'capture');
-      const installedVersion = versionResult.stdout.trim();
-      if (versionResult.error !== undefined || versionResult.status !== 0 || installedVersion === '') {
+      const versionResult = await runCommand(venvPython, ['-c', `import importlib.metadata; print(importlib.metadata.version(${JSON.stringify(packageName)}))`], ctx);
+      const installedVersion = versionResult.stdout?.trim() ?? '';
+      if (versionResult.failed || installedVersion === '') {
         throw new InstallError('PACKAGE_VERSION', `could not determine installed version of ${packageName} in ${venvDir}`);
       }
       if (!isExecutable(consoleScript)) {
@@ -141,9 +141,9 @@ export async function stageVenv(
       }
       const args = verifyArgs(manifest);
       if (args.length > 0) {
-        const result = await runCommand(ctx, consoleScript, args, 'capture');
-        if (result.error !== undefined || result.status !== 0) {
-          throw new InstallError('VERIFY_FAILED', `${manifest.id} verification failed: ${firstLine(result) || result.error || 'no output'}`);
+        const result = await runCommand(consoleScript, args, ctx);
+        if (result.failed) {
+          throw new InstallError('VERIFY_FAILED', `${manifest.id} verification failed: ${firstLine(result) || result.shortMessage || 'no output'}`);
         }
       }
       const entries: Array<[string, string]> = [
