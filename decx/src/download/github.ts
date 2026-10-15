@@ -12,6 +12,8 @@ import { execaSync } from 'execa';
 import { createHash } from 'node:crypto';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
+import { Readable, addAbortSignal } from 'node:stream';
+import { pipeline } from 'node:stream/promises';
 import { openResponse } from './http.ts';
 import type { HttpResponse } from './types.ts';
 
@@ -65,6 +67,8 @@ export interface ResolvedRelease {
   prerelease: boolean;
   /** Asset names GitHub reports for the release; empty for an explicit tag. */
   assetNames: string[];
+  /** Validated REST digests from discovery, when present; reuse this snapshot. */
+  digests?: Map<string, string>;
 }
 
 /** SHA-256 digests published in the GitHub REST release asset metadata. */
@@ -75,16 +79,7 @@ export async function releaseAssetDigests(options: GithubRequestOptions & { repo
     userAgent: options.userAgent ?? DEFAULT_USER_AGENT,
     ...(options.token !== undefined ? { token: options.token } : {}),
   });
-  const digests = new Map<string, string>();
-  const assets: unknown[] = Array.isArray(json.assets) ? json.assets : [];
-  for (const asset of assets) {
-    if (typeof asset !== 'object' || asset === null) continue;
-    const { name, digest } = asset as { name?: unknown; digest?: unknown };
-    if (typeof name === 'string' && typeof digest === 'string' && /^sha256:[0-9a-f]{64}$/i.test(digest)) {
-      digests.set(name, digest.slice('sha256:'.length).toLowerCase());
-    }
-  }
-  return digests;
+  return releaseAssets(json).digests;
 }
 
 /** The token the CLI uses, from GitHub environment variables or `gh auth token`. */
@@ -116,15 +111,13 @@ interface RequestOptions {
   token?: string;
   userAgent: string;
   accept?: string;
-  /** Initial origin the token may be sent to; fixed across all redirect hops. */
-  authOrigin?: string;
 }
 
 async function request(url: string, options: RequestOptions): Promise<HttpResponse> {
   let target: URL;
   try { target = new URL(url); }
   catch { throw new GithubError('BAD_URL', `not a valid URL: ${url}`); }
-  const authOrigin = options.authOrigin ?? target.origin;
+  const authOrigin = target.origin;
   for (let redirects = 0; ; redirects += 1) {
     if (target.protocol !== 'http:' && target.protocol !== 'https:') {
       throw new GithubError('ERR_INVALID_PROTOCOL', `unsupported URL protocol: ${target.protocol}`);
@@ -203,19 +196,27 @@ interface GithubReleaseJson {
   assets?: unknown;
 }
 
+function releaseAssets(json: GithubReleaseJson) {
+  const assetNames: string[] = [];
+  const digests = new Map<string, string>();
+  const assets: unknown[] = Array.isArray(json.assets) ? json.assets : [];
+  for (const asset of assets) {
+    if (typeof asset !== 'object' || asset === null) continue;
+    const { name, digest } = asset as { name?: unknown; digest?: unknown };
+    if (typeof name !== 'string') continue;
+    assetNames.push(name);
+    if (typeof digest === 'string' && /^sha256:[0-9a-f]{64}$/i.test(digest)) digests.set(name, digest.slice(7).toLowerCase());
+  }
+  return { assetNames, digests };
+}
+
 function releaseFromJson(repository: string, json: GithubReleaseJson, source: string): ResolvedRelease {
   const tag = json.tag_name;
   if (typeof tag !== 'string' || tag.trim() === '') {
     throw new GithubError('RELEASE_NOT_FOUND', `no release tag in the GitHub response for ${source}`);
   }
-  const assets: unknown[] = Array.isArray(json.assets) ? json.assets : [];
-  const assetNames: string[] = [];
-  for (const asset of assets) {
-    if (typeof asset === 'object' && asset !== null && typeof (asset as { name?: unknown }).name === 'string') {
-      assetNames.push((asset as { name: string }).name);
-    }
-  }
-  return { repository, tag, prerelease: json.prerelease === true, assetNames };
+  const { assetNames, digests } = releaseAssets(json);
+  return { repository, tag, prerelease: json.prerelease === true, assetNames, ...(digests.size > 0 ? { digests } : {}) };
 }
 
 /** Strip a tag prefix without consuming the version's prerelease/build suffix. */
@@ -241,21 +242,13 @@ export async function resolveRelease(options: ResolveReleaseOptions): Promise<Re
   const pageSize = 100;
   for (let page = 1; ; page += 1) {
     const list = await getJson<GithubReleaseJson[]>(`${listUrl}?per_page=${pageSize}&page=${page}`, requestOptions);
-    const first = list.find((release) => {
-      if (release.draft === true || typeof release.tag_name !== 'string') {
-        return false;
-      }
-      if (options.tagPrefix !== undefined && !release.tag_name.startsWith(options.tagPrefix)) {
-        return false;
-      }
-      if (release.prerelease === true) return false;
+    for (const release of list) {
+      if (release.draft === true || release.prerelease === true || typeof release.tag_name !== 'string') continue;
+      if (options.tagPrefix !== undefined && !release.tag_name.startsWith(options.tagPrefix)) continue;
       const version = versionFromTag(release.tag_name, options.tagPrefix);
-      if (options.version !== undefined && version !== options.version) return false;
+      if (options.version !== undefined && version !== options.version) continue;
       const candidate = releaseFromJson(repository, release, listUrl);
-      return templates.every(template => candidate.assetNames.includes(template.replaceAll('{version}', version)));
-    });
-    if (first !== undefined) {
-      return releaseFromJson(repository, first, listUrl);
+      if (templates.every(template => candidate.assetNames.includes(template.replaceAll('{version}', version)))) return candidate;
     }
     if (list.length < pageSize) {
       break;
@@ -301,48 +294,31 @@ export async function downloadAsset(
     });
   }
   let bytes = 0;
-  let descriptor: number | undefined;
-  let localFailure = true;
   try {
     fs.mkdirSync(path.dirname(dest), { recursive: true });
-    descriptor = fs.openSync(dest, 'w');
-    localFailure = false;
-    const body = response.body;
-    if (body !== null) {
-      const reader = body.getReader();
-      for (;;) {
-        const chunk = await reader.read();
-        if (chunk.done) break;
-        response.touch();
-        const buffer = Buffer.from(chunk.value);
-        let offset = 0;
-        while (offset < buffer.length) {
-          localFailure = true;
-          const written = fs.writeSync(descriptor, buffer, offset, buffer.length - offset);
-          if (written === 0) throw new Error(`zero-byte write to ${dest}`);
-          localFailure = false;
-          offset += written;
+    // Node owns backpressure, short writes and descriptor cleanup. Only reader
+    // failures become network errors; local filesystem failures keep their codes.
+    async function* chunks({ signal }: { signal?: AbortSignal } = {}) {
+      if (response.body === null) return;
+      const source = Readable.fromWeb(response.body);
+      if (signal !== undefined) addAbortSignal(signal, source);
+      try {
+        for await (const chunk of source) {
+          response.touch();
+          hash.update(chunk);
+          bytes += chunk.length;
+          yield chunk;
         }
-        hash.update(buffer);
-        bytes += buffer.length;
+      } catch (error) {
+        throw new GithubError('DOWNLOAD_FAILED', `failed to download ${url}: ${(error as Error).message}`);
       }
     }
-    localFailure = true;
-    fs.closeSync(descriptor);
-    descriptor = undefined;
-    localFailure = false;
+    await pipeline(chunks, fs.createWriteStream(dest));
+    return { path: dest, sha256: hash.digest('hex'), bytes };
   } catch (error) {
-    response.cancel();
-    if (descriptor !== undefined) {
-      try { fs.closeSync(descriptor); } catch { /* Preserve the primary failure. */ }
-    }
-    fs.rmSync(dest, { force: true });
-    // A local staging failure must not trigger an upstream fallback.
-    if (localFailure) throw error;
-    throw new GithubError('DOWNLOAD_FAILED', `failed to download ${url}: ${(error as Error).message}`);
-  }
-  response.cancel();
-  return { path: dest, sha256: hash.digest('hex'), bytes };
+    try { fs.rmSync(dest, { force: true }); } catch { /* Preserve the primary error. */ }
+    throw error;
+  } finally { response.cancel(); }
 }
 
 /** Parses `sha256  filename` lines (the `sha256sum` and `*filename` forms). */

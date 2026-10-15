@@ -63,35 +63,17 @@ export function shimText(target: string): string {
   ].join('\r\n');
 }
 
-/** True when the entry is a link this tool made for the store. */
-function isOurs(home: string, linkPath: string, target: string): boolean {
-  let stats: fs.Stats;
-  try {
-    stats = fs.lstatSync(linkPath);
-  } catch {
-    return false;
-  }
+/** Inspect once: ownership permits refresh, but removal requires an exact target. */
+function inspectLink(linkPath: string, target: string, windows: boolean, stats: fs.Stats) {
   if (stats.isSymbolicLink()) {
-    let resolved: string;
-    try {
-      resolved = path.resolve(path.dirname(linkPath), fs.readlinkSync(linkPath));
-    } catch {
-      return false;
-    }
-    if (resolved === path.resolve(target)) {
-      return true;
-    }
-    const bin = path.resolve(binRoot(home));
-    return resolved === bin || resolved.startsWith(`${bin}${path.sep}`);
+    const resolved = path.resolve(path.dirname(linkPath), fs.readlinkSync(linkPath));
+    const bin = path.dirname(path.resolve(target));
+    const exact = resolved === path.resolve(target);
+    return { exact, current: !windows && exact, owned: exact || resolved === bin || resolved.startsWith(`${bin}${path.sep}`) };
   }
-  if (stats.isFile()) {
-    try {
-      return fs.readFileSync(linkPath, 'utf8').includes(SHIM_MARKER);
-    } catch {
-      return false;
-    }
-  }
-  return false;
+  const text = stats.isFile() ? fs.readFileSync(linkPath, 'utf8') : '';
+  const exact = windows && stats.isFile() && text === shimText(target);
+  return { exact, current: exact, owned: stats.isFile() && text.includes(SHIM_MARKER) };
 }
 
 /** Remove only an exact link previously created for this executable; foreign entries are untouched. */
@@ -99,10 +81,8 @@ export function removeManagedLink(linkDir: string, fileName: string, target: str
   const linked = path.join(linkDir, linkFileName(linkName(fileName), windows));
   try {
     const stat = fs.lstatSync(linked);
-    const owned = stat.isSymbolicLink()
-      ? path.resolve(path.dirname(linked), fs.readlinkSync(linked)) === path.resolve(target)
-      : windows && stat.isFile() && fs.readFileSync(linked, 'utf8') === shimText(target);
-    if (owned) {
+    if (!stat.isSymbolicLink() && !windows) return false;
+    if (inspectLink(linked, target, windows, stat).exact) {
       fs.unlinkSync(linked);
       return true;
     }
@@ -112,23 +92,9 @@ export function removeManagedLink(linkDir: string, fileName: string, target: str
   return false;
 }
 
-/** Ownership alone does not mean the entry still points at the desired launcher. */
-function isCurrent(linkPath: string, target: string, windows: boolean): boolean {
-  try {
-    const stats = fs.lstatSync(linkPath);
-    if (windows) {
-      return stats.isFile() && fs.readFileSync(linkPath, 'utf8') === shimText(target);
-    }
-    return stats.isSymbolicLink()
-      && path.resolve(path.dirname(linkPath), fs.readlinkSync(linkPath)) === path.resolve(target);
-  } catch {
-    return false;
-  }
-}
-
 /**
  * Preference between two staged files that map to the same command name: a
- * venv install stages `<tool>` and `<tool>.cmd`, and only one can win the link.
+ * release may contain multiple launcher forms, and only one can win the link.
  */
 function nativeRank(fileName: string, windows: boolean): number {
   if (!/\.(exe|cmd|bat)$/i.test(fileName)) {
@@ -164,14 +130,15 @@ export function createLinks(options: LinkOptions): LinkOutcome[] {
     const target = linkTarget(options.home, fileName);
     const linkPath = path.join(options.linkDir, linkFileName(name, windows));
     const outcome: LinkOutcome = { name, path: linkPath, target, status: 'unchanged' };
-    let existing = true;
+    let stats: fs.Stats | undefined;
+    let inspected = { owned: false, current: false, exact: false };
     try {
-      fs.lstatSync(linkPath);
-    } catch {
-      existing = false;
-    }
-    const managed = existing && isOurs(options.home, linkPath, target);
-    if (managed && isCurrent(linkPath, target, windows)) {
+      stats = fs.lstatSync(linkPath);
+      inspected = inspectLink(linkPath, target, windows, stats);
+    } catch { /* Unreadable entries are not managed links. */ }
+    const existing = stats !== undefined;
+    const managed = inspected.owned;
+    if (inspected.current) {
       outcomes.push(outcome);
       continue;
     }

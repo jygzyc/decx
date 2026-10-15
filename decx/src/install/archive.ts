@@ -45,6 +45,7 @@ function resolveEntry(root: string, name: string): string {
   if (target !== resolvedRoot && !target.startsWith(`${resolvedRoot}${path.sep}`)) {
     throw new ArchiveError(`archive entry escapes the destination: ${name}`);
   }
+  assertNoSymlinkPath(resolvedRoot, target);
   return target;
 }
 
@@ -177,11 +178,7 @@ export function extractTarGz(archive: string, dest: string): void {
   let longName: string | null = null;
   while (offset + 512 <= buffer.length) {
     const header = buffer.subarray(offset, offset + 512);
-    let empty = true;
-    for (let index = 0; index < header.length; index += 1) {
-      if (header[index] !== 0) { empty = false; break; }
-    }
-    if (empty) break;
+    if (header.every(byte => byte === 0)) break;
     const size = readOctal(header, 124, 12);
     const typeflag = String.fromCharCode(header[156] ?? 0);
     const dataStart = offset + 512;
@@ -226,7 +223,6 @@ export function extractTarGz(archive: string, dest: string): void {
       continue;
     }
     const target = resolveEntry(root, name);
-    assertNoSymlinkPath(root, target);
     switch (typeflag) {
       case '0':
       case '\0':
@@ -256,7 +252,6 @@ export function extractTarGz(archive: string, dest: string): void {
           throw new ArchiveError(`archive hard link has no target: ${name}`);
         }
         const source = resolveEntry(root, linkName);
-        assertNoSymlinkPath(root, source);
         fs.mkdirSync(path.dirname(target), { recursive: true });
         try {
           fs.linkSync(source, target);
@@ -292,6 +287,7 @@ export function extractZip(archive: string, dest: string): void {
   const count = buffer.readUInt16LE(eocd + 10);
   let offset = buffer.readUInt32LE(eocd + 16);
   fs.mkdirSync(dest, { recursive: true });
+  const root = fs.realpathSync(dest);
   for (let index = 0; index < count; index += 1) {
     if (offset + 46 > buffer.length || buffer.readUInt32LE(offset) !== 0x02014b50) {
       throw new ArchiveError(`malformed zip central directory in ${archive}`);
@@ -320,7 +316,7 @@ export function extractZip(archive: string, dest: string): void {
     const compressed = buffer.subarray(dataStart, dataStart + compressedSize);
     let data: Buffer;
     if (method === 0) {
-      data = Buffer.from(compressed);
+      data = compressed;
     } else if (method === 8) {
       data = zlib.inflateRawSync(compressed);
     } else {
@@ -332,7 +328,7 @@ export function extractZip(archive: string, dest: string): void {
     if (zlib.crc32(data) !== crc) {
       throw new ArchiveError(`crc mismatch for ${name} in ${archive}`);
     }
-    const target = resolveEntry(dest, name);
+    const target = resolveEntry(root, name);
     if (name.endsWith('/')) {
       fs.mkdirSync(target, { recursive: true });
       continue;

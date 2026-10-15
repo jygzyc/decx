@@ -39,6 +39,10 @@ test('Python fixture installs a local wheel into a real private venv and runs th
     PYTHONIOENCODING: 'utf-8',
   };
   const linkDir = path.join(home, 'links');
+  const invalid = await runCliAsync(['--home', home, '--third-party', thirdParty, 'install', 'pyprobe', '--version', 'invalid;version'], env);
+  assert.notEqual(invalid.status, 0);
+  assert.match(invalid.stdout, /INVALID_VERSION/);
+  assert.equal(fs.existsSync(path.join(home, 'runtime', 'pyprobe')), false);
   const installed = await runCliAsync(['--home', home, '--third-party', thirdParty, 'install', 'pyprobe', '--version', '1.0.0', '--links', linkDir], env);
   assert.equal(installed.status, 0, installed.stderr + installed.stdout);
   const result = installed.json as { method: string; version: string; launcher: string };
@@ -51,11 +55,11 @@ test('Python fixture installs a local wheel into a real private venv and runs th
   assert.ok(fs.existsSync(result.launcher));
   const linked = path.join(linkDir, process.platform === 'win32' ? 'pyprobe.cmd' : 'pyprobe');
   assert.ok(fs.existsSync(linked));
-  if (process.platform !== 'win32') {
-    const viaLink = spawnSync(linked, ['from PATH'], { encoding: 'utf8', env });
-    assert.equal(viaLink.status, 0, viaLink.stderr);
-    assert.deepEqual(JSON.parse(viaLink.stdout.trim()), ['from PATH']);
-  }
+  const viaLink = process.platform === 'win32'
+    ? spawnSync('cmd.exe', ['/d', '/s', '/c', `""${linked}" "from PATH" "中文""`], { encoding: 'utf8', env, windowsVerbatimArguments: true })
+    : spawnSync(linked, ['from PATH', '中文'], { encoding: 'utf8', env });
+  assert.equal(viaLink.status, 0, viaLink.stderr + viaLink.stdout);
+  assert.deepEqual(JSON.parse(viaLink.stdout.trim()), ['from PATH', '中文']);
 
   const args = ['two words', '中文', '--home', 'a"b'];
   const invoked = runCli(['--home', home, '--third-party', thirdParty, '-m', 'pyprobe', ...args], env);

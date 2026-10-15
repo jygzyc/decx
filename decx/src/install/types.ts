@@ -1,6 +1,7 @@
 import type { LaunchEntry } from '../bridge/launch.ts';
 import type { PlatformKey } from '../core/platform.ts';
 import type { LinkOutcome } from './links.ts';
+import type { GithubRequestOptions } from '../download/github.ts';
 
 export type InstallMethod = 'release download' | 'python venv';
 
@@ -15,6 +16,7 @@ export interface InstallContext {
 }
 
 export interface ResolvedInstallContext extends Required<InstallContext> {
+  github: GithubRequestOptions;
   log: (line: string) => void;
 }
 
@@ -53,16 +55,8 @@ export interface InstallResult {
 export interface StagedOutcome {
   entry: LaunchEntry;
   /** Runs after the payload reaches its permanent path, while backups still exist. */
-  initialize?: () => Promise<void>;
+  initialize?: () => Promise<Record<string, string>>;
   provenance: Record<string, string>;
   binaries: string[];
   launcherName: string;
-  method: InstallMethod;
-  version?: string;
-  releaseTag?: string;
-  releaseSource?: string;
-  asset?: string;
-  specsAsset?: string;
-  specsInstalled?: number;
-  checksum?: string;
 }

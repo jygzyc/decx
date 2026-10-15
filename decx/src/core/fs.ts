@@ -30,15 +30,14 @@ export function walkFiles(root: string): string[] {
   return files;
 }
 
-export function findFile(root: string, names: readonly string[]): string | null {
-  const files = walkFiles(root);
-  for (const name of names) {
-    const hit = files.find((file) => path.basename(file) === name);
-    if (hit !== undefined) {
-      return hit;
-    }
+/** Index one traversal, retaining the first match for duplicate basenames. */
+export function indexFiles(root: string): Map<string, string> {
+  const files = new Map<string, string>();
+  for (const file of walkFiles(root)) {
+    const name = path.basename(file);
+    if (!files.has(name)) files.set(name, file);
   }
-  return null;
+  return files;
 }
 
 export function applyExecutableMode(file: string): void {

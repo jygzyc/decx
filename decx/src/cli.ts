@@ -94,10 +94,6 @@ function emitFailure(command: string | null, code: string, message: string, hint
   return exitCode;
 }
 
-function failAndExit(command: string | null, code: string, message: string, hint: string | undefined, exitCode: number): never {
-  process.exit(emitFailure(command, code, message, hint, exitCode));
-}
-
 function failWith(command: string | null, error: unknown): number {
   if (error instanceof InstallError) {
     return emitFailure(command, error.code, error.message, error.hint, error.exitCode);
@@ -164,7 +160,7 @@ export async function run(argv: readonly string[], env: NodeJS.ProcessEnv = proc
   // A module run is not a manager command: the failure envelope says `module`.
   const origin = moduleId !== undefined ? 'module' : command;
   if (args.error !== undefined) {
-    failAndExit(origin, 'USAGE', args.error, 'run `decx help`', 2);
+    return emitFailure(origin, 'USAGE', args.error, 'run `decx help`', 2);
   }
   if (args.versionFlag) {
     emit(ok('version', { version: packageVersion(), ...runtimeInfo }), args.pretty);
@@ -210,7 +206,7 @@ export async function run(argv: readonly string[], env: NodeJS.ProcessEnv = proc
   if (command === 'help') {
     const target = args.positionals[0];
     if (target !== undefined && !KNOWN_COMMANDS.has(target)) {
-      failAndExit('help', 'UNKNOWN_COMMAND', `unknown command: ${target}`, 'run `decx help`', 2);
+      return emitFailure('help', 'UNKNOWN_COMMAND', `unknown command: ${target}`, 'run `decx help`', 2);
     }
     process.stdout.write(target !== undefined ? (COMMAND_HELP[target] ?? HELP) : HELP);
     return 0;
@@ -218,9 +214,6 @@ export async function run(argv: readonly string[], env: NodeJS.ProcessEnv = proc
   if (command === 'version') {
     emit(ok('version', { version: packageVersion(), ...runtimeInfo }), args.pretty);
     return 0;
-  }
-  if (!KNOWN_COMMANDS.has(command)) {
-    failAndExit(command, 'UNKNOWN_COMMAND', `unknown command: ${command}`, 'run `decx help`', 2);
   }
   if (args.help) {
     process.stdout.write(COMMAND_HELP[command] ?? HELP);
@@ -231,12 +224,12 @@ export async function run(argv: readonly string[], env: NodeJS.ProcessEnv = proc
     const load = manifests();
     const id = toolId(args.positionals, command);
     const manifest = requireManifest(load, id);
-    const state = toolState(home, manifest);
     if (command === 'remove') {
       if (args.positionals.length !== 1) throw new InstallError('USAGE', 'remove accepts exactly one tool id', { exitCode: 2 });
       emit(ok('remove', removeTool(manifest, home, args.links, env)), args.pretty);
       return 0;
     }
+    const state = toolState(home, manifest);
     if (command === 'update' && !state.installed) {
       throw new InstallError('NOT_INSTALLED', `${manifest.id} is not installed`, {
         hint: `run \`decx install ${manifest.id}\` first`,

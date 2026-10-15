@@ -3,7 +3,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { isSafeRelativePath, type ToolManifest } from '../catalog/manifest.ts';
 import { InstallError } from '../core/errors.ts';
-import { applyExecutableMode, findFile } from '../core/fs.ts';
+import { applyExecutableMode, indexFiles } from '../core/fs.ts';
 import { launcherText, type LaunchEntry } from './launch.ts';
 import type { ResolvedInstallContext } from '../install/types.ts';
 import { runCommand } from './process.ts';
@@ -33,9 +33,10 @@ export function stageJavascriptRelease(
   fs.mkdirSync(path.dirname(app), { recursive: true });
   fs.renameSync(extract, app);
   fs.mkdirSync(path.join(stage, 'bin'), { recursive: true });
+  const files = indexFiles(app);
   for (const name of manifest.launch.commands) {
-    const found = findFile(app, [`${name}.mjs`, `${name}.cjs`, `${name}.js`]);
-    if (found === null) {
+    const found = files.get(`${name}.mjs`) ?? files.get(`${name}.cjs`) ?? files.get(`${name}.js`);
+    if (found === undefined) {
       throw new InstallError('ASSET_LAYOUT', `'${asset}' does not contain a Node script for '${name}' (.mjs, .cjs or .js)`);
     }
     const script = path.relative(app, found).split(path.sep).join('/');

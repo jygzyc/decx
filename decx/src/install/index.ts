@@ -15,7 +15,7 @@ import { stageVenv } from '../bridge/python.ts';
 import { InstallError } from '../core/errors.ts';
 import type { InstallContext, InstallOptions, InstallResult, ResolvedInstallContext as ResolvedContext, StagedOutcome } from './types.ts';
 import { extractArchive } from './archive.ts';
-import { applyExecutableMode, findFile, listDirEntries, lstatIfPresent, walkFiles } from '../core/fs.ts';
+import { applyExecutableMode, indexFiles, listDirEntries, lstatIfPresent, walkFiles } from '../core/fs.ts';
 import { binRoot, resolveLinkDir, runtimePath, toolPrefix } from '../core/config.ts';
 import { createLinks, removeManagedLink, type LinkOutcome } from './links.ts';
 import {
@@ -30,17 +30,20 @@ import {
   releaseDownloadUrl,
   resolveRelease,
   versionFromTag,
+  type ResolvedRelease,
 } from '../download/github.ts';
 import { isSafeRelativePath, verifyArgs, type ReleaseSpec, type ToolManifest } from '../catalog/manifest.ts';
 import { isoTimestamp, provenanceBinaries, readProvenance } from './state.ts';
 import { currentPlatformKey, isWindows, type PlatformKey } from '../core/platform.ts';
 
 function resolveContext(context: InstallContext): ResolvedContext {
+  const apiBase = context.apiBase ?? DEFAULT_API_BASE;
   return {
     home: context.home,
     env: context.env ?? process.env,
     platform: context.platform !== undefined ? context.platform : currentPlatformKey(),
-    apiBase: context.apiBase ?? DEFAULT_API_BASE,
+    apiBase,
+    github: { apiBase, userAgent: DEFAULT_USER_AGENT },
     downloadBase: context.downloadBase ?? DEFAULT_DOWNLOAD_BASE,
     log: (line: string) => process.stderr.write(`${line}\n`),
   };
@@ -179,29 +182,28 @@ function pickLauncher(manifest: ToolManifest, binaries: readonly string[]): stri
   return first;
 }
 
-async function resolveInstallTag(ctx: ResolvedContext, release: ReleaseSpec, options: InstallOptions): Promise<string> {
+type SelectedRelease = Pick<ResolvedRelease, 'tag' | 'digests'>;
+
+async function resolveInstallRelease(ctx: ResolvedContext, release: ReleaseSpec, options: InstallOptions): Promise<SelectedRelease> {
   const requested = options.version ?? release.version;
   const explicit = requested !== undefined && requested !== 'latest' && requested.trim() !== '' ? requested.trim() : undefined;
   if (explicit !== undefined && (release.tagPrefix !== undefined || !/^\d/.test(explicit))) {
-    return normalizeReleaseTag(explicit, release.tagPrefix);
+    return { tag: normalizeReleaseTag(explicit, release.tagPrefix) };
   }
   const asset = releaseAssetName(release, ctx.platform, '{version}');
   if (asset === null) {
     throw new InstallError('UNSUPPORTED_PLATFORM', `no archive is defined for this platform (${ctx.platform ?? `${process.platform}-${process.arch}`})`);
   }
   try {
-    const token = githubToken(ctx.env);
     const resolved = await resolveRelease({
+      ...ctx.github,
       repository: release.repository,
       ...(release.tagPrefix !== undefined ? { tagPrefix: release.tagPrefix } : {}),
       ...(explicit !== undefined ? { version: explicit } : {}),
       asset,
       extraAssets: Object.values(release.extraAssets ?? {}).map(template => expandAssetTemplate(template, ctx.platform, '{version}')),
-      ...(token !== undefined ? { token } : {}),
-      apiBase: ctx.apiBase,
-      userAgent: DEFAULT_USER_AGENT,
     });
-    return resolved.tag;
+    return resolved;
   } catch (error) {
     throw new InstallError('RELEASE_RESOLVE_FAILED', `could not resolve a release of ${release.repository}: ${(error as Error).message}`, {
       hint: 'pass --version <tag> to pick a release explicitly',
@@ -211,12 +213,8 @@ async function resolveInstallTag(ctx: ResolvedContext, release: ReleaseSpec, opt
 
 async function downloadRequired(ctx: ResolvedContext, url: string, dest: string) {
   ctx.log(`downloading ${url}`);
-  const token = githubToken(ctx.env);
   try {
-    return await downloadAsset(url, dest, {
-      ...(token !== undefined ? { token } : {}),
-      userAgent: DEFAULT_USER_AGENT,
-    });
+    return await downloadAsset(url, dest, ctx.github);
   } catch (error) {
     if (!(error instanceof GithubError) || error.code !== 'DOWNLOAD_FAILED') {
       throw error;
@@ -237,11 +235,10 @@ function checkDigest(asset: string, expected: string, actual: string): void {
 
 /** Load one integrity map per release; every primary/extra asset must appear in it. */
 async function releaseChecksums(ctx: ResolvedContext, release: ReleaseSpec, tag: string, downloads: string): Promise<Map<string, string>> {
-  const token = githubToken(ctx.env);
-  const authentication = { ...(token !== undefined ? { token } : {}), userAgent: DEFAULT_USER_AGENT };
+  const authentication = ctx.github;
   try {
     if (release.checksums === null) {
-      return await releaseAssetDigests({ ...authentication, repository: release.repository, tag, apiBase: ctx.apiBase });
+      return await releaseAssetDigests({ ...authentication, repository: release.repository, tag });
     }
     const name = release.checksums.replaceAll('{version}', versionFromTag(tag, release.tagPrefix));
     safeAssetName(name);
@@ -282,8 +279,9 @@ async function downloadRelease(
   ctx: ResolvedContext,
   release: ReleaseSpec,
   stage: string,
-  tag: string,
+  selected: SelectedRelease,
 ): Promise<ReleaseArchive> {
+  const tag = selected.tag;
   const version = versionFromTag(tag, release.tagPrefix);
   const asset = releaseAssetName(release, ctx.platform, version);
   if (asset === null) {
@@ -296,7 +294,8 @@ async function downloadRelease(
   const extract = path.join(stage, 'extract');
   fs.mkdirSync(downloads, { recursive: true });
   fs.mkdirSync(extract, { recursive: true });
-  const checksums = await releaseChecksums(ctx, release, tag, downloads);
+  const checksums = release.checksums === null && selected.digests !== undefined
+    ? selected.digests : await releaseChecksums(ctx, release, tag, downloads);
   const assetUrl = releaseDownloadUrl(ctx.downloadBase, release.repository, tag, asset);
   const { sha256 } = await downloadRequired(ctx, assetUrl, path.join(downloads, asset));
   const checksum = verifyChecksum(ctx, asset, sha256, checksums);
@@ -326,9 +325,10 @@ async function stageRelease(
   options: InstallOptions,
   prefix: string,
   stage: string,
-  tag: string,
+  selected: SelectedRelease,
 ): Promise<StagedOutcome> {
-  const { extract, version, asset, sha256, checksum, specsAsset, extraProvenance } = await downloadRelease(ctx, release, stage, tag);
+  const tag = selected.tag;
+  const { extract, version, asset, sha256, checksum, specsAsset, extraProvenance } = await downloadRelease(ctx, release, stage, selected);
   const share = path.join(stage, 'share', manifest.id);
   fs.mkdirSync(share, { recursive: true });
   let verifyScript: string | undefined;
@@ -338,9 +338,10 @@ async function stageRelease(
     binaries.push(...staged.binaries);
     verifyScript = staged.verifyScript;
   } else {
+    const files = indexFiles(extract);
     for (const name of manifest.launch.commands) {
-      const found = findFile(extract, [name, `${name}.exe`]);
-      if (found === null) {
+      const found = files.get(name) ?? files.get(`${name}.exe`);
+      if (found === undefined) {
         throw new InstallError(
           'ASSET_LAYOUT',
           `'${asset}' does not contain '${name}' (or '${name}.exe'). The release layout may have changed; try another --version.`,
@@ -399,53 +400,34 @@ async function stageRelease(
     reported = output;
     ctx.log(`verified ${launcherName} ${args.join(' ')}: ${output}`);
   }
-  const entries: Array<[string, string]> = [
-    ['tool', manifest.id],
-    ['installer', 'decx install'],
-    ['install_method', 'release download'],
-    ['installed', isoTimestamp()],
-    ['release_source', `https://github.com/${release.repository}`],
-    ['release_tag', tag],
-    ['version', version],
-    ['platform', ctx.platform ?? `${process.platform}-${process.arch}`],
-    ['release_asset', asset],
-  ];
-  if (specsAsset !== undefined) {
-    entries.push(['specs_asset', specsAsset]);
-  }
-  entries.push(['checksum', checksum], ['sha256', sha256]);
-  if (reported !== '') {
-    entries.push(['reported_version', reported]);
-  }
-  entries.push(['specs_installed', String(specsInstalled)]);
-  entries.push(
-    ['binary', path.join(binRoot(ctx.home), launcherName)],
-    ['binaries', binaries.join(' ')],
-    ['bin_dir', binRoot(ctx.home)],
-    ['prefix', prefix],
-  );
+  const provenance: Record<string, string> = {
+    release_source: `https://github.com/${release.repository}`,
+    release_tag: tag,
+    version,
+    platform: ctx.platform ?? `${process.platform}-${process.arch}`,
+    release_asset: asset,
+    checksum,
+    sha256,
+    specs_installed: String(specsInstalled),
+    prefix,
+    ...extraProvenance,
+  };
+  if (specsAsset !== undefined) provenance.specs_asset = specsAsset;
+  if (reported !== '') provenance.reported_version = reported;
   const entry: LaunchEntry = verifyScript === undefined
     ? { command: path.join(binRoot(ctx.home), launcherName), args: [] }
     : javascriptEntry(path.join(prefix, 'app', path.relative(path.join(share, 'app'), verifyScript)));
   return {
     entry,
-    provenance: { ...Object.fromEntries(entries), ...extraProvenance },
+    provenance,
     binaries,
     launcherName,
-    method: 'release download',
-    version,
-    releaseTag: tag,
-    releaseSource: `https://github.com/${release.repository}`,
-    asset,
-    ...(specsAsset !== undefined ? { specsAsset } : {}),
-    specsInstalled,
-    checksum,
   };
 }
 
 /** Finish layout in staging; the transaction only moves ready-to-install files. */
-function stageEnvironment(stage: string, prefix: string, outcome: StagedOutcome, env: Record<string, string>): void {
-  const packagedBin = path.join(stage, 'share', outcome.provenance.tool as string, 'bin');
+function stageEnvironment(stage: string, prefix: string, id: string, outcome: StagedOutcome, env: Record<string, string>): void {
+  const packagedBin = path.join(stage, 'share', id, 'bin');
   fs.mkdirSync(packagedBin, { recursive: true });
   const original = outcome.launcherName;
   outcome.entry.command = path.join(prefix, 'bin', original);
@@ -481,17 +463,17 @@ async function commitStage(
   id: string,
   force: boolean,
   log: (line: string) => void,
-  initialize: () => Promise<void>,
-  finalize: (committed: CommittedStage) => void,
+  initialize: StagedOutcome['initialize'],
+  finalize: (committed: CommittedStage, initialized: Record<string, string> | undefined) => void,
   replaceRuntime = false,
 ): Promise<CommittedStage> {
   const binDir = binRoot(home);
   const payload = toolPrefix(home, id);
-  const existingPayload = lstatIfPresent(payload);
-  if (existingPayload !== undefined && readProvenance(path.join(payload, 'PROVENANCE'))?.tool !== id) {
+  const record = readProvenance(path.join(payload, 'PROVENANCE'));
+  if (lstatIfPresent(payload) !== undefined && record?.tool !== id) {
     throw new InstallError('PAYLOAD_CONFLICT', `${payload} exists without a valid ${id} PROVENANCE; refusing to replace unrelated files`);
   }
-  const previous = provenanceBinaries(readProvenance(path.join(payload, 'PROVENANCE')) ?? {})
+  const previous = provenanceBinaries(record ?? {})
     .filter((name) => isSafeRelativePath(name) && !name.includes('/'));
   const stagedBin = path.join(stage, 'bin');
   const names = listDirEntries(stagedBin)
@@ -513,81 +495,40 @@ async function commitStage(
     throw new InstallError('STAGE_INCOMPLETE', `${stagedShare} is missing; nothing was committed`);
   }
   const backupRoot = fs.mkdtempSync(path.join(home, '.decx-backup-'));
-  const backup = path.join(backupRoot, 'payload');
-  const runtime = runtimePath(home, id);
-  const runtimeBackup = path.join(backupRoot, 'runtime');
-  let runtimeSaved = false;
-  let runtimeStarted = false;
-  const savedBins: string[] = [];
-  const writtenBins: string[] = [];
-  let payloadSaved = false;
-  let payloadInstalled = false;
+  const backups = new Map<string, string>();
+  const undo: Array<() => void> = [];
+  // Payload, runtime and executables use the same reversible replacement.
+  function replace(source: string | undefined, target: string, backup: string): void {
+    if (lstatIfPresent(target) !== undefined) {
+      fs.mkdirSync(path.dirname(backup), { recursive: true });
+      fs.renameSync(target, backup);
+      backups.set(target, backup);
+      undo.push(() => fs.renameSync(backup, target));
+    }
+    fs.mkdirSync(path.dirname(target), { recursive: true });
+    undo.push(() => fs.rmSync(target, { recursive: true, force: true }));
+    if (source !== undefined) fs.renameSync(source, target);
+  }
   let committed: CommittedStage;
   try {
-    fs.mkdirSync(path.join(backupRoot, 'bin'));
-    if (lstatIfPresent(payload) !== undefined) {
-      fs.renameSync(payload, backup);
-      payloadSaved = true;
-    }
-    fs.mkdirSync(path.dirname(payload), { recursive: true });
-    fs.renameSync(stagedShare, payload);
-    payloadInstalled = true;
-    if (replaceRuntime && lstatIfPresent(runtime) !== undefined) {
-      fs.renameSync(runtime, runtimeBackup);
-      runtimeSaved = true;
-    }
-    runtimeStarted = replaceRuntime;
-    await initialize();
-    // Save every overwritten or stale executable before modifying the store.
+    replace(stagedShare, payload, path.join(backupRoot, 'payload'));
+    if (replaceRuntime) replace(undefined, runtimePath(home, id), path.join(backupRoot, 'runtime'));
+    const initialized = await initialize?.();
     for (const name of new Set([...names, ...previous])) {
-      const target = path.join(binDir, name);
-      if (lstatIfPresent(target) !== undefined) {
-        fs.renameSync(target, path.join(backupRoot, 'bin', name));
-        savedBins.push(name);
-      }
+      replace(names.includes(name) ? path.join(stagedBin, name) : undefined,
+        path.join(binDir, name), path.join(backupRoot, 'bin', name));
     }
-    const bins: string[] = [];
-    for (const name of names) {
-      writtenBins.push(name);
-      fs.renameSync(path.join(stagedBin, name), path.join(binDir, name));
-      bins.push(name);
-    }
-    const removed: string[] = [];
-    for (const name of previous) {
-      if (bins.includes(name)) {
-        continue;
-      }
-      const stale = path.join(binDir, name);
-      if (savedBins.includes(name)) {
-        removed.push(name);
-        log(`removed stale executable ${stale}`);
-      }
-    }
-    committed = { bins, removed };
-    finalize(committed);
+    const removed = previous.filter(name => !names.includes(name) && backups.has(path.join(binDir, name)));
+    for (const name of removed) log(`removed stale executable ${path.join(binDir, name)}`);
+    committed = { bins: names, removed };
+    finalize(committed, initialized);
   } catch (error) {
-    // Keep the backup outside the staging tree if rollback itself fails.
-    for (const name of writtenBins) {
-      fs.rmSync(path.join(binDir, name), { recursive: true, force: true });
-    }
-    for (const name of savedBins) {
-      fs.renameSync(path.join(backupRoot, 'bin', name), path.join(binDir, name));
-    }
-    if (payloadInstalled) {
-      fs.rmSync(payload, { recursive: true, force: true });
-    }
-    if (runtimeSaved || runtimeStarted) fs.rmSync(runtime, { recursive: true, force: true });
-    if (runtimeSaved) {
-      fs.mkdirSync(path.dirname(runtime), { recursive: true });
-      fs.renameSync(runtimeBackup, runtime);
-    }
-    if (payloadSaved) {
-      fs.renameSync(backup, payload);
-    }
+    // Reverse every completed operation; retain backups if rollback itself fails.
+    for (const restore of undo.reverse()) restore();
     fs.rmSync(backupRoot, { recursive: true, force: true });
     throw error;
   }
-  const foreignBins = savedBins.filter((name) => !previous.includes(name));
+  const foreignBins = names.filter(name => !previous.includes(name) && backups.has(path.join(binDir, name)));
   if (foreignBins.length > 0) {
     const retained = fs.mkdtempSync(path.join(home, `.decx-overwritten-${id}-`));
     for (const name of foreignBins) {
@@ -631,24 +572,30 @@ export async function installTool(
       outcome = await stageVenv(ctx, manifest, prefix, stage, options);
     } else {
       if (release === undefined) throw new InstallError('INVALID_RECIPE', `${manifest.id} needs a binary release`);
-      outcome = await stageRelease(ctx, manifest, release, options, prefix, stage, await resolveInstallTag(ctx, release, options));
+      const token = githubToken(ctx.env);
+      if (token !== undefined) ctx.github.token = token;
+      outcome = await stageRelease(ctx, manifest, release, options, prefix, stage, await resolveInstallRelease(ctx, release, options));
     }
     const stageShare = path.join(stage, 'share', manifest.id);
     fs.mkdirSync(stageShare, { recursive: true });
-    const launcherVariables = launcherEnv(manifest, prefix, outcome.version ?? '');
-    if (launcherVariables !== undefined) stageEnvironment(stage, prefix, outcome, launcherVariables);
+    const launcherVariables = launcherEnv(manifest, prefix, outcome.provenance.version ?? '');
+    if (launcherVariables !== undefined) stageEnvironment(stage, prefix, manifest.id, outcome, launcherVariables);
     const linkDir = resolveLinkDir(options.links, ctx.env);
     let links: LinkOutcome[] = [];
     const storeLauncher = outcome.launcherName;
     let provenance: Record<string, string> = {};
-    const committed = await commitStage(stage, home, manifest.id, options.force === true, ctx.log, async () => {
-      const initialize = outcome.initialize;
-      if (initialize !== undefined) await initialize();
-    }, (committed) => {
-      provenance = { ...outcome.provenance };
-      provenance.binary = path.join(binDir, storeLauncher);
-      provenance.binaries = committed.bins.join(' ');
-      provenance.bin_dir = binDir;
+    const committed = await commitStage(stage, home, manifest.id, options.force === true, ctx.log, outcome.initialize, (committed, initialized) => {
+      provenance = {
+        ...outcome.provenance,
+        ...initialized,
+        tool: manifest.id,
+        installer: 'decx install',
+        install_method: method,
+        installed: isoTimestamp(),
+        binary: path.join(binDir, storeLauncher),
+        binaries: committed.bins.join(' '),
+        bin_dir: binDir,
+      };
       if (launcherVariables !== undefined) provenance.env = formatEnv(launcherVariables);
       fs.writeFileSync(path.join(prefix, 'PROVENANCE'), formatProvenance(provenance));
       fs.writeFileSync(path.join(prefix, 'launch.json'), JSON.stringify(outcome.entry));
@@ -696,23 +643,23 @@ export async function installTool(
     const pathDir = options.noLinks === true ? binDir : linkDir;
     const result: InstallResult = {
       id: manifest.id,
-      method: outcome.method,
+      method,
       prefix,
       binDir,
       launcher: path.join(binDir, storeLauncher),
       binaries: committed.bins,
-      ...((provenance.version ?? outcome.version) !== undefined ? { version: provenance.version ?? outcome.version } : {}),
-      ...(outcome.releaseTag !== undefined ? { releaseTag: outcome.releaseTag } : {}),
-      ...(outcome.releaseSource !== undefined ? { releaseSource: outcome.releaseSource } : {}),
-      ...(outcome.asset !== undefined ? { asset: outcome.asset } : {}),
-      ...(outcome.specsAsset !== undefined ? { specsAsset: outcome.specsAsset } : {}),
-      ...(outcome.specsInstalled !== undefined ? { specsInstalled: outcome.specsInstalled } : {}),
-      ...(outcome.checksum !== undefined ? { checksum: outcome.checksum } : {}),
+      ...(provenance.version !== undefined ? { version: provenance.version } : {}),
+      ...(provenance.release_tag !== undefined ? { releaseTag: provenance.release_tag } : {}),
+      ...(provenance.release_source !== undefined ? { releaseSource: provenance.release_source } : {}),
+      ...(provenance.release_asset !== undefined ? { asset: provenance.release_asset } : {}),
+      ...(provenance.specs_asset !== undefined ? { specsAsset: provenance.specs_asset } : {}),
+      ...(provenance.specs_installed !== undefined ? { specsInstalled: Number(provenance.specs_installed) } : {}),
+      ...(provenance.checksum !== undefined ? { checksum: provenance.checksum } : {}),
       provenance,
       pathHint: pathHint(pathDir, isWindows()),
     };
     if (options.noLinks !== true) { result.links = links; result.linkDir = linkDir; }
-    ctx.log(`installed ${manifest.id} (${outcome.method})`);
+    ctx.log(`installed ${manifest.id} (${method})`);
     ctx.log(`  launcher: ${result.launcher}`);
     if (committed.removed.length > 0) {
       ctx.log(`  removed from the store: ${committed.removed.join(', ')}`);

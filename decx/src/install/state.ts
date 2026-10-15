@@ -68,22 +68,6 @@ export function provenanceBinaries(provenance: Record<string, string>): string[]
   return (provenance.binaries ?? '').split(/\s+/).filter(Boolean);
 }
 
-function isFile(target: string): boolean {
-  try {
-    return fs.statSync(target).isFile();
-  } catch {
-    return false;
-  }
-}
-
-function isDir(target: string): boolean {
-  try {
-    return fs.statSync(target).isDirectory();
-  } catch {
-    return false;
-  }
-}
-
 /**
  * Install state of one tool: the launcher in the store, the payload it belongs
  * to and the PROVENANCE of the last install.  A launcher whose payload is gone
@@ -93,9 +77,11 @@ export function toolState(home: string, manifest: ToolManifest): ToolState {
   const prefix = toolPrefix(home, manifest.id);
   const provenance = readProvenance(provenanceFile(home, manifest.id));
   const bin = provenance?.binary;
-  if (provenance?.tool !== manifest.id || bin === undefined || path.dirname(bin) !== binRoot(home) ||
-    !provenanceBinaries(provenance).includes(path.basename(bin)) || !isFile(bin) || !isDir(prefix)) {
-    return { id: manifest.id, installed: false };
-  }
-  return { id: manifest.id, installed: true, prefix, bin, version: provenanceVersion(provenance), provenance };
+  try {
+    if (provenance?.tool === manifest.id && bin !== undefined && path.dirname(bin) === binRoot(home) &&
+      provenanceBinaries(provenance).includes(path.basename(bin)) && fs.statSync(bin).isFile() && fs.statSync(prefix).isDirectory()) {
+      return { id: manifest.id, installed: true, prefix, bin, version: provenanceVersion(provenance), provenance };
+    }
+  } catch { /* Missing or unreadable files are not an installed tool. */ }
+  return { id: manifest.id, installed: false };
 }

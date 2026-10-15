@@ -3,7 +3,7 @@ import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import test from 'node:test';
-import { HOST_PLATFORM, makeTarGz, makeZip, runCli, runCliAsync, sha256, startFixtureServer, tempDir, writeCatalog } from './fixtures.ts';
+import { HOST_PLATFORM, makeTarGz, makeZip, runCli, runCliAsync, sha256, startFixtureServer, tempDir, writeCatalog, writeFile } from './fixtures.ts';
 
 // Only public CLI subprocesses. No imported manager functions or builtin mocks.
 test('CLI stages verified resources before verification and launches executable metadata and human shims identically', async t => {
@@ -28,17 +28,29 @@ test('CLI stages verified resources before verification and launches executable 
   ];
   const releasePath = '/repos/acme/resources/releases/tags/v1.0.0';
   const routes: Record<string, string | Buffer> = {
+    '/repos/acme/resources/releases': JSON.stringify([{ tag_name: 'v1.0.0', assets }]),
     [releasePath]: JSON.stringify({ tag_name: 'v1.0.0', assets }),
     '/acme/resources/releases/download/v1.0.0/resources.zip': archive,
     '/acme/resources/releases/download/v1.0.0/specs.zip': specs,
   };
   const server = await startFixtureServer(routes);
   t.after(() => server.close());
-  const env = { HOME: root, USERPROFILE: root, GITHUB_TOKEN: 'test-only-token', DECX_GITHUB_API_BASE: server.url, DECX_GITHUB_DOWNLOAD_BASE: server.url };
+  const probes = path.join(root, 'gh-probes');
+  const fakeBin = path.join(root, 'fake-bin');
+  const script = path.join(fakeBin, 'gh.mjs');
+  writeFile(script, `import fs from 'node:fs'; fs.appendFileSync(${JSON.stringify(probes)}, 'probe\\n'); console.log('test-only-token');\n`);
+  writeFile(path.join(fakeBin, process.platform === 'win32' ? 'gh.cmd' : 'gh'), process.platform === 'win32'
+    ? `@echo off\r\n"${process.execPath}" "${script}" %*\r\n`
+    : `#!/usr/bin/env node\nimport(${JSON.stringify(script)});\n`, 0o755);
+  const env = { HOME: root, USERPROFILE: root, GITHUB_TOKEN: '', GH_TOKEN: '',
+    PATH: `${fakeBin}${path.delimiter}${process.env.PATH ?? ''}`, DECX_GITHUB_API_BASE: server.url, DECX_GITHUB_DOWNLOAD_BASE: server.url };
   const common = ['--home', home, '--third-party', thirdParty];
-  const installed = await runCliAsync([...common, 'install', 'resources', '--version', 'v1.0.0', '--no-links'], env);
+  const installed = await runCliAsync([...common, 'install', 'resources', '--no-links'], env);
   assert.equal(installed.status, 0, installed.stderr + installed.stdout);
-  assert.equal(server.requested.filter(url => url === releasePath).length, 1);
+  assert.equal(server.requested.filter(url => url === '/repos/acme/resources/releases').length, 1);
+  assert.equal(server.requested.filter(url => url === releasePath).length, 0, 'reuse discovery digests without a second release request');
+  assert.equal(fs.readFileSync(probes, 'utf8'), 'probe\n', 'resolve gh authentication only once for discovery and all assets');
+  assert.ok(server.authorizations.every(value => value === 'Bearer test-only-token'));
   const expected = [path.join(home, 'share/resources/specs'), 'descriptor-path', '资源%literal!^&'];
   const expression = `JSON.stringify([process.env.RESOURCES,process.env.${envKey},process.env.DECX_MARKER])`;
   const direct = runCli([...common, '-m', 'resources', '-p', expression], env);

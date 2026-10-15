@@ -23,8 +23,11 @@ for (const format of ['tar.gz', 'zip']) {
     const pack = format === 'zip' ? makeZip : makeTarGz;
     const valid = pack(entries);
     const broken = pack([{ name: 'package/README.md', data: 'missing entrypoint' }]);
+    const uncommittable = pack(entries.map(entry => entry.name === 'package/jsprobe.js'
+      ? { ...entry, data: Buffer.from("import { mkdirSync } from 'node:fs'; mkdirSync(new URL('../../PROVENANCE/', import.meta.url)); console.log('jsprobe 1.2.0');") }
+      : entry));
     const routes: Record<string, Buffer | string> = {};
-    for (const [version, bytes] of [['1.0.0', valid], ['1.1.0', broken]] as const) {
+    for (const [version, bytes] of [['1.0.0', valid], ['1.1.0', broken], ['1.2.0', uncommittable]] as const) {
       const base = `/acme/jsprobe/releases/download/v${version}`;
       const name = `jsprobe-${version}.${format}`;
       routes[`${base}/${name}`] = bytes;
@@ -46,6 +49,22 @@ for (const format of ['tar.gz', 'zip']) {
     assert.notEqual(replaced.status, 0);
     assert.match(replaced.stdout, /ASSET_LAYOUT/);
     assert.deepEqual(fs.readFileSync(provenance), before);
+    // Verification succeeds, then finalization fails after payload and bin swaps.
+    catalog.tools[0].launch.commands.push('render');
+    writeCatalog(thirdParty, catalog.tools);
+    const renderBin = path.join(home, 'bin', process.platform === 'win32' ? 'render.cmd' : 'render');
+    fs.writeFileSync(renderBin, 'foreign executable');
+    const failedCommit = await execute(['update', 'jsprobe', '--version', '1.2.0', '--no-links', '--force']);
+    assert.notEqual(failedCommit.status, 0, failedCommit.stdout + failedCommit.stderr);
+    assert.deepEqual(fs.readFileSync(provenance), before);
+    assert.equal(fs.readFileSync(renderBin, 'utf8'), 'foreign executable', 'rollback restores forced foreign replacements');
+    const forced = await execute(['update', 'jsprobe', '--version', '1.0.0', '--no-links', '--force']);
+    assert.equal(forced.status, 0, forced.stdout + forced.stderr);
+    const retained = fs.readdirSync(home).find(name => name.startsWith('.decx-overwritten-jsprobe-'));
+    assert.ok(retained);
+    assert.equal(fs.readFileSync(path.join(home, retained, path.basename(renderBin)), 'utf8'), 'foreign executable');
+    catalog.tools[0].launch.commands.pop();
+    writeCatalog(thirdParty, catalog.tools);
     const stillWorks = runCli(['--home', home, '--third-party', thirdParty, '-m', 'jsprobe', ...args], env);
     assert.equal(stillWorks.status, 0, stillWorks.stderr);
     assert.deepEqual(JSON.parse(stillWorks.stdout), args);
